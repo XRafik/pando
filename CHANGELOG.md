@@ -56,6 +56,12 @@ Unreleased above it. -->
   Docker does unless the cpu cgroup controller is delegated to its user. The refusal says which
   limit and how to fix it. Before, the app ran with the whole host.
 
+- **An app is held to its disk limit** (#130, R-403). Every app has one (10 GiB unless set), and
+  until now it was only counted against the host's disk. Pando now measures each running app's
+  containers and volumes every 10 minutes, tells its owner at 90% and when it goes over, and stops
+  it if the next reading is still over. Its data is kept; starting it clears the stop. The console
+  shows "Stopped over disk limit", and a visitor is told why.
+
 ### Added
 
 - The audit log can be streamed to a SIEM and exported (#129, design 12). `GET /audit/stream`,
