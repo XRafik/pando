@@ -84,6 +84,43 @@ func TestDocumentedVerbsAreRealVerbs(t *testing.T) {
 	}
 }
 
+// Every row has a title a list of endpoints can show: two to five words in
+// sentence case, at most 40 characters, with no period, colon or code, and no
+// two alike. The summary is the whole of it; a title is what someone scanning
+// the list reads.
+func TestEveryRouteHasATitle(t *testing.T) {
+	seen := map[string]string{}
+	for _, doc := range routeDocs {
+		key := doc.Method + " " + doc.Path
+		title := doc.Title
+		require.NotEmpty(t, title, "%s has no Title", key)
+		words := len(strings.Fields(title))
+		require.True(t, words >= 2 && words <= 5, "%s: %q is not two to five words", key, title)
+		require.LessOrEqual(t, len(title), 40, "%s: %q is longer than 40 characters", key, title)
+		require.NotContains(t, title, ".", "%s: %q has a period", key, title)
+		require.NotContains(t, title, ":", "%s: %q has a colon", key, title)
+		require.NotContains(t, title, "`", "%s: %q has code in it", key, title)
+		require.Equal(t, strings.ToUpper(title[:1]), title[:1], "%s: %q does not start with a capital", key, title)
+		require.Empty(t, seen[title], "%s and %s are both titled %q", key, seen[title], title)
+		seen[title] = key
+	}
+}
+
+// A row whose summary tells a reader the endpoint is public is marked public,
+// so the OpenAPI document, which reads the mark rather than the prose, says so
+// too: a public endpoint described as needing a token is one nobody can call
+// from the sign-in page it exists for.
+func TestARouteSaidToBePublicIsMarkedPublic(t *testing.T) {
+	for _, doc := range routeDocs {
+		if strings.Contains(doc.Summary, "Public") {
+			require.True(t, doc.Public, "%s %s says it is public and is not marked Public", doc.Method, doc.Path)
+		}
+		if doc.Public {
+			require.Empty(t, doc.Verb, "%s %s is public and names a verb", doc.Method, doc.Path)
+		}
+	}
+}
+
 // TestTheReferenceIsBuiltOnceAndServedWhole asserts GET /reference builds its
 // document once, however often it is asked for, and serves the same JSON the
 // generator writes the docs from.
