@@ -69,6 +69,7 @@ import { TopoBackground } from '../ui/TopoBackground';
 import { SearchField } from '../ui/SearchField';
 import { ShowMore, totalLabel, usePaged, useSettled, type PageOf } from '../ui/paged';
 import { APP_LIST_KEY, useWatchedRows } from './appList';
+import { AWAITING_IMAGE } from './scanScope';
 import { useNarrow } from '../ui/narrow';
 import { Table } from '../ui/Table';
 import { FieldSkeleton, HeadingSkeleton, LineSkeleton, Loading } from '../ui/Loading';
@@ -443,6 +444,31 @@ export function AdminConsole({
   );
 }
 
+/** The apps list's security column, as a value its filter offers. */
+function securityFilterValue(row: App): string {
+  if (row.security_scanning) return 'Scanning';
+  if (row.security_awaiting_image) return 'Not scored yet';
+  if (row.security_score == null) return 'Not scanned';
+  return row.security_verdict === 'insecure' ? 'Below minimum' : 'Scanned';
+}
+
+/** The apps list's security column. */
+function SecurityCell({ row }: { row: App }) {
+  // A scan under way, whoever started it, as the design system's building
+  // status: the hollow ring, which does not move.
+  if (row.security_scanning) return <StatusIndicator status="building" label="Scanning" />;
+  if (row.security_awaiting_image) {
+    // Its source was scanned and nothing has been built: that number is the
+    // source's, not the app's (R-311).
+    return (
+      <Tooltip content={`${AWAITING_IMAGE}.`}>
+        <span style={{ font: 'var(--type-code-sm)', color: 'var(--ink-secondary)' }}>Not scored yet</span>
+      </Tooltip>
+    );
+  }
+  return <ScoreBadge score={row.security_score} verdict={row.security_verdict as never} full />;
+}
+
 function AppsList({
   rows,
   loading,
@@ -531,22 +557,8 @@ function AppsList({
               header: 'Security',
               width: '14ch',
               filter: 'values',
-              filterValue: (row: App) =>
-                row.security_scanning
-                  ? 'Scanning'
-                  : row.security_score == null
-                    ? 'Not scanned'
-                    : row.security_verdict === 'insecure'
-                      ? 'Below minimum'
-                      : 'Scanned',
-              // A scan under way, whoever started it, as the design system's
-              // building status: the hollow ring, which does not move.
-              render: (row: App) =>
-                row.security_scanning ? (
-                  <StatusIndicator status="building" label="Scanning" />
-                ) : (
-                  <ScoreBadge score={row.security_score} verdict={row.security_verdict as never} full />
-                ),
+              filterValue: securityFilterValue,
+              render: (row: App) => <SecurityCell row={row} />,
             },
             {
               key: 'updated_at',
