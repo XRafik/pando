@@ -37,14 +37,20 @@
 # source change recompiles what changed rather than every dependency. CI keeps
 # the Go build cache between runs too (the image job in ci.yml). The paths are
 # set rather than left to each image's defaults because CI names them.
-FROM --platform=$BUILDPLATFORM dhi.io/golang:1.27-alpine3.24-dev@sha256:9a9160e3c89a37572e35271c65a2b38a2d1671c8ab0d6abee19ce3d6cecb9be9 AS console
+#
+# One Go base for the console and server stages, so the image is pinned in one
+# place.
+FROM --platform=$BUILDPLATFORM dhi.io/golang:1.27-alpine3.24-dev@sha256:9a9160e3c89a37572e35271c65a2b38a2d1671c8ab0d6abee19ce3d6cecb9be9 AS go
 # GOTOOLCHAIN=auto because go.mod requires Go 1.27.2, the security release for
 # GO-2026-6599 – GO-2026-6617, and the hardened image is still 1.27.1. The go
 # command fetches 1.27.2 from the module proxy, checked against the checksum
 # database like any module, into the module cache. Remove it, and bump the
-# digests, once dhi.io/golang:1.27 ships 1.27.2.
-ENV GOMODCACHE=/cache/go-mod GOCACHE=/cache/go-build npm_config_cache=/cache/npm GOTOOLCHAIN=auto
+# digest, once dhi.io/golang:1.27 ships 1.27.2.
+ENV GOMODCACHE=/cache/go-mod GOCACHE=/cache/go-build GOTOOLCHAIN=auto
 WORKDIR /src
+
+FROM go AS console
+ENV npm_config_cache=/cache/npm
 RUN apk add --no-cache nodejs npm
 
 # Manifests first, so a change to console source does not re-run npm ci.
@@ -59,11 +65,9 @@ COPY . .
 RUN --mount=type=cache,target=/cache/go-mod --mount=type=cache,target=/cache/go-build \
     cd console && npm run build
 
-FROM --platform=$BUILDPLATFORM dhi.io/golang:1.27-alpine3.24-dev@sha256:9a9160e3c89a37572e35271c65a2b38a2d1671c8ab0d6abee19ce3d6cecb9be9 AS build
-ENV GOMODCACHE=/cache/go-mod GOCACHE=/cache/go-build GOTOOLCHAIN=auto
+FROM go AS build
 ARG TARGETOS
 ARG TARGETARCH
-WORKDIR /src
 
 # Dependencies first, so a source change does not re-download the module cache.
 COPY go.mod go.sum* ./
@@ -94,29 +98,6 @@ RUN --mount=type=cache,target=/cache/go-mod --mount=type=cache,target=/cache/go-
     CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
       go build -trimpath -ldflags="-s -w ${stamp}" -o /out/pando ./cmd/pando
 
-# nixpacks turns a repository with no deployment instructions into a
-# Dockerfile, which BuildKit then builds (R-095: wrap an existing
-# implementation rather than reimplementing convention-matching).
-#
-# Fetched here rather than at runtime so an install with no internet still
-# builds, and pinned so the same repository produces the same plan a year from
-# now. It only ever *generates* — `nixpacks build --out` writes a Dockerfile and
-# does not build, so no container runtime socket is involved anywhere (R-112).
-FROM --platform=$BUILDPLATFORM dhi.io/alpine-base:3.24-dev@sha256:08d37dc414e07a688b0c3b9405e0b33688507e41a74bc24118a7f0817b772e27 AS nixpacks
-ARG NIXPACKS_VERSION=1.41.0
-ARG TARGETARCH
-RUN apk add --no-cache curl tar \
-    && case "$TARGETARCH" in \
-         arm64) arch=aarch64 ;; \
-         amd64) arch=x86_64  ;; \
-         *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
-       esac \
-    && curl -fsSL -o /tmp/nixpacks.tgz \
-       "https://github.com/railwayapp/nixpacks/releases/download/v${NIXPACKS_VERSION}/nixpacks-v${NIXPACKS_VERSION}-${arch}-unknown-linux-musl.tar.gz" \
-    && mkdir -p /usr/local/bin \
-    && tar xzf /tmp/nixpacks.tgz -C /usr/local/bin nixpacks \
-    && chmod +x /usr/local/bin/nixpacks
-
 # What the server needs beyond the runtime base, installed where there is a
 # package manager and staged for the copy below:
 #
@@ -128,21 +109,70 @@ RUN apk add --no-cache curl tar \
 #   never separately.
 # - su-exec, which the entrypoint drops privileges with.
 # - tzdata, which the runtime base does not carry.
+# - git and bash, for Railpack's planner. mise lists the Python releases it can
+#   install with pyenv's python-build, a bash script it fetches with git, and
+#   Railpack runs mise with every config file switched off, so there is no
+#   setting that avoids it. Without them every Python app failed to plan with
+#   "env: can't execute 'bash'" (issue #172). Nothing else in Pando runs either.
+# - Railpack, which turns a repository with no deployment instructions into a
+#   build plan that Pando's BuildKit builds through Railpack's frontend image
+#   (R-095: wrap an existing implementation rather than reimplementing
+#   convention-matching). Fetched here rather than at runtime, pinned and
+#   checked against the release's checksums, so the same repository produces
+#   the same plan a year from now. It only ever *plans* — `railpack prepare`
+#   writes a JSON file and builds nothing, so no container runtime socket is
+#   involved anywhere (R-112). mise comes with it, at the release this Railpack
+#   bundles: Railpack resolves language versions by running mise, and
+#   downloads it into /tmp/railpack/mise on first use if it is not already
+#   there. Putting it there now means planning downloads no program; version
+#   lookups still reach the package indexes. Bump RAILPACK_VERSION,
+#   MISE_VERSION, their checksums and the image digests in
+#   internal/adapter/builder/buildkit/railpack.go together. curl fetches them
+#   and is removed again.
 #
 # apk-tools is removed before staging, so the package database copied below
 # lists what the image actually holds: a scanner reads it to know what is
 # installed, and an entry for a package manager that is not there is a finding
 # about nothing.
 FROM dhi.io/alpine-base:3.24-dev@sha256:08d37dc414e07a688b0c3b9405e0b33688507e41a74bc24118a7f0817b772e27 AS packages
-RUN apk add --no-cache postgresql17-client su-exec tzdata \
+ARG RAILPACK_VERSION=0.40.0
+ARG MISE_VERSION=2026.9.12
+ARG TARGETARCH
+RUN apk add --no-cache bash curl git postgresql17-client su-exec tzdata \
+    && case "$TARGETARCH" in \
+         arm64) rp=arm64;   rpsum=86c5a3db888c710b2014262de55fc87a56c85c4e96ba7cd10894e5df210a212b; \
+                mise=arm64; misesum=22e7ecd3c6c84ef36e4d0c78c4eef49a79e3fb83aa88e091e2993fd9c9a3f8a1 ;; \
+         amd64) rp=x86_64;  rpsum=52e5558f830b7349386e9448e04351d0834df041d4c31c20b7ec4d539f0d66d7; \
+                mise=x64;   misesum=1b2051d8d3efab4d9c85ceb59849a3eb052db24ad406a3901fd6b45374c56ebe ;; \
+         *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
+       esac \
+    && curl -fsSL --proto =https --tlsv1.2 -o /tmp/railpack.tgz \
+       "https://github.com/railwayapp/railpack/releases/download/v${RAILPACK_VERSION}/railpack-v${RAILPACK_VERSION}-${rp}-unknown-linux-musl.tar.gz" \
+    && echo "${rpsum}  /tmp/railpack.tgz" | sha256sum -c - \
+    && curl -fsSL --proto =https --tlsv1.2 -o /tmp/mise.tgz \
+       "https://github.com/jdx/mise/releases/download/v${MISE_VERSION}/mise-v${MISE_VERSION}-linux-${mise}-musl.tar.gz" \
+    && echo "${misesum}  /tmp/mise.tgz" | sha256sum -c - \
+    && mkdir -p /usr/local/bin /tmp/railpack/mise \
+    && tar xzf /tmp/railpack.tgz -C /usr/local/bin railpack \
+    && tar xzf /tmp/mise.tgz -C /tmp mise/bin/mise \
+    && mv /tmp/mise/bin/mise "/tmp/railpack/mise/mise-${MISE_VERSION}" \
+    && chmod +x /usr/local/bin/railpack "/tmp/railpack/mise/mise-${MISE_VERSION}" \
+    && rm -rf /tmp/railpack.tgz /tmp/mise.tgz /tmp/mise \
+    && apk del --no-cache curl \
     && apk del --no-cache apk-tools \
     && mkdir /staging \
     && tar -cf - /lib /usr/lib /usr/libexec /usr/bin/pg_dump /usr/bin/pg_restore /usr/bin/psql \
-         /sbin/su-exec /usr/share/zoneinfo 2>/dev/null \
+         /sbin/su-exec /usr/share/zoneinfo /usr/bin/git /bin/bash /usr/share/git-core \
+         /usr/local/bin/railpack 2>/dev/null \
        | tar -xf - -C /staging
 
 FROM dhi.io/alpine-base:3.24@sha256:a741d4f1ccaf31f9394a36477e50df4620a8030dbff3d9a2ea8e84672b683ada
 COPY --from=packages /staging/ /
+# Railpack's mise directory, writable by the server, which takes locks there.
+# A copy of its own rather than part of the staged tree: staging it under /tmp
+# replaced /tmp's own mode with the staging directory's 755, and the server
+# could no longer make a temporary directory for any build (issue #172).
+COPY --from=packages --chown=nonroot:nonroot /tmp/railpack /tmp/railpack
 
 # The runtime base's own non-root user, nonroot (65532), runs the server. The
 # entrypoint needs root only to join the Docker socket's group, so the image
@@ -155,7 +185,6 @@ RUN mkdir -p /var/lib/pando /etc/traefik/dynamic \
 WORKDIR /var/lib/pando
 
 COPY --from=build /out/pando /usr/local/bin/pando
-COPY --from=nixpacks /usr/local/bin/nixpacks /usr/local/bin/nixpacks
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 
 # The entrypoint starts as root only long enough to join the runtime socket's

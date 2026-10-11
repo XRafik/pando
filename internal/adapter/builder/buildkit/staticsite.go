@@ -28,7 +28,8 @@ import (
 // committed site gets.
 
 // staticSiteNodeDefault is the Node major the site is built with when it names
-// none. [P] 22, the active LTS, for the reason defaultNodeVersion gives.
+// none. [P] 22, an active LTS: current Vite, Next.js, Angular and NestJS
+// refuse 18 with EBADENGINE (issue #55).
 const staticSiteNodeDefault = "22"
 
 // staticSiteFrameworks build to a directory. The directory is each framework's
@@ -146,6 +147,23 @@ func readStaticSiteBuild(contextDir string) (staticSite, bool) {
 			Install:   installCommand(contextDir),
 			Node:      nodeMajor(contextDir, pkg.Engines),
 		}, true
+	}
+	// No known framework and nothing that starts a server, but a committed
+	// copy of the site in the directory builds conventionally write to: the
+	// build makes that directory, and it is what is served. html5-boilerplate
+	// builds with gulp into a committed dist/. nixpacks served such a
+	// directory itself; Railpack has no start command for it (issue #172).
+	if start == "" {
+		for _, out := range []string{"dist", "build"} {
+			if fileExists(contextDir, path.Join(out, "index.html")) {
+				return staticSite{
+					Framework: "static",
+					OutDir:    out,
+					Install:   installCommand(contextDir),
+					Node:      nodeMajor(contextDir, pkg.Engines),
+				}, true
+			}
+		}
 	}
 	return staticSite{}, false
 }
@@ -275,11 +293,11 @@ func installCommand(contextDir string) string {
 
 // writeStaticSitePlan writes a plan that builds the site and serves its output.
 //
-// Into .nixpacks/, beside where a nixpacks plan goes, so detection collects it,
-// the spec carries it and the build replays it exactly as it would a nixpacks
+// Into .pando-plan/, beside where a Railpack plan goes, so detection collects it,
+// the spec carries it and the build replays it exactly as it would a Railpack
 // plan (R-020). The server is the one a committed static site gets.
 func writeStaticSitePlan(contextDir string, site staticSite) (string, error) {
-	name := filepath.Join(".nixpacks", "Dockerfile")
+	name := filepath.Join(planDir, "Dockerfile")
 	content := fmt.Sprintf(`# A %s site that builds to static files, served by nginx.
 FROM node:%s-alpine AS build
 WORKDIR /app
