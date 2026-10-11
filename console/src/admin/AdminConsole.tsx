@@ -72,6 +72,7 @@ import { APP_LIST_KEY, useWatchedRows } from './appList';
 import { useNarrow } from '../ui/narrow';
 import { Table } from '../ui/Table';
 import { FieldSkeleton, HeadingSkeleton, LineSkeleton, Loading } from '../ui/Loading';
+import { WithCode } from '../ui/ErrorCode';
 
 export function AdminConsole({
   route,
@@ -856,8 +857,10 @@ function AppScreen({
                 )
               }
             >
-              {refusal.message}
-              {refusal.remedy ? ` ${refusal.remedy}` : ''}
+              <WithCode code={refusal.code}>
+                {refusal.message}
+                {refusal.remedy ? ` ${refusal.remedy}` : ''}
+              </WithCode>
             </Banner>
           </div>
         )}

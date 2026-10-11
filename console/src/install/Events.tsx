@@ -35,6 +35,7 @@ import { ShowMore, usePaged, type PageOf } from '../ui/paged';
 import { relative } from '../ui/time';
 import { Disclosure } from '../ui/Disclosure';
 import { deliveriesInterval } from '../ui/polling';
+import { EVENTS_DOCS_URL } from '../ui/docs';
 
 interface EventDef {
   name: string;
@@ -514,8 +515,11 @@ function SigningKey({ sub, onClose }: { sub: Subscription; onClose: () => void }
         </Banner>
         <CodeBlock copyable lines={sub.signing_key ?? ''} />
         <Quiet>
-          Check each delivery&rsquo;s <InlineCode>Pando-Signature</InlineCode> header against it. The
-          reference under API and tools shows how.
+          Check each delivery&rsquo;s <InlineCode>Pando-Signature</InlineCode> header against it. The{' '}
+          <a href={EVENTS_DOCS_URL} target="_blank" rel="noopener noreferrer">
+            events reference
+          </a>{' '}
+          shows how.
         </Quiet>
       </div>
     </Dialog>

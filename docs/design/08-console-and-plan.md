@@ -125,6 +125,17 @@ Every answer carries the AI mark and names the adapter and model that wrote it. 
 (`ui/AiStar.tsx`) is the one used everywhere AI is indicated and nowhere else, so a person can always
 tell a request to AI from an ordinary control.
 
+**[P] API and tools.** The screen links to the published references at trypando.ai — API, CLI,
+MCP server, Errors and Events, one link each (`ui/docs.ts` holds the base URL) — names this installation's
+address, which the published docs write as `https://pando.example.com`, and lists tokens. It does not
+draw the reference itself: the site's copy is generated from the same code at each release, and a
+second copy in the console was duplicated effort. The site describes the latest release, so an older
+installation may lack its newest entries. `GET /api/v1/reference` stays: it is the running binary's
+own reference, and AI's how-to answers (R-346) are written from it. An app's deploy refusal, an AI
+dialog's refusal and this screen's own failures follow the server's message with the error's code, as
+a link to its entry on the errors page (`ui/ErrorCode.tsx`: `WithCode`, `FailedBanner`). Other
+failure banners still show the message alone; moving them to `FailedBanner` is a one-line change each.
+
 **[D] Phone width.** At 48em and below (`ui/narrow.css`, `ui/narrow.ts`): the page padding token
 drops to `--space-4`; headings and their actions wrap; the admin sidebar becomes a menu behind a
 button in a top bar that keeps the way home and settings; the launcher's search takes its own line;
