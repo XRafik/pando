@@ -249,8 +249,10 @@ func (r *Runner) rebuild(ctx context.Context, app state.App, p detect.Proposal) 
 			return
 		}
 	}
-	if err := r.Detections.Save(ctx, app.ID, p.Status, p, p.Commit); err != nil {
-		_ = r.Detections.FailIfRunning(ctx, app.ID, err)
+	rec, cancel := recording(ctx)
+	defer cancel()
+	if err := r.Detections.Save(rec, app.ID, p.Status, p, p.Commit); err != nil {
+		_ = r.Detections.FailIfRunning(rec, app.ID, err)
 	}
 }
 
@@ -276,7 +278,9 @@ func (r *Runner) buildThenScan(ctx context.Context, s *spec.AppSpec, checkout *s
 
 // fail records a detection that failed, as detect does.
 func (r *Runner) fail(ctx context.Context, appID string, err error) {
-	_ = r.Detections.Save(ctx, appID, state.DetectionFailed, failureBody(err), "")
+	rec, cancel := recording(ctx)
+	defer cancel()
+	_ = r.Detections.Save(rec, appID, state.DetectionFailed, failureBody(err), "")
 }
 
 // failureBody is what a failed detection stores.
