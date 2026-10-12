@@ -13,9 +13,14 @@ import type { AppSpec, Candidate, Proposal, Question, Report, Source } from '@ap
 import { describeAmendment } from './screeningText';
 import { AWAITING_IMAGE } from './scanScope';
 
-/** Where a running detection is. `stage` is set only while it runs. */
-type Stage = 'fetching' | 'detecting' | 'trying' | 'scanning' | 'screening';
-const ORDER: Stage[] = ['fetching', 'detecting', 'trying', 'scanning', 'screening'];
+/**
+ * Where a running detection is. `stage` is set only while it runs, and is the
+ * step the rest wait on. `running` lists every step under way: the scan runs
+ * beside the build and beside the trial run, so two can be (R-311).
+ */
+type Stage = 'fetching' | 'detecting' | 'building' | 'trying' | 'scanning' | 'screening';
+const ORDER: Stage[] = ['fetching', 'detecting', 'building', 'trying', 'scanning', 'screening'];
+const AT_SCAN = ORDER.indexOf('scanning');
 
 type StepState = 'done' | 'current' | 'pending';
 
@@ -43,6 +48,8 @@ export interface DiscoveryStep {
 export interface DiscoveryInput {
   status: string;
   stage?: string;
+  /** Every step under way while it runs, `stage` among them. */
+  running?: string[];
   proposal: Partial<Proposal>;
   source?: Source;
   commit?: string;
@@ -174,7 +181,7 @@ export function startCommand(
   return { value: 'From its Dockerfile', text: true };
 }
 
-/** How far a detection has got: 0 fetching … 3 screening, 4 finished. */
+/** How far a detection has got: 0 fetching … 5 screening, 6 finished. */
 function stageIndex(status: string, stage: string | undefined): number {
   if (status !== 'running') return ORDER.length;
   // A stage this console does not know is read as the first: under-claiming
@@ -322,27 +329,66 @@ function varsStep(spec: AppSpec | undefined, at: number): DiscoveryStep {
   };
 }
 
-function trialStep(proposal: Partial<Proposal>, at: number): DiscoveryStep | undefined {
-  const trial = proposal.trial;
-  if (at !== 2 && !trial?.ran) return undefined;
-  const done = at > 2;
+/** A short name for an image Pando built: its ID or digest, abbreviated. */
+function shortImage(image: string): string {
+  const digest = image.includes('@') ? image.slice(image.indexOf('@') + 1) : image;
+  const hex = digest.includes(':') ? digest.slice(digest.indexOf(':') + 1) : digest;
+  return hex.slice(0, 12);
+}
+
+/**
+ * The build (R-311): detection builds the image the app would deploy, so the
+ * plan can show that image's score and the first deploy runs it. Shown while
+ * it runs and once there is a build; an app that runs a published image, or
+ * whose build waits on an answer, has none.
+ */
+function buildStep(proposal: Partial<Proposal>, under: Set<string>): DiscoveryStep | undefined {
+  const built = proposal.built;
+  const current = under.has('building');
+  if (!current && !built) return undefined;
   const findings: Finding[] = [];
-  let result: string | undefined;
-  if (done && trial?.ran) {
-    const ports = trial.observed_ports ?? [];
-    if (trial.crashed) {
-      findings.push({ key: 'Result', value: 'The app exited with an error', text: true });
-      result = 'Exited with an error';
-    } else if (!trial.started) {
-      findings.push({ key: 'Result', value: 'The app did not start', text: true });
-      result = 'Didn’t start';
-    } else {
-      findings.push({ key: 'Result', value: 'The app started', text: true });
-      result = ports.length ? `Started on :${ports.join(', :')}` : 'Started';
+  if (!current && built) {
+    if (built.image) findings.push({ key: 'Image', value: shortImage(built.image) });
+    for (const [service, image] of Object.entries(built.images ?? {})) {
+      findings.push({ key: service, value: shortImage(image) });
     }
-    if (ports.length) findings.push({ key: 'Opened', value: ports.map((p) => `:${p}`).join(' ') });
-    for (const path of trial.observed_writes ?? []) findings.push({ key: 'Wrote to', value: path });
   }
+  return {
+    id: 'build',
+    name: 'Build the image',
+    active: 'Building the image',
+    state: current ? 'current' : 'done',
+    result: current ? undefined : 'Built',
+    findings,
+  };
+}
+
+/** What a trial run that ran observed, as findings and a one-line result. */
+function trialOutcome(trial: NonNullable<Proposal['trial']>): { findings: Finding[]; result: string } {
+  const findings: Finding[] = [];
+  const ports = trial.observed_ports ?? [];
+  let result: string;
+  if (trial.crashed) {
+    findings.push({ key: 'Result', value: 'The app exited with an error', text: true });
+    result = 'Exited with an error';
+  } else if (trial.started) {
+    findings.push({ key: 'Result', value: 'The app started', text: true });
+    result = ports.length ? `Started on :${ports.join(', :')}` : 'Started';
+  } else {
+    findings.push({ key: 'Result', value: 'The app did not start', text: true });
+    result = 'Didn’t start';
+  }
+  if (ports.length) findings.push({ key: 'Opened', value: ports.map((p) => `:${p}`).join(' ') });
+  for (const path of trial.observed_writes ?? []) findings.push({ key: 'Wrote to', value: path });
+  return { findings, result };
+}
+
+function trialStep(proposal: Partial<Proposal>, under: Set<string>): DiscoveryStep | undefined {
+  const trial = proposal.trial;
+  const current = under.has('trying');
+  if (!current && !trial?.ran) return undefined;
+  const done = !current;
+  const { findings, result } = done && trial?.ran ? trialOutcome(trial) : { findings: [], result: undefined };
   return {
     id: 'trial',
     name: 'Try running it',
@@ -355,21 +401,35 @@ function trialStep(proposal: Partial<Proposal>, at: number): DiscoveryStep | und
 }
 
 /**
+ * The score line of the scan step. A scan of the source alone, for an app
+ * Pando builds whose build had to wait: its number is the source's, not the
+ * app's, so the plan shows the findings and no score until the image is
+ * scanned (R-311).
+ */
+function scoreFinding(security: Report): Finding | undefined {
+  if (security.awaiting_image) return { key: 'Score', value: AWAITING_IMAGE, text: true };
+  const score = security.scan?.score;
+  if (score === undefined || score === null) return undefined;
+  return { key: 'Score', value: `${score} / 100` };
+}
+
+/**
  * The security scan (R-310), as a step of the plan: shown while the scan runs,
  * and once there is a scan to report. An install with no scanner has neither,
  * and no step.
  */
-function scanStep(security: Report | undefined, at: number): DiscoveryStep | undefined {
+function scanStep(security: Report | undefined, at: number, under: Set<string>): DiscoveryStep | undefined {
   const scan = security?.scan;
-  if (at !== 3 && !(at > 3 && scan)) return undefined;
+  const current = under.has('scanning');
+  if (!current && !(at > AT_SCAN && scan)) return undefined;
   const step: DiscoveryStep = {
     id: 'scan',
     name: 'Scan for known vulnerabilities',
     active: 'Scanning for vulnerabilities',
-    state: at > 3 ? 'done' : 'current',
+    state: current ? 'current' : 'done',
     findings: [],
   };
-  if (at <= 3 || !scan || !security) return step;
+  if (current || !scan || !security) return step;
 
   if (scan.error) {
     step.result = 'Couldn’t scan';
@@ -378,11 +438,8 @@ function scanStep(security: Report | undefined, at: number): DiscoveryStep | und
   }
   const counts = security.counts;
   const total = counts.critical + counts.high + counts.medium + counts.low + counts.unknown;
-  // A scan of the source alone, for an app Pando builds: its number is the
-  // source's, not the app's, so the plan shows the findings and no score until
-  // the image is scanned (R-311).
-  if (security.awaiting_image) step.findings.push({ key: 'Score', value: AWAITING_IMAGE, text: true });
-  else if (scan.score !== undefined && scan.score !== null) step.findings.push({ key: 'Score', value: `${scan.score} / 100` });
+  const score = scoreFinding(security);
+  if (score) step.findings.push(score);
   const severities: Array<[string, number]> = [
     ['Critical', counts.critical],
     ['High', counts.high],
@@ -400,9 +457,9 @@ function scanStep(security: Report | undefined, at: number): DiscoveryStep | und
 /** Skip codes that say nothing: no adapter, nothing needed, blocked (R-335, R-336). */
 const QUIET = new Set(['not_configured', 'not_needed', 'blocked']);
 
-function aiStep(proposal: Partial<Proposal>, stage: string | undefined, at: number): DiscoveryStep | undefined {
+function aiStep(proposal: Partial<Proposal>, under: Set<string>): DiscoveryStep | undefined {
   const outcome = proposal.screening;
-  const running = at === 4 && stage === 'screening';
+  const running = under.has('screening');
   const visible = outcome && (outcome.ran || (outcome.skip_code && !QUIET.has(outcome.skip_code)));
   if (!running && !visible) return undefined;
 
@@ -424,6 +481,17 @@ function aiStep(proposal: Partial<Proposal>, stage: string | undefined, at: numb
     return step;
   }
 
+  screenedFindings(step, outcome, proposal, repair);
+  return step;
+}
+
+/** What a screening that ran found and did, onto its step. */
+function screenedFindings(
+  step: DiscoveryStep,
+  outcome: NonNullable<Proposal['screening']>,
+  proposal: Partial<Proposal>,
+  repair: boolean,
+): void {
   const answers = Object.entries(outcome.answers ?? {});
   const changes = (outcome.applied ?? []).filter((a) => a.amendment.kind !== 'answer_question');
   for (const change of changes) {
@@ -439,7 +507,16 @@ function aiStep(proposal: Partial<Proposal>, stage: string | undefined, at: numb
     const asked = (proposal.questions ?? []).filter((q) => !q.deferred).length;
     step.result = `Answered ${answers.length} of ${asked}`;
   }
-  return step;
+}
+
+/**
+ * Every step under way: the server's `running`, or its stage alone from a
+ * server that does not send one. Nothing while detection is finished.
+ */
+function underWay(input: DiscoveryInput): Set<string> {
+  if (input.status !== 'running') return new Set();
+  const running = input.running?.length ? input.running : [input.stage ?? 'fetching'];
+  return new Set(running);
 }
 
 /** The steps, in the order they run. Only steps that apply are listed. */
@@ -453,11 +530,14 @@ export function discoverySteps(input: DiscoveryInput): DiscoveryStep[] {
     runsStep(proposal, spec, at),
     varsStep(spec, at),
   ];
-  const trial = trialStep(proposal, at);
+  const under = underWay(input);
+  const build = buildStep(proposal, under);
+  if (build) steps.push(build);
+  const trial = trialStep(proposal, under);
   if (trial) steps.push(trial);
-  const scan = scanStep(input.security, at);
+  const scan = scanStep(input.security, at, under);
   if (scan) steps.push(scan);
-  const ai = aiStep(proposal, input.stage, at);
+  const ai = aiStep(proposal, under);
   if (ai) steps.push(ai);
   return steps;
 }
@@ -473,10 +553,15 @@ export function discoverySteps(input: DiscoveryInput): DiscoveryStep[] {
  * step is never shown done before the server says it is, only later.
  */
 export function paced(steps: DiscoveryStep[], revealed: number): DiscoveryStep[] {
+  // Once the pacing has caught up with the server, a step it says is under
+  // way beside an earlier one — the scan beside the build — is shown under
+  // way too, with nothing found yet. Before then the steps still play in turn.
+  const caughtUp = revealed >= finishedCount(steps);
   return steps.map((step, i) => {
     if (i < revealed) return step;
     if (i === revealed) return { ...step, state: 'current', result: undefined, failed: false };
-    return { ...step, state: 'pending', result: undefined, failed: false, findings: [] };
+    const state = caughtUp && step.state === 'current' ? 'current' : 'pending';
+    return { ...step, state, result: undefined, failed: false, findings: [] };
   });
 }
 
@@ -511,6 +596,7 @@ export function currentStep(steps: DiscoveryStep[]): DiscoveryStep | undefined {
  */
 const EXPECTED_MS: Record<string, number> = {
   read: 4_000,
+  build: 60_000,
   scan: 8_000,
   stack: 3_000,
   trial: 30_000,

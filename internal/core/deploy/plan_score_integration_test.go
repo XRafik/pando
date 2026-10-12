@@ -11,8 +11,6 @@ import (
 	"github.com/google/go-containerregistry/pkg/registry"
 	"github.com/stretchr/testify/require"
 
-	"github.com/trypando/pando/internal/adapter/api"
-	"github.com/trypando/pando/internal/core/audit"
 	"github.com/trypando/pando/internal/core/detection"
 	"github.com/trypando/pando/internal/core/oci"
 	"github.com/trypando/pando/internal/core/security"
@@ -27,14 +25,6 @@ type publishedProbe struct{ ref string }
 
 func (p publishedProbe) Published(context.Context, spec.Source) ([]detect.PublishedImage, error) {
 	return []detect.PublishedImage{{Ref: p.ref, Registry: "test"}}, nil
-}
-
-// detectionScans is main's detection shim: the security service, as the
-// system, with no revision.
-type detectionScans struct{ service *security.Service }
-
-func (d detectionScans) ScanSource(ctx context.Context, req api.ScanRequest) {
-	_, _ = d.service.Scan(ctx, req, audit.Event{PrincipalKind: audit.KindSystem, PrincipalID: "detection"})
 }
 
 // runDetection runs real detection for the harness's app: the checkout, the
@@ -54,15 +44,16 @@ func (h *scanHarness) runDetection(probe detect.RegistryProbe, images *oci.Image
 		Detections: state.NewDetections(h.db),
 		Sources:    source.Sources{WorkDir: h.t.TempDir()},
 		Job:        job,
-		Scanner:    detectionScans{service: h.service},
+		Scanner:    security.DetectionScanner{Service: h.service},
 	}
 	_, err := runner.Detect(context.Background(), h.app.ID)
 	require.NoError(h.t, err)
 }
 
 // TestR311_APlanDoesNotScoreAnImageNotYetBuilt asserts R-311 for the plan of an
-// app Pando builds from source, as it does for gabrielecirulli/2048. Detection
-// scans the repository before anything is built, and that number is the
+// app Pando builds from source on an install where detection builds nothing
+// (no builder to build with; TestR311_APlanScoresTheImageDetectionBuilt is the
+// ordinary case). Detection scans the repository alone, and that number is the
 // source's: the 2048 plan showed 100 / 100 and the deploy, scanning the image
 // it built, 61. The plan, the app's row and the app's report during the first
 // deploy carry the source's findings and no score for the app, saying it waits

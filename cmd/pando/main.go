@@ -582,7 +582,10 @@ func serve(ctx context.Context, configPath string) error {
 		WithSecurity(securityService).
 		WithSources(sources).
 		WithImages(images).
-		WithBuildRegistry(buildRegistry)
+		WithBuildRegistry(buildRegistry).
+		// A compose app's services build at once, as many as deploys may
+		// run at once here.
+		WithBuildConcurrency(deploy.DeployConcurrency(hostPolicy))
 
 	// The deploy queue (issue #72, O-32): a deploy is queued in Postgres and
 	// run by whichever replica has room, at most host policy's
@@ -615,7 +618,7 @@ func serve(ctx context.Context, configPath string) error {
 	detector := &detection.Runner{
 		// The score of what was proposed, before anybody decides whether to
 		// deploy it (R-312).
-		Scanner:    sourceScanner{service: securityService, logger: logger},
+		Scanner:    security.DetectionScanner{Service: securityService, Logger: logger},
 		Apps:       apps,
 		Detections: detections,
 		Policy:     hostPolicy,
@@ -652,7 +655,14 @@ func serve(ctx context.Context, configPath string) error {
 			// (docs/design/notes-registry-tier-namespaces.md).
 			Registry: registryprobe.New(),
 		},
+
+		// Detection builds what the app would deploy, the way a deploy
+		// builds it, so the plan shows the score of the image that will run
+		// (R-311); the first deploy runs that image rather than building it
+		// again.
+		Builder: deployer,
 	}
+	deployer.WithDetectionBuilds(detector)
 
 	// The detection queue, as the deploy queue: queued in Postgres, run where
 	// there is room, at most work.detections at once here.
@@ -2365,43 +2375,6 @@ func (n securityNotifier) Notify(ctx context.Context, userID, appID, subject, bo
 		Subject:    subject,
 		Body:       body,
 	})
-}
-
-// sourceScanner scores a checkout during detection (R-312).
-//
-// A shim rather than the security service directly: detection knows an app ID
-// and a directory, and nothing about scan requests, audit events or who is
-// asking — which here is nobody. Detection runs in the background after an app
-// is created, so the principal is the system, recorded as such.
-type sourceScanner struct {
-	service *security.Service
-	logger  *zap.Logger
-}
-
-func (s sourceScanner) ScanSource(ctx context.Context, req adapterapi.ScanRequest) {
-	if s.service == nil {
-		return
-	}
-	if _, configured := s.service.Configured(); !configured {
-		return
-	}
-
-	// No spec ID: there is no revision yet, and there may never be one — this
-	// is a scan of what was proposed, which is exactly the thing somebody is
-	// deciding about.
-	// The commit, and the published image by digest when the app runs one, so
-	// a deploy of this same source and image uses this scan rather than
-	// scanning it again.
-	appID := req.AppID
-	req.SpecID = ""
-	if _, err := s.service.Scan(ctx, req,
-		audit.Event{PrincipalKind: audit.KindSystem, PrincipalID: "detection"}); err != nil {
-		// Never fatal. The proposal is what this run is producing, and a
-		// scanner that could not read a checkout is recorded as a failed scan
-		// on the app already.
-		s.logger.Info("could not scan an app's source during detection",
-			zap.String("app_id", appID), zap.Error(err))
-	}
 }
 
 // startupPolicy turns the policy fields set in the startup config into the
