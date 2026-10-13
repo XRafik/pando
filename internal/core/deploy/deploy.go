@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -690,12 +691,8 @@ func (r *Runner) buildAll(ctx context.Context, s *spec.AppSpec, checkout *source
 	)
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(r.buildLimit(ctx))
-	for _, w := range s.Workloads {
-		if w.Build == nil {
-			// Names an image already. Nothing to build, and building something
-			// to replace it would ignore what the compose file said.
-			continue
-		}
+	for _, group := range sameBuilds(s.Workloads) {
+		w := group[0]
 		g.Go(func() error {
 			fmt.Fprintf(shared, "=> Building %s\n", w.Name)
 			// Each service's lines carry its name, since several write here
@@ -712,7 +709,9 @@ func (r *Runner) buildAll(ctx context.Context, s *spec.AppSpec, checkout *source
 				return err
 			}
 			mu.Lock()
-			images[w.Name] = image
+			for _, same := range group {
+				images[same.Name] = image
+			}
 			mu.Unlock()
 			return nil
 		})
@@ -721,6 +720,36 @@ func (r *Runner) buildAll(ctx context.Context, s *spec.AppSpec, checkout *source
 		return "", nil, err
 	}
 	return "", images, nil
+}
+
+// sameBuilds groups the workloads that build an image by what they build, in
+// spec order, so each image is built once.
+//
+// Compose builds a shared image once: an app, its migration and its revert
+// service all declaring one `build:` are one build. Pando ran all three at
+// once, and Swift's builds collided on their shared cache mount with
+// "database is locked" (issue #90). A workload with no build names an image
+// already and is not here: building something to replace it would ignore what
+// the compose file said.
+func sameBuilds(workloads []spec.Workload) [][]spec.Workload {
+	var groups [][]spec.Workload
+	for _, w := range workloads {
+		if w.Build == nil {
+			continue
+		}
+		placed := false
+		for i, group := range groups {
+			if reflect.DeepEqual(group[0].Build, w.Build) {
+				groups[i] = append(group, w)
+				placed = true
+				break
+			}
+		}
+		if !placed {
+			groups = append(groups, []spec.Workload{w})
+		}
+	}
+	return groups
 }
 
 func (r *Runner) build(ctx context.Context, s *spec.AppSpec, checkout *source.Checkout, sink io.Writer, wb *spec.WorkloadBuild, cacheNamespace, deploymentID string) (string, error) {
@@ -803,6 +832,10 @@ func (r *Runner) build(ctx context.Context, s *spec.AppSpec, checkout *source.Ch
 
 		// Named by the deployment, never a tag the next build moves (R-146).
 		Tag: deploymentID,
+
+		// Detection's build only, and only the app-wide build: a compose
+		// service's Dockerfile is the repository's, not a plan to steer.
+		Steer: wb == nil && detect.Steers(ctx),
 	}
 
 	if delivery == api.ImageDeliveryRegistry {
@@ -819,6 +852,7 @@ func (r *Runner) build(ctx context.Context, s *spec.AppSpec, checkout *source.Ch
 		if err != nil {
 			return "", err
 		}
+		keepSteeredPlan(s, req, result)
 		// What runs is repository@digest (R-120). A push the builder could not
 		// pin is not run by tag instead.
 		if result.Digest == "" || !strings.HasSuffix(result.ImageRef, "@"+result.Digest) {
@@ -857,10 +891,19 @@ func (r *Runner) build(ctx context.Context, s *spec.AppSpec, checkout *source.Ch
 	if importErr != nil {
 		return "", importErr
 	}
+	keepSteeredPlan(s, req, result)
 	if importedID != "" {
 		return importedID, nil
 	}
 	return result.ImageRef, nil
+}
+
+// keepSteeredPlan records the plan a steered build was built from in the spec
+// it built, so the spec says how the image it names was made (R-020).
+func keepSteeredPlan(s *spec.AppSpec, req api.BuildRequest, result api.BuildResult) {
+	if req.Steer && len(result.GeneratedFiles) > 0 {
+		s.Build.GeneratedFiles = result.GeneratedFiles
+	}
 }
 
 // startCommand is the primary workload's command as a shell command line, for a
@@ -955,6 +998,7 @@ func bundlePlanFor(s *spec.AppSpec, image string, perWorkload map[string]string,
 			WorkingDir: w.WorkingDir,
 			Env:        env,
 			DependsOn:  append(append([]string(nil), w.DependsOn...), svcs.dependsOn(s, w)...),
+			Aliases:    w.Aliases,
 			Exposed:    w.Exposed,
 			Resources: api.ResourcePlan{
 				CPUMillis:   s.Resources.CPUMillis,
@@ -1100,9 +1144,25 @@ func resolveEnv(s *spec.AppSpec, w spec.Workload, secrets map[string]secret.Valu
 // The value is the port Pando already sends traffic to, so this changes where
 // an app listens only toward where it is reached. A PORT the spec sets, even an
 // empty one somebody typed, is left alone.
+//
+// Nor is it set for a port the trial watched the app open. Detection's trial
+// starts the app without PORT, so a watched port is where the app listens when
+// left to itself, and PORT can only move it somewhere else. Wishlist's image
+// runs Caddy on 3280 in front of Node on 3000, and Node reads PORT: told 3280,
+// it collided with Caddy and the app answered every request with 502 (issue
+// #90).
 func defaultPort(w spec.Workload) (string, bool) {
 	if !w.Primary || len(w.Ports) == 0 {
 		return "", false
+	}
+	port, ok := w.HTTPPort()
+	if !ok {
+		return "", false
+	}
+	for _, p := range w.Ports {
+		if p.Number == port && p.Source == spec.PortObserved {
+			return "", false
+		}
 	}
 	for _, e := range w.Env {
 		if e.Key != "PORT" {
@@ -1114,7 +1174,7 @@ func defaultPort(w spec.Workload) (string, bool) {
 			return "", false
 		}
 	}
-	return strconv.Itoa(w.Ports[0].Number), true
+	return strconv.Itoa(port), true
 }
 
 // healthPlan applies the source precedence in R-221.
@@ -1150,9 +1210,11 @@ func healthPlan(s *spec.AppSpec, w spec.Workload) *api.HealthPlan {
 // degraded, which is recoverable and still being worked, not failed.
 func (r *Runner) waitForHealth(ctx context.Context, runtime api.RuntimeAdapter, appID string, bundle api.BundlePlan, sink io.Writer) (bool, error) {
 	started := time.Now()
-	deadline := started.Add(2 * time.Minute)
+	deadline := started.Add(startWait)
 	settledSince := started
 	var restarted time.Time
+	portWorkload, port, waitsOnPort := waitPort(bundle)
+	saidWaiting := false
 
 	for {
 		observed, err := runtime.Observe(ctx, api.BundleRef{BundleID: appID})
@@ -1193,13 +1255,30 @@ func (r *Runner) waitForHealth(ctx context.Context, runtime api.RuntimeAdapter, 
 		// that exits a second after it starts is running when it is first
 		// observed, and was reported deployed on that one glimpse (issue #55).
 		if allRunning && healthy && time.Since(settledSince) >= exitSettle {
-			return true, nil
+			// And accepting connections, when no health check says more
+			// (R-221: TCP connect before process liveness). Running is not
+			// listening: a JVM app runs for a minute before it opens its port.
+			if !waitsOnPort || portOpen(ctx, runtime, appID, portWorkload, port) {
+				if saidWaiting {
+					fmt.Fprintf(sink, "=> The app is accepting connections on port %d\n", port)
+				}
+				return true, nil
+			}
+			if !saidWaiting {
+				fmt.Fprintf(sink, "=> The app is running; waiting for it to accept connections on port %d\n", port)
+				saidWaiting = true
+			}
 		}
 		if time.Now().After(deadline) {
 			// Still stopped after being started again for the whole window:
 			// the app does not run, and the deploy says so with its output.
 			if exited, ok := primaryExited(bundle, observed); ok {
 				return false, exitedFailure(ctx, runtime, appID, exited, sink)
+			}
+			if saidWaiting {
+				fmt.Fprintf(sink, "   After %s the app had not accepted a connection on port %d. "+
+					"If it listens on another port, change the app's port in its settings.\n",
+					startWait, port)
 			}
 			return false, nil
 		}

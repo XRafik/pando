@@ -1,7 +1,6 @@
 package detect
 
 import (
-	"bufio"
 	"fmt"
 	"io"
 	"path"
@@ -50,11 +49,26 @@ func ImportCompose(src api.SourceView, name string) (Draft, error) {
 		return Draft{}, errs.Wrap(errs.ValidInvalid, "Could not read "+name+".", err)
 	}
 
-	var file composeFile
-	if err := yaml.Unmarshal(raw, &file); err != nil {
-		return Draft{}, errs.Wrap(errs.ValidInvalid,
+	invalid := func(err error) error {
+		return errs.Wrap(errs.ValidInvalid,
 			"Could not understand "+name+" — it is not valid compose YAML.", err).
 			WithRemedy("Check the file with `docker compose config` and fix what it reports.")
+	}
+
+	// Interpolated before anything reads it, as `docker compose` does: every
+	// value in the file, against the `.env` beside it (see composeVars).
+	var tree map[string]any
+	if err := yaml.Unmarshal(raw, &tree); err != nil {
+		return Draft{}, invalid(err)
+	}
+	vars := newComposeVars(src, name)
+	resolved, err := yaml.Marshal(vars.interpolate(tree))
+	if err != nil {
+		return Draft{}, invalid(err)
+	}
+	var file composeFile
+	if err := yaml.Unmarshal(resolved, &file); err != nil {
+		return Draft{}, invalid(err)
 	}
 	if len(file.Services) == 0 {
 		return Draft{}, errs.Newf(errs.ValidInvalid,
@@ -62,11 +76,47 @@ func ImportCompose(src api.SourceView, name string) (Draft, error) {
 			WithRemedy("Add a `services:` section naming at least one service.")
 	}
 
-	imp := &composeImport{file: file, source: name, src: src}
+	imp := &composeImport{file: file, source: name, src: src, vars: vars}
 	if err := imp.rejectIncompatible(); err != nil {
 		return Draft{}, err
 	}
 	return imp.draft(), nil
+}
+
+// legacyCompose reports a compose file in the version 1 format: services at
+// the top level, with no `services:` key. Compose v2 refuses to run one, so
+// it says nothing about how the app runs today, and refusing the repository
+// over it left nbviewer undeployed beside a working Dockerfile (issue #90).
+// It bids nothing, and the rest of the repository is read instead.
+func legacyCompose(src api.SourceView, name string) bool {
+	f, err := src.Open(name)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+	var top map[string]any
+	if err := yaml.NewDecoder(io.LimitReader(f, 4<<20)).Decode(&top); err != nil || len(top) == 0 {
+		return false
+	}
+	if _, ok := top["services"]; ok {
+		return false
+	}
+	for key, v := range top {
+		if key == "version" {
+			continue
+		}
+		service, ok := v.(map[string]any)
+		if !ok {
+			continue
+		}
+		if _, ok := service["image"]; ok {
+			return true
+		}
+		if _, ok := service["build"]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // --- the compose file, as much of it as Pando reads -------------------------
@@ -134,8 +184,17 @@ type composeImport struct {
 
 	warnings []spec.Warning
 
-	// valueSlots are values env_file templates say the app needs.
+	// valueSlots are values the app needs that nothing in the repository
+	// holds: names an env_file template leaves empty, and variables an
+	// environment entry takes from a shell Pando does not have.
 	valueSlots []spec.Slot
+
+	// vars is what the file was interpolated against.
+	vars *composeVars
+
+	// passedThrough are environment entries with no value, which compose
+	// takes from its shell and Pando has nowhere to take from.
+	passedThrough []string
 }
 
 // isFile reports whether a relative compose path names a regular file in the
@@ -168,7 +227,7 @@ func (c *composeImport) isFile(hostPath string) bool {
 func (c *composeImport) names() []string {
 	names := make([]string, 0, len(c.file.Services))
 	for name, s := range c.file.Services {
-		if len(s.Profiles) == 0 {
+		if len(s.Profiles) == 0 && !scaledToZero(s) {
 			names = append(names, name)
 		}
 	}
@@ -178,10 +237,65 @@ func (c *composeImport) names() []string {
 		}
 	}
 	sort.Strings(names)
+
+	// A proxy that routes by reading the runtime socket is left out when
+	// there is something else to run (see routesBySocket).
+	var apps []string
+	for _, name := range names {
+		if !routesBySocket(c.file.Services[name]) {
+			apps = append(apps, name)
+		}
+	}
+	if len(apps) > 0 {
+		return apps
+	}
 	return names
 }
 
-// profiled returns the services left out because they sit behind a profile.
+// socketProxies are reverse proxies that discover what to route to by
+// reading the container runtime's socket.
+var socketProxies = []string{"traefik", "nginx-proxy", "caddy-docker-proxy", "docker-gen"}
+
+// routesBySocket reports a service that is a reverse proxy finding the other
+// services through the container runtime's socket.
+//
+// Pando's own proxy is what gives an app its address and routes to it
+// (R-023), and no app is given the runtime socket (R-099), so a compose
+// file's Traefik in front of its services has nothing left to do. It was
+// refused for the socket, and the whole stack with it — the full-stack
+// FastAPI template, and every app whose compose file brings its own Traefik
+// (issue #90). It is left out, with a warning, when the file has something
+// else to run.
+func routesBySocket(s composeService) bool {
+	image := strings.ToLower(s.Image)
+	proxy := false
+	for _, p := range socketProxies {
+		if strings.Contains(image, p) {
+			proxy = true
+			break
+		}
+	}
+	if !proxy {
+		return false
+	}
+	for _, m := range parseMounts(s.Volumes) {
+		if strings.HasSuffix(path.Clean(m.hostPath), ".sock") {
+			return true
+		}
+	}
+	return false
+}
+
+// scaledToZero reports a service with `deploy.replicas: 0`, which `docker
+// compose up` creates no container for. It is a tool the author runs by hand —
+// Vapor's templates declare `migrate` and `revert` this way, beside the app and
+// sharing its image — and Pando started both alongside the app (issue #90).
+func scaledToZero(s composeService) bool {
+	return s.Deploy != nil && s.Deploy.Replicas != nil && *s.Deploy.Replicas == 0
+}
+
+// profiled returns the services left out because they sit behind a profile
+// or are scaled to zero.
 func (c *composeImport) profiled() []string {
 	kept := map[string]bool{}
 	for _, name := range c.names() {
@@ -259,6 +373,11 @@ func (c *composeImport) rejectIncompatible() error {
 				continue
 			}
 			if isAbsoluteHostPath(mount.hostPath) {
+				if hostMountKind(mount) != hostRefused {
+					// A directory of the app's data, or the host's clock:
+					// rewritten, not refused (see mounts).
+					continue
+				}
 				found = append(found, rejection{name, "volume " + mount.raw,
 					"This mounts a path from the host machine into the app. Pando has no way to " +
 						"honor it: the app may not run on the machine holding that path, and if it " +
@@ -356,6 +475,31 @@ func (c *composeImport) build() spec.Build {
 	return spec.Build{Strategy: spec.BuildCompose, ComposeFile: c.source}
 }
 
+// workloadBuild is a service's `build:` as the spec records it.
+func workloadBuild(raw any) *spec.WorkloadBuild {
+	context, dockerfile, target := buildFields(raw)
+	return &spec.WorkloadBuild{Context: context, Dockerfile: dockerfile, Target: target, Args: buildArgs(raw)}
+}
+
+// builtBy returns the service that builds the image another names, if one
+// does: a service with both `build:` and an `image:` equal to this one.
+func (c *composeImport) builtBy(service, image string) string {
+	if strings.TrimSpace(image) == "" {
+		return ""
+	}
+	var names []string
+	for name, s := range c.file.Services {
+		if name != service && s.Build != nil && s.Image == image {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	sort.Strings(names)
+	return names[0]
+}
+
 // buildFields reads compose's two spellings of `build:`.
 //
 // A string is the context directory. A map carries context, dockerfile and
@@ -374,7 +518,7 @@ func buildFields(raw any) (context, dockerfile, target string) {
 }
 
 // buildArgs reads a service's `build: args:`, in either of compose's shapes —
-// a list of KEY=VALUE or a map — interpolated as the rest of the file is. They
+// a list of KEY=VALUE or a map, interpolated with the rest of the file. They
 // were not imported, so a Dockerfile told `NODE_ENV=development` built as
 // production (issue #55). An argument with no value in the file is left out:
 // compose would take it from the shell, and there is none here.
@@ -388,7 +532,7 @@ func buildArgs(raw any) []spec.KV {
 	case []any:
 		for _, entry := range a {
 			if k, v, found := strings.Cut(scalar(entry), "="); found && k != "" {
-				args = append(args, spec.KV{Key: k, Value: interpolate(v)})
+				args = append(args, spec.KV{Key: k, Value: v})
 			}
 		}
 	case map[string]any:
@@ -401,7 +545,7 @@ func buildArgs(raw any) []spec.KV {
 			if a[k] == nil {
 				continue
 			}
-			args = append(args, spec.KV{Key: k, Value: interpolate(scalar(a[k]))})
+			args = append(args, spec.KV{Key: k, Value: scalar(a[k])})
 		}
 	}
 	return args
@@ -437,6 +581,20 @@ func (c *composeImport) draft() Draft {
 	}
 
 	for _, name := range c.profiled() {
+		if routesBySocket(c.file.Services[name]) {
+			c.rewrote(name, "service "+name,
+				"This service is a reverse proxy that finds the others by reading the container "+
+					"runtime's socket. Pando gives the app its own address and routes to it, and no "+
+					"app is given the runtime socket, so the service was not imported. Routing labels "+
+					"on the other services are not used either.")
+			continue
+		}
+		if scaledToZero(c.file.Services[name]) {
+			c.rewrote(name, "deploy.replicas: 0",
+				"Pando runs what `docker compose up` runs, which starts no container for a service "+
+					"scaled to zero. The service was not imported.")
+			continue
+		}
 		c.rewrote(name, "profiles: "+strings.Join(c.file.Services[name].Profiles, ", "),
 			"Pando runs what `docker compose up` runs, which leaves out a service behind a "+
 				"profile. The service was not imported.")
@@ -468,7 +626,7 @@ func (c *composeImport) draft() Draft {
 		if !candidate {
 			continue
 		}
-		if reachedByURL(d.Workloads, name, slotType) {
+		if reachedByURL(d.Workloads, c.hostnames(name), slotType) {
 			backing[name] = slotType
 			continue
 		}
@@ -484,17 +642,23 @@ func (c *composeImport) draft() Draft {
 	d.Volumes = c.volumes(running)
 
 	// A service that is no longer a workload is no longer something to wait
-	// for. Pando starts a provisioned service before the app either way.
+	// for. Pando starts a provisioned service before the app either way, and
+	// one left out — a proxy, a tool behind a profile — never starts.
+	imported := map[string]bool{}
+	for _, w := range d.Workloads {
+		imported[w.Name] = true
+	}
 	for i := range d.Workloads {
 		var kept []string
 		for _, on := range d.Workloads[i].DependsOn {
-			if _, provided := backing[on]; !provided {
+			if imported[on] {
 				kept = append(kept, on)
 			}
 		}
 		d.Workloads[i].DependsOn = kept
 	}
 
+	c.unsetWarnings()
 	d.Warnings = c.warnings
 	return d
 }
@@ -530,7 +694,7 @@ func (c *composeImport) wire(backing map[string]spec.SlotType, workloads []spec.
 				e := &workloads[i].Env[j]
 				// A connection URL only. A bare `REDIS_HOST: redis` given the
 				// whole DSN is a hostname nothing can resolve.
-				if e.Value == nil || schemeType(*e.Value) != backing[service] || !pointsAt(*e.Value, service) {
+				if e.Value == nil || schemeType(*e.Value) != backing[service] || !pointsAtAny(*e.Value, c.hostnames(service)) {
 					continue
 				}
 				if len(filled) == 0 {
@@ -554,6 +718,10 @@ func (c *composeImport) wire(backing map[string]spec.SlotType, workloads []spec.
 			Required: true,
 			Evidence: evidence,
 
+			// The provisioned instance answers to the service's names too, so
+			// a start command waiting on `db:5432` still finds it.
+			Aliases: c.hostnames(service),
+
 			// Filled, because the compose file already answered it: it runs a
 			// database in a container beside the app, and "Pando runs one
 			// inside this app" is that same sentence in Pando's vocabulary.
@@ -575,15 +743,34 @@ func (c *composeImport) wire(backing map[string]spec.SlotType, workloads []spec.
 
 // reachedByURL reports whether some workload holds a connection URL for the
 // service, in a scheme the provisioned replacement's own URL uses.
-func reachedByURL(workloads []spec.Workload, service string, t spec.SlotType) bool {
+func reachedByURL(workloads []spec.Workload, hosts []string, t spec.SlotType) bool {
 	for _, w := range workloads {
 		for _, e := range w.Env {
 			if e.Value == nil || !strings.Contains(*e.Value, "://") {
 				continue
 			}
-			if schemeType(*e.Value) == t && pointsAt(*e.Value, service) {
+			if schemeType(*e.Value) == t && pointsAtAny(*e.Value, hosts) {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// hostnames are the names a service is reached by: its own, and its
+// container_name, which compose also resolves.
+func (c *composeImport) hostnames(service string) []string {
+	names := []string{service}
+	if cn := strings.TrimSpace(c.file.Services[service].ContainerName); cn != "" && cn != service {
+		names = append(names, cn)
+	}
+	return names
+}
+
+func pointsAtAny(value string, hosts []string) bool {
+	for _, h := range hosts {
+		if pointsAt(value, h) {
+			return true
 		}
 	}
 	return false
@@ -613,8 +800,8 @@ func (c *composeImport) workload(name string, only bool) spec.Workload {
 	w := spec.Workload{
 		Name:       name,
 		Image:      s.Image,
-		Command:    interpolateAll(stringList(s.Command)),
-		Entrypoint: interpolateAll(stringList(s.Entrypoint)),
+		Command:    stringList(s.Command),
+		Entrypoint: stringList(s.Entrypoint),
 		WorkingDir: s.WorkingDir,
 		Env:        c.env(name, s),
 		Ports:      c.ports(name, s),
@@ -634,16 +821,31 @@ func (c *composeImport) workload(name string, only bool) spec.Workload {
 	// compose file with two of them produces two images instead of one and a
 	// warning.
 	if s.Build != nil {
-		context, dockerfile, target := buildFields(s.Build)
-		w.Build = &spec.WorkloadBuild{Context: context, Dockerfile: dockerfile, Target: target, Args: buildArgs(s.Build)}
+		w.Build = workloadBuild(s.Build)
+	} else if builder := c.builtBy(name, s.Image); builder != "" {
+		// `image: app` naming the image another service builds is that image,
+		// as it is under compose: the build tags it locally and this service
+		// runs it. Pando pulled docker.io/library/app instead, which does not
+		// exist (issue #90). The same build is recorded, and the deploy builds
+		// it once for both (see deploy's buildAll).
+		w.Build = workloadBuild(c.file.Services[builder].Build)
 	}
 
 	// Pando names containers itself, because two apps importing compose files
 	// that both say `container_name: web` would otherwise collide install-wide.
+	//
+	// The name still resolves inside the app, as it does under compose, where
+	// it is how the other services reach this one: an nginx upstream of
+	// `appseed_app:5005`, a DATABASE_URL naming the database's container
+	// (issue #90). Only inside the app's own network, so nothing collides.
 	if s.ContainerName != "" {
+		if _, taken := c.file.Services[s.ContainerName]; !taken && s.ContainerName != name {
+			w.Aliases = []string{s.ContainerName}
+		}
 		c.rewrote(name, "container_name: "+s.ContainerName,
 			"Pando names containers itself so that two apps importing compose files "+
-				"cannot collide over the same name.")
+				"cannot collide over the same name. The other services in this app still reach it as "+
+				s.ContainerName+".")
 	}
 
 	// Restart policy is configuration, not a question (R-104). Pando applies
@@ -718,6 +920,16 @@ var notHTTP = map[int]bool{
 	465: true, 587: true, 993: true, 995: true, 1433: true, 1521: true,
 	2222: true, 3306: true, 5432: true, 5672: true, 6379: true, 9042: true,
 	11211: true, 27017: true, 1025: true, 1143: true, 2525: true,
+
+	// Brokers, cluster links and binary protocols an image lists beside its
+	// web UI (issue #90): MySQL's X protocol, MQTT and MQTT over TLS, AMQP
+	// over TLS, STOMP, epmd and Erlang distribution (RabbitMQ, EMQX), Neo4j's
+	// Bolt, OTLP and Jaeger over gRPC, BitTorrent, ZooKeeper, Kafka, NATS, and
+	// Elasticsearch's transport.
+	33060: true, 1883: true, 8883: true, 5671: true, 61613: true,
+	4369: true, 25672: true, 4370: true, 5369: true, 7687: true,
+	4317: true, 14250: true, 6881: true, 2181: true, 9092: true,
+	4222: true, 6222: true, 9300: true,
 }
 
 // webPortsFirst orders a service's ports so the first is one a browser can use.
@@ -777,7 +989,8 @@ func (c *composeImport) volumes(running []string) []spec.Volume {
 	for _, service := range running {
 		for _, m := range serviceMounts(service, c.file.Services[service].Volumes) {
 			// A single file is carried in the spec, not stored in a volume.
-			if m.hostPath != "" && c.isFile(m.hostPath) {
+			// The host's clock is not mounted at all.
+			if m.hostPath != "" && c.isFile(m.hostPath) || isHostClock(m) {
 				continue
 			}
 			if k := c.dirMount(service, m); k == dirInImage || k == dirCarried {
@@ -1122,6 +1335,13 @@ func (c *composeImport) mounts(name string, s composeService) []spec.Mount {
 		if k := c.dirMount(name, m); k == dirInImage || k == dirCarried {
 			continue
 		}
+		if isHostClock(m) {
+			c.rewrote(name, "volume "+m.raw,
+				"This mounts the host's time zone into the app. Pando does not mount paths from the "+
+					"host machine, so the app keeps its image's time zone, usually UTC. Set TZ on the "+
+					"app's variables if it needs another.")
+			continue
+		}
 		mounts = append(mounts, spec.Mount{
 			VolumeID: m.volumeName, Path: m.containerPath, ReadOnly: m.readOnly,
 		})
@@ -1132,7 +1352,13 @@ func (c *composeImport) mounts(name string, s composeService) []spec.Mount {
 		// source mount that turns up empty fails loudly on the trial run, while
 		// discarded data looks like a healthy deploy until the second one
 		// (R-203).
-		if m.hostPath != "" {
+		if isAbsoluteHostPath(m.hostPath) {
+			c.rewrote(name, "volume "+m.raw,
+				"The host directory "+m.hostPath+" became a volume Pando manages, mounted at "+
+					m.containerPath+". It starts empty: Pando cannot mount a path from the host "+
+					"machine, so what is in that directory there is not copied. Restore it into the "+
+					"volume if the app needs it.")
+		} else if m.hostPath != "" {
 			c.rewrote(name, "volume "+m.raw,
 				"The host directory "+m.hostPath+" became a volume Pando manages, mounted at "+
 					m.containerPath+". Pando cannot mount a path from the host machine, and "+
@@ -1142,18 +1368,24 @@ func (c *composeImport) mounts(name string, s composeService) []spec.Mount {
 	return mounts
 }
 
-// env imports a service's environment, resolving compose substitutions the
-// same way mount sources already were.
+// env imports a service's environment, as interpolated (see composeVars).
 //
 // `APP_DOMAIN: ${APP_DOMAIN:-localhost}` used to arrive at the container
 // verbatim, as the fourteen characters "${APP_DOMAIN:-localhost}" — a value no
 // app can use and nothing explains, from a file whose own semantics say an
 // unset variable takes its default.
 //
-// A substitution with no default has no value to resolve to, so it keeps its
-// spelling and says so: somebody has to supply it on the app's settings, and a
-// variable that silently became empty would be an app misconfigured with no
-// sign of it (R-102).
+// A value that is one variable nothing sets — `ROOT_URL: ${ROOT_URL}` — is the
+// author saying the value comes from outside the file. It reached the app as
+// the literal text "${ROOT_URL}", which Rails read as a truthy FORCE_SSL and
+// Meteor as a URL (issue #90). It is a required slot now: the plan asks for it
+// and the deploy waits until it has one (R-130, R-132).
+//
+// An entry with no value at all — `- SECRET` — passes the variable through
+// from the shell running compose, and is left out when the shell does not set
+// it. With no shell here, the `.env` beside the file is the only place it can
+// come from; otherwise it lands on the app's variables with nothing in it,
+// which is what a hole is (R-130) and what an untyped .env.example key does.
 func (c *composeImport) env(name string, s composeService) []spec.EnvEntry {
 	// `env_file:` first, because `environment:` overrides it — compose's own
 	// precedence, and the reason DATABASE_URL keeps the value the compose file
@@ -1165,22 +1397,36 @@ func (c *composeImport) env(name string, s composeService) []spec.EnvEntry {
 		at[e.Key] = i
 	}
 
-	add := func(key, raw string) {
+	put := func(entry spec.EnvEntry) {
+		if i, seen := at[entry.Key]; seen {
+			entries[i] = entry
+			return
+		}
+		at[entry.Key] = len(entries)
+		entries = append(entries, entry)
+	}
+	add := func(key, value string, bare bool) {
 		key = strings.TrimSpace(key)
 		if key == "" {
 			return
 		}
-		value := interpolate(raw)
-		if strings.Contains(value, "${") {
-			c.unresolved(name, key, value)
-		}
-		entry := spec.EnvEntry{Key: key, Value: &value, Source: spec.EnvFromCompose}
-		if i, seen := at[key]; seen {
-			entries[i] = entry
+		if variable, ok := c.vars.envSlots[name][key]; ok {
+			ref := variable
+			c.requireVariable(name, key, variable)
+			put(spec.EnvEntry{Key: key, SlotRef: &ref, Source: spec.EnvFromCompose})
 			return
 		}
-		at[key] = len(entries)
-		entries = append(entries, entry)
+		if bare {
+			v, ok := c.vars.values[key]
+			if !ok {
+				empty := ""
+				c.passedThrough = append(c.passedThrough, key)
+				put(spec.EnvEntry{Key: key, Value: &empty, Source: spec.EnvFromDetection})
+				return
+			}
+			value = v
+		}
+		put(spec.EnvEntry{Key: key, Value: &value, Source: spec.EnvFromCompose})
 	}
 
 	switch v := s.Environment.(type) {
@@ -1191,18 +1437,37 @@ func (c *composeImport) env(name string, s composeService) []spec.EnvEntry {
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
-			add(k, scalar(v[k]))
+			add(k, scalar(v[k]), v[k] == nil)
 		}
 	case []any:
 		for _, raw := range v {
 			k, v, found := strings.Cut(scalar(raw), "=")
-			if !found {
-				continue
-			}
-			add(k, v)
+			add(k, v, !found)
 		}
 	}
 	return entries
+}
+
+// requireVariable records a variable an environment entry takes from a shell
+// Pando does not have, as a required slot named for the variable.
+func (c *composeImport) requireVariable(service, key, variable string) {
+	for _, s := range c.valueSlots {
+		if s.Key == variable {
+			return
+		}
+	}
+	evidence := fmt.Sprintf("the compose service %q sets %s to ${%s}, and nothing in the repository gives %s a value",
+		service, key, variable, variable)
+	if key == variable {
+		evidence = fmt.Sprintf("the compose service %q takes %s from the shell running `docker compose`, "+
+			"and nothing in the repository gives it a value", service, key)
+	}
+	c.valueSlots = append(c.valueSlots, spec.Slot{
+		Key:      variable,
+		Type:     slotTypeFor(variable, ""),
+		Required: true,
+		Evidence: []string{evidence},
+	})
 }
 
 // fromEnvFiles imports what a service's `env_file:` points at.
@@ -1254,7 +1519,9 @@ func (c *composeImport) fromEnvFiles(service string, s composeService) []spec.En
 		for _, kv := range declared {
 			empty := ""
 			entry := spec.EnvEntry{Key: kv.Key, Value: &empty, Source: spec.EnvFromDetection}
-			if strings.TrimSpace(kv.Value) == "" {
+			// A placeholder is no value either: `SESSION_SECRET=change-me`
+			// says the same thing `SESSION_SECRET=` does, louder.
+			if strings.TrimSpace(kv.Value) == "" || isPlaceholder(kv.Value) {
 				ref := kv.Key
 				entry = spec.EnvEntry{Key: kv.Key, SlotRef: &ref, Source: spec.EnvFromDetection}
 				c.requireValue(kv.Key, template, name)
@@ -1283,6 +1550,7 @@ func (c *composeImport) requireValue(key, template, envFile string) {
 		Key:      key,
 		Type:     spec.SlotUnknown,
 		Required: true,
+		Format:   formatFor(key, ""),
 		Evidence: []string{fmt.Sprintf("named with no value in %s, the template for %s, which the compose file requires", template, envFile)},
 	})
 }
@@ -1334,14 +1602,9 @@ func (c *composeImport) readEnvAssignments(name string) ([]assignment, bool) {
 	}
 	defer func() { _ = f.Close() }()
 
-	var out []assignment
-	scanner := bufio.NewScanner(io.LimitReader(f, 64<<10))
-	for scanner.Scan() {
-		if m := envAssignment.FindStringSubmatch(scanner.Text()); m != nil {
-			out = append(out, assignment{Key: m[1], Value: strings.TrimSpace(m[2])})
-		}
-	}
-	return out, true
+	// Read as compose reads it: quotes removed, an inline comment dropped.
+	// The value is what reaches the container, and `PORT=8080 # web` is 8080.
+	return parseDotenv(f), true
 }
 
 // templateFor finds the committed template beside an env file that is not.
@@ -1361,15 +1624,40 @@ func (c *composeImport) templateFor(name string) (string, []assignment, bool) {
 	return "", nil, false
 }
 
-// unresolved warns about a variable whose value the compose file does not hold.
-func (c *composeImport) unresolved(service, key, value string) {
-	c.warnings = append(c.warnings, spec.Warning{
-		Code: spec.WarnComposeConstructRewritten,
-		Message: fmt.Sprintf("In the compose service %q, %s is set to %s, which takes its value "+
-			"from the shell running `docker compose`. Pando has no such shell. Set %s on this "+
-			"app's variables, or it reaches the app as written.",
-			service, key, value, key),
-	})
+// unsetWarnings says which variables the file reads that nothing sets.
+//
+// Compose substitutes an empty string for each and warns; so does Pando, once
+// for the file rather than once per place. A variable that is the whole of an
+// environment value is a slot instead, and asked for (see env), so it is not
+// repeated here.
+func (c *composeImport) unsetWarnings() {
+	asked := map[string]bool{}
+	for _, s := range c.valueSlots {
+		asked[s.Key] = true
+	}
+	var unset []string
+	for _, name := range c.vars.missingNames() {
+		if !asked[name] {
+			unset = append(unset, name)
+		}
+	}
+	if len(unset) > 0 {
+		c.warnings = append(c.warnings, spec.Warning{
+			Code: spec.WarnComposeConstructRewritten,
+			Message: fmt.Sprintf("%s reads %s from the shell running `docker compose`, and neither the "+
+				"repository nor a %s file beside it sets them. Pando left them empty, as compose does. "+
+				"If the app needs one, set it on this app's variables.",
+				c.source, strings.Join(truncate(unset, 8), ", "), envFileName),
+		})
+	}
+	if len(c.passedThrough) > 0 {
+		c.warnings = append(c.warnings, spec.Warning{
+			Code: spec.WarnComposeConstructRewritten,
+			Message: fmt.Sprintf("%s passes %s through from the shell running `docker compose`, which "+
+				"Pando does not have. They are on this app's variables with no value; set the ones "+
+				"the app needs.", c.source, strings.Join(truncate(c.passedThrough, 8), ", ")),
+		})
+	}
 }
 
 func (c *composeImport) rewrote(service, construct, why string) {
@@ -1422,7 +1710,7 @@ func parseMounts(entries []any) []mount {
 		if !ok {
 			continue
 		}
-		source, target := interpolate(scalar(m["source"])), scalar(m["target"])
+		source, target := scalar(m["source"]), scalar(m["target"])
 		out := mount{
 			raw:           source + ":" + target,
 			containerPath: target,
@@ -1443,12 +1731,21 @@ func parseMounts(entries []any) []mount {
 }
 
 func parseShortMount(text string) mount {
-	parts := splitMountSpec(interpolate(text))
+	parts := splitMountSpec(text)
 	switch len(parts) {
 	case 1:
 		// An anonymous volume: "/var/lib/data".
 		return mount{raw: text, containerPath: parts[0], volumeName: volumeNameFor("", parts[0]), anonymous: true}
 	default:
+		if strings.TrimSpace(parts[0]) == "" {
+			// `${DATA_DIR}:/var/data` with DATA_DIR set nowhere. Compose would
+			// mount an empty source, which is the directory it runs in — the
+			// repository root. A volume of the app's own at the same path is
+			// what the author was after: somewhere that data is kept.
+			m := mount{raw: text, containerPath: parts[1], volumeName: volumeNameFor("", parts[1]), anonymous: true}
+			m.readOnly = len(parts) > 2 && parts[2] == "ro"
+			return m
+		}
 		m := mount{raw: text, containerPath: parts[1]}
 		if len(parts) > 2 {
 			m.readOnly = parts[2] == "ro"
@@ -1495,82 +1792,69 @@ func splitMountSpec(text string) []string {
 	return parts
 }
 
-// interpolate resolves compose variable substitutions to their defaults.
-//
-// Pando has no environment to interpolate from — the compose file is being read
-// out of a repository, not run from a shell — so the default is the only value
-// available, and compose's own semantics say that is what an unset variable
-// takes. "${CONFIG_DIR:-./config}" becomes "./config", which then travels the
-// ordinary relative-bind path and becomes a managed volume.
-//
-// A variable with no default is left as written. It is not a path, so it fails
-// the host-path checks and ends up named as-is rather than silently becoming an
-// empty string — which would mount the repository root.
-func interpolate(text string) string {
-	var out strings.Builder
+// hostKind is what a bind mount of an absolute host path imports as.
+type hostKind int
 
-	for i := 0; i < len(text); {
-		// `$$` is compose's escape for a literal `$`: `--password="$$(cat
-		// /run/secrets/db-password)"` reaches the container's shell as
-		// `$(cat …)`. Passed on doubled, the shell read `$$` as its own
-		// process ID (issue #55).
-		if text[i] == '$' && i+1 < len(text) && text[i+1] == '$' {
-			out.WriteByte('$')
-			i += 2
-			continue
-		}
-		if text[i] != '$' || i+1 >= len(text) || text[i+1] != '{' {
-			out.WriteByte(text[i])
-			i++
-			continue
-		}
+const (
+	// hostRefused reaches the host itself: a runtime socket, a system
+	// directory, a single file. There is nothing to rewrite it to (R-099).
+	hostRefused hostKind = iota
 
-		end := strings.IndexByte(text[i:], '}')
-		if end < 0 {
-			out.WriteString(text[i:])
-			break
-		}
-		inner := text[i+2 : i+end]
-		out.WriteString(defaultOf(inner))
-		i += end + 1
+	// hostClock is the host's time zone, mounted so the container's clock
+	// reads local time. Dropped: the app runs on UTC, as Pando does.
+	hostClock
+
+	// hostData is a directory the app keeps data in, which becomes a volume
+	// Pando manages — the same rewrite a relative directory gets.
+	hostData
+)
+
+// hostSystem are host paths whose contents are the machine's, not an app's.
+var hostSystem = []string{"/var/run", "/run", "/proc", "/sys", "/dev", "/etc", "/var/lib/docker", "/var/lib/containers", "/boot", "/usr", "/bin", "/sbin", "/lib"}
+
+// hostMountKind classifies a bind mount of an absolute host path.
+//
+// Every one was refused, which turned away an app over the directory it keeps
+// its data in: whitebophir's `/opt/app/server-data`, ihatemoney's
+// `/path/to/local/dir/for/sqlite/db:/database` placeholder (issue #90). The
+// host's copy of that directory was never going to reach the app — it may not
+// run on that machine — but a directory of its own at the same path is what
+// the line asks for, and R-099 says rewrite where the app still does what its
+// author meant. What reaches the host's own machinery is still refused.
+func hostMountKind(m mount) hostKind {
+	host := path.Clean(m.hostPath)
+	switch host {
+	case "/etc/localtime", "/etc/timezone", "/usr/share/zoneinfo":
+		return hostClock
+	case "/":
+		return hostRefused
 	}
-	return out.String()
+	if strings.HasSuffix(host, ".sock") || strings.HasPrefix(host, "~") && strings.Contains(host, "/.") {
+		return hostRefused
+	}
+	for _, system := range hostSystem {
+		if host == system || strings.HasPrefix(host, system+"/") {
+			return hostRefused
+		}
+	}
+	// A file over a file: a volume is a directory, and Docker refuses to
+	// mount one where the image has a file.
+	if ext := path.Ext(path.Base(m.containerPath)); ext != "" && path.Base(m.containerPath) != ext {
+		return hostRefused
+	}
+	return hostData
 }
 
-// interpolateAll interpolates each word of a command, as compose does.
-func interpolateAll(words []string) []string {
-	if words == nil {
-		return nil
-	}
-	out := make([]string, len(words))
-	for i, w := range words {
-		out[i] = interpolate(w)
-	}
-	return out
-}
-
-// defaultOf returns the default from a compose substitution body.
-//
-// The forms with a usable default are "VAR:-default" and "VAR-default". The
-// error forms — "VAR:?message" and "VAR?message" — have no default by
-// definition, and neither does a bare "VAR"; all three keep their original
-// spelling so that what Pando could not resolve stays visible.
-func defaultOf(inner string) string {
-	if name, fallback, found := strings.Cut(inner, ":-"); found && name != "" {
-		return fallback
-	}
-	if name, fallback, found := strings.Cut(inner, "-"); found && name != "" && !strings.Contains(name, ":") {
-		return fallback
-	}
-	return "${" + inner + "}"
+func isHostClock(m mount) bool {
+	return isAbsoluteHostPath(m.hostPath) && hostMountKind(m) == hostClock
 }
 
 // isAbsoluteHostPath reports whether a mount source names a path on the host.
 //
 // A leading "." is relative to the compose file and handled separately: it is
 // rewritten into a managed volume rather than refused, because it is usually
-// the app's own data directory. An absolute path is refused — there is nothing
-// to rewrite it to, and it reaches outside the app's storage entirely.
+// the app's own data directory. An absolute path is classified by
+// hostMountKind.
 func isAbsoluteHostPath(source string) bool {
 	return strings.HasPrefix(source, "/") || strings.HasPrefix(source, "~")
 }
@@ -1630,10 +1914,10 @@ func health(h *composeHealth) *spec.Healthcheck {
 	switch t := h.Test.(type) {
 	case string:
 		if strings.TrimSpace(t) != "" {
-			command = []string{"sh", "-c", interpolate(t)}
+			command = []string{"sh", "-c", t}
 		}
 	default:
-		list := interpolateAll(stringList(t))
+		list := stringList(t)
 		switch {
 		case len(list) == 0 || list[0] == "NONE":
 			return nil

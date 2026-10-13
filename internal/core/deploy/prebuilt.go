@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"strings"
 	"sync"
 
 	"go.uber.org/zap"
@@ -74,6 +75,12 @@ func (r *Runner) WithBuildConcurrency(limit BuildConcurrency) *Runner {
 //
 // Detection's build (R-311). Returns the app's image, or a compose app's
 // images by workload.
+//
+// One difference from a deploy, when detection asks for it (detect.WithSteer):
+// the builder may steer a plan it made from convention when a build of it
+// fails in a way it recognizes, and build again. The plan it built from in the
+// end replaces s.Build.GeneratedFiles, so what detection proposes is what was
+// built, and what a deploy replays (R-020).
 func (r *Runner) BuildImages(ctx context.Context, s *spec.AppSpec, checkout *source.Checkout, sink io.Writer, tag string) (string, map[string]string, error) {
 	return r.buildAll(ctx, s, checkout, sink, tag)
 }
@@ -106,9 +113,51 @@ func (r *Runner) detectionBuild(ctx context.Context, s *spec.AppSpec, checkout *
 				return nil, false
 			}
 		}
-		return built, true
+		return built, r.stillImported(ctx, s, built)
 	}
-	return built, built.Image != ""
+	return built, built.Image != "" && r.stillImported(ctx, s, built)
+}
+
+// stillImported reports whether every image detection imported into the
+// runtime is still there.
+//
+// An imported image lives only in the runtime's own store, and an image prune
+// there removes it. Reused anyway, the deploy asked the runtime to run an ID no
+// registry has, and Docker tried to pull it as docker.io/library/sha256:… —
+// "not found", and no deploy (issue #90). Gone, it is built again: what is
+// built is the same inputs from the same source, which is what reuse stood for
+// (R-311). An image in a registry stays there and is not asked about.
+func (r *Runner) stillImported(ctx context.Context, s *spec.AppSpec, built *detect.Built) bool {
+	images := []string{built.Image}
+	for _, image := range built.Images {
+		images = append(images, image)
+	}
+	if r.registry == nil {
+		return true // no runtime to ask; the apply reports a missing image
+	}
+	var runtime api.RuntimeAdapter
+	for _, image := range images {
+		if !strings.HasPrefix(image, "sha256:") {
+			continue // empty, or a registry reference
+		}
+		if runtime == nil {
+			rt, ok := r.registry.Runtime(s.Runtime.AdapterRef)
+			if !ok {
+				return false
+			}
+			runtime = rt
+		}
+		present, err := runtime.HasImage(ctx, image)
+		if err != nil {
+			log.From(ctx).Warn("could not check the image detection built; building", zap.Error(err))
+			return false
+		}
+		if !present {
+			log.From(ctx).Info("the image detection built is gone from the runtime; building", zap.String("image", image))
+			return false
+		}
+	}
+	return true
 }
 
 // buildLimit is how many images of one app build at once.

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -22,8 +23,18 @@ type Trial struct {
 	Started bool
 	Crashed bool
 
-	ObservedPorts  []int
-	LoopbackPorts  []int
+	// Exited is a process that finished on its own with status 0 while it was
+	// watched: a command-line program or a script, not a server (R-107).
+	Exited bool
+
+	ObservedPorts []int
+	LoopbackPorts []int
+
+	// HTTPProbed is true when the runtime sent each observed port an HTTP
+	// request, and HTTPAnswers are the ports that answered (observedPorts).
+	HTTPProbed  bool
+	HTTPAnswers []api.HTTPAnswer
+
 	ObservedWrites []string
 	ImageVolumes   []string
 	Log            string
@@ -41,6 +52,7 @@ func FromTrialResult(caps api.RuntimeCapabilities, r api.TrialResult) Trial {
 		Ran:     true,
 		Started: r.Started,
 		Crashed: r.ExitCode != nil && *r.ExitCode != 0,
+		Exited:  r.ExitCode != nil && *r.ExitCode == 0,
 		// Without NUL bytes. Some apps write them (Grafana does), and the
 		// proposal is stored as jsonb, which refuses the \u0000 they encode
 		// to — so the proposal could not be saved and the detection stayed
@@ -50,6 +62,10 @@ func FromTrialResult(caps api.RuntimeCapabilities, r api.TrialResult) Trial {
 	if caps.SupportsPortObservation {
 		t.ObservedPorts = r.ObservedPorts
 		t.LoopbackPorts = r.LoopbackPorts
+		if caps.SupportsHTTPProbe {
+			t.HTTPProbed = true
+			t.HTTPAnswers = r.HTTPAnswers
+		}
 	}
 	if caps.SupportsWriteObservation {
 		t.ObservedWrites = r.ObservedWrites
@@ -86,11 +102,15 @@ func ApplyTrial(draft Draft, questions []Question, t Trial) (Draft, []Question) 
 		return draft, undefer(questions)
 	}
 
-	draft = applyObservedPorts(draft, t)
+	draft, tied := applyObservedPorts(draft, t)
+	t.ImageVolumes = append(append([]string(nil), t.ImageVolumes...), mountsAskedFor(t.Log)...)
 	draft = applyImageVolumes(draft, t)
 	questions = resolvePortQuestions(questions, t)
+	questions = choosePortQuestion(questions, tied)
+	questions = loopbackQuestion(questions, t)
 
 	draft.Slots = promoteSlots(draft.Slots, t)
+	draft = requireFromTrial(draft, t)
 	draft.Warnings = append(draft.Warnings, persistenceWarnings(draft, t)...)
 
 	return draft, questions
@@ -101,31 +121,34 @@ func ApplyTrial(draft Draft, questions []Question, t Trial) (Draft, []Question) 
 // An observed port supersedes rather than joins: a framework default of 3000
 // sitting beside an observed 8080 would leave the review UI showing two ports
 // where the app has one, and the user deciding between a fact and a guess.
-func applyObservedPorts(draft Draft, t Trial) Draft {
+//
+// The web port first: traffic goes to the first, and Gitea's image listens on
+// SSH as well as HTTP, and Mailpit's on SMTP. Routed to 22 or 1025, the proxy's
+// HTTP request was a protocol error (issue #55). observedPorts decides which
+// that is, and reports the ports it could not choose between.
+func applyObservedPorts(draft Draft, t Trial) (Draft, []int) {
 	if len(t.ObservedPorts) == 0 {
-		return draft
+		return draft, nil
 	}
 
-	ports := make([]spec.Port, 0, len(t.ObservedPorts))
-	for _, n := range t.ObservedPorts {
-		// Source is what the review UI shows, and it is the whole point of
-		// R-097: this was watched, not guessed.
-		ports = append(ports, spec.Port{Number: n, Protocol: "http", Source: spec.PortObserved})
-	}
-
-	// The web port first: traffic goes to the first, and Gitea's image listens
-	// on SSH as well as HTTP, and Mailpit's on SMTP. Routed to 22 or 1025,
-	// the proxy's HTTP request was a protocol error (issue #55).
-	ports = webPortsFirst(ports)
-
+	// Source is what the review UI shows, and it is the whole point of R-097:
+	// this was watched, not guessed. What the image or compose file declared
+	// is evidence for which of them is the web port.
 	for i, w := range draft.Workloads {
 		if !w.Primary {
 			continue
 		}
-		draft.Workloads[i].Ports = ports
-		break
+		declared := map[int]bool{}
+		for _, p := range w.Ports {
+			if p.Source == spec.PortExpose || p.Source == spec.PortCompose {
+				declared[p.Number] = true
+			}
+		}
+		var tied []int
+		draft.Workloads[i].Ports, tied = observedPorts(t, declared)
+		return draft, tied
 	}
-	return draft
+	return draft, nil
 }
 
 // applyImageVolumes gives the primary workload storage wherever its image
@@ -166,6 +189,31 @@ func applyImageVolumes(draft Draft, t Trial) Draft {
 		break
 	}
 	return draft
+}
+
+// mountAsked is an app saying a path must be mounted: "ERROR: /etc/letsencrypt
+// is not mounted!", "/data must be mounted", "/config is not a mountpoint".
+var mountAsked = regexp.MustCompile(`(?i)(/[A-Za-z0-9._/-]*[A-Za-z0-9._-])['"]?\s+(?:is not mounted|isn't mounted|must be mounted|should be mounted|needs to be mounted|is not a mount ?point)`)
+
+// mountsAskedFor reads the paths an app's own output says must be mounted.
+//
+// The image's VOLUME is one way an image names where its data lives; its
+// startup check is another. Nginx Proxy Manager declares /data and checks for
+// /etc/letsencrypt as well, and stopped at "/etc/letsencrypt is not mounted!"
+// on every start (issue #90). The app named the path; Pando gives it a volume,
+// as it does for a VOLUME (R-200).
+func mountsAskedFor(log string) []string {
+	var paths []string
+	seen := map[string]bool{}
+	for _, m := range mountAsked.FindAllStringSubmatch(log, -1) {
+		p := path.Clean(m[1])
+		if p == "/" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		paths = append(paths, p)
+	}
+	return paths
 }
 
 // onlyNonHTTP reports observed ports that are all ports of protocols other than

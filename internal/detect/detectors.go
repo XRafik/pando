@@ -45,6 +45,19 @@ func (d DockerfileDetector) Bid(_ context.Context, src api.SourceView) (Candidat
 		}
 	}
 
+	// A Dockerfile among helper tools counts only when there is no other.
+	var tools []string
+	nested, tools = splitAuxiliary(nested)
+	if len(nested) == 0 && len(tools) == 1 {
+		c, err := d.bidForRoot(src, tools[0])
+		c.Confidence = 0.5
+		c.Evidence[0] = tools[0] + " is the only Dockerfile in the repository, and it sits among helper tools rather than the app"
+		return c, err
+	}
+	if len(nested) == 0 {
+		nested = tools
+	}
+
 	switch {
 	case len(nested) == 1:
 		// One Dockerfile, in a subdirectory. There is nothing to choose between,
@@ -117,6 +130,47 @@ var notDeployable = []string{
 	"test", "tests", "testdata", "fixture", "fixtures", "__tests__",
 	"doc", "docs", "template", "templates", "demo", "demos",
 	".devcontainer", ".github", "vendor", "node_modules", "third_party",
+
+	// Editor and cloud-workspace environments: a Dockerfile here describes
+	// the machine somebody edits the code on. Astro's examples each carry a
+	// `.codesandbox/Dockerfile` that is one `FROM node` line, and Pando
+	// deployed it — a container that opened no port — instead of building
+	// the site (issue #90).
+	".codesandbox", ".gitpod", ".idx", ".vscode", ".circleci", ".gitlab",
+	"e2e", "benchmark", "benchmarks",
+}
+
+// auxiliary are directories of helper tools beside the app: a Dockerfile
+// there builds a tool, not usually the thing the repository deploys. Uptime
+// Kuma's `extra/uptime-kuma-push/Dockerfile` builds a push client, and was
+// offered on a near-even footing with the compose file that runs the app
+// (issue #90). Unlike notDeployable it is not excluded — `contrib/docker` is
+// some projects' real build — but it ranks below any other Dockerfile and
+// bids low on its own.
+var auxiliary = []string{"extra", "extras", "contrib", "tools", "tool", "hack", "scripts", "script", "utils", "util", "misc"}
+
+// splitAuxiliary separates the paths under an auxiliary directory.
+func splitAuxiliary(paths []string) (app, tools []string) {
+	for _, p := range paths {
+		if underAuxiliary(p) {
+			tools = append(tools, p)
+		} else {
+			app = append(app, p)
+		}
+	}
+	return app, tools
+}
+
+func underAuxiliary(p string) bool {
+	for _, segment := range strings.Split(path.Dir(path.Clean(p)), "/") {
+		lower := strings.ToLower(segment)
+		for _, aux := range auxiliary {
+			if lower == aux {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // deployable filters out paths that live under a directory in notDeployable.
@@ -182,7 +236,13 @@ func (d DockerfileDetector) bidForRoot(src api.SourceView, name string) (Candida
 	if cmd != "" {
 		c.Evidence = append(c.Evidence, "CMD "+cmd)
 	}
-	for _, arg := range requiredBuildArgs(src, name) {
+	required, empty := buildArgNeeds(src, name)
+	for _, arg := range empty {
+		c.Draft.Build.Args = append(c.Draft.Build.Args, spec.KV{Key: arg})
+		c.Evidence = append(c.Evidence, fmt.Sprintf(
+			"build argument %s is passed as empty: the build reads it under `set -u`, which stops on a value that was never set", arg))
+	}
+	for _, arg := range required {
 		c.Questions = append(c.Questions, Question{
 			Key:  BuildArgKeyPrefix + arg,
 			Kind: api.QuestionText,
@@ -197,6 +257,9 @@ func (d DockerfileDetector) bidForRoot(src api.SourceView, name string) (Candida
 
 	c.Draft.Workloads = []spec.Workload{workload}
 	c.Draft.Slots, c.Draft.Workloads[0].Env = readEnvExample(src)
+	var requiredVars []string
+	c.Draft, requiredVars = withSourceRequirements(src, c.Draft, ".", name)
+	c.Evidence = append(c.Evidence, requiredVars...)
 	return c, nil
 }
 
@@ -219,7 +282,7 @@ func (d ComposeDetector) Bid(_ context.Context, src api.SourceView) (Candidate, 
 			break
 		}
 	}
-	if found == "" {
+	if found == "" || legacyCompose(src, found) {
 		return Candidate{Confidence: 0}, nil
 	}
 
@@ -245,7 +308,7 @@ func (d ComposeDetector) Bid(_ context.Context, src api.SourceView) (Candidate, 
 		// candidate instead, and the auction surfaces it as StatusBlocked.
 		return c, nil
 	}
-	c.Draft = draft
+	c.Draft = composeRequirements(src, draft)
 
 	// A compose file of nothing but databases is not the app. It is what the
 	// app needs while somebody works on it — Spring Petclinic's runs a MySQL
@@ -315,11 +378,15 @@ func (d StaticDetector) Bid(_ context.Context, src api.SourceView) (Candidate, e
 	// An index.html at the root, or in one of the usual output directories.
 	// docs/ is where GitHub Pages serves a site from, and a repository that
 	// keeps its site there was asked how to build it (issue #55).
-	candidates := []string{"index.html", "public/index.html", "dist/index.html", "site/index.html", "docs/index.html"}
+	// build/ is where Create React App and most generators write, and www/ is
+	// Cordova's and Ionic's site; committed with no package.json, either was
+	// asked how to build (issue #90).
+	candidates := []string{"index.html", "public/index.html", "dist/index.html", "site/index.html",
+		"docs/index.html", "build/index.html", "www/index.html"}
 
 	var dir string
 	for _, candidate := range candidates {
-		if info, err := src.Stat(candidate); err == nil && !info.IsDir {
+		if info, err := src.Stat(candidate); err == nil && !info.IsDir && !isPageTemplate(src, candidate) {
 			dir = path.Dir(candidate)
 			break
 		}
@@ -411,6 +478,30 @@ func (d StaticDetector) Bid(_ context.Context, src api.SourceView) (Candidate, e
 	}, nil
 }
 
+// pageTemplateMarkers are what a build fills in an index.html it uses as a
+// template: Create React App's %PUBLIC_URL%, and the EJS tags Vue CLI and
+// html-webpack-plugin read.
+var pageTemplateMarkers = []string{"%PUBLIC_URL%", "<%=", "<%-"}
+
+// isPageTemplate reports an index.html that is the input to a build rather than
+// a page. Create React App keeps one in public/, and read as a committed copy
+// of the built site it put a serve-or-build question in front of a project
+// that only builds one way (issue #90).
+func isPageTemplate(src api.SourceView, name string) bool {
+	f, err := src.Open(name)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+	head, _ := io.ReadAll(io.LimitReader(f, 64<<10))
+	for _, marker := range pageTemplateMarkers {
+		if strings.Contains(string(head), marker) {
+			return true
+		}
+	}
+	return false
+}
+
 // --- Buildpack -------------------------------------------------------------
 
 // BuildpackDetector recognizes a project by its language, for repositories that
@@ -456,15 +547,33 @@ type languageSignal struct {
 	port     int
 }
 
+// compiledBinary is the start command shown for a language that builds one.
+const compiledBinary = "the compiled binary"
+
 var languages = []languageSignal{
 	{"package.json", "Node.js", "npm start", 3000},
 	{"requirements.txt", "Python", "python app.py", 8000},
 	{"pyproject.toml", "Python", "python -m app", 8000},
-	{"go.mod", "Go", "the compiled binary", 8080},
+	{"setup.py", "Python", "python -m app", 8000},
+	{"go.mod", "Go", compiledBinary, 8080},
+	// A Go workspace with no module at its root, built from the root when one
+	// of its modules is a program (MonorepoDetector stands down for it).
+	{"go.work", "Go", compiledBinary, 8080},
 	{"Gemfile", "Ruby", "bundle exec rails server", 3000},
 	{"composer.json", "PHP", "php -S", 8000},
-	{"Cargo.toml", "Rust", "the compiled binary", 8080},
+	{"Cargo.toml", "Rust", compiledBinary, 8080},
 	{"pom.xml", "Java", "java -jar", 8080},
+}
+
+// jvmBuildSignal is the signal for a Maven or Gradle build in the repository,
+// or nil.
+func jvmBuildSignal(src api.SourceView) *languageSignal {
+	for _, file := range []string{"pom.xml", "build.gradle", "build.gradle.kts"} {
+		if info, err := src.Stat(file); err == nil && !info.IsDir {
+			return &languageSignal{file, "Java", "java -jar", 8080}
+		}
+	}
+	return nil
 }
 
 // plannedOnly stands in for a language signal when no manifest Pando knows was
@@ -493,6 +602,14 @@ func (d BuildpackDetector) Bid(ctx context.Context, src api.SourceView) (Candida
 			if languages[i].file == "composer.json" {
 				signal = &languages[i]
 			}
+		}
+	}
+	// So does a Maven or Gradle app whose build runs its front end's npm
+	// build through a plugin: JHipster was built as a Node app and crashed in
+	// `npm install` (issue #90). The JVM build is the app's build.
+	if signal != nil && signal.file == "package.json" {
+		if jvm := jvmBuildSignal(src); jvm != nil {
+			signal = jvm
 		}
 	}
 	if signal == nil {
@@ -531,7 +648,7 @@ func libraryReason(src api.SourceView, signal *languageSignal) error {
 				"than run on its own.").
 			WithRemedy("If an app in this repository uses the library, set the app's subdirectory to that " +
 				"app's directory, or add a Dockerfile that builds it.")
-	case "pyproject.toml", "requirements.txt":
+	case "pyproject.toml", "requirements.txt", "setup.py":
 		if !isPythonSrcLayoutWithoutEntryPoint(src) {
 			return nil
 		}
@@ -540,6 +657,8 @@ func libraryReason(src api.SourceView, signal *languageSignal) error {
 				"src/, and there is no app.py, main.py, manage.py, Procfile or other file that starts it. "+
 				"Pando deploys apps, and a library is used by other programs rather than run on its own.").
 			WithRemedy("If this repository is an app, add a Procfile or a Dockerfile saying how it starts.")
+	case "package.json":
+		return nodeLibraryReason(src)
 	}
 	return nil
 }
@@ -584,9 +703,32 @@ func goPackageOf(src api.SourceView, name string) string {
 		return ""
 	}
 	defer func() { _ = f.Close() }()
+
+	// Comments are skipped. A package's doc comment often shows how to use it
+	// with an example program, and logrus's doc.go has `package main` in its
+	// comment above `package logrus` — read as the package clause, it made a
+	// library an app (issue #90).
+	inBlock := false
 	scanner := bufio.NewScanner(io.LimitReader(f, 64<<10))
 	for scanner.Scan() {
-		if m := goPackageClause.FindStringSubmatch(strings.TrimSpace(scanner.Text())); m != nil {
+		line := strings.TrimSpace(scanner.Text())
+		if inBlock {
+			end := strings.Index(line, "*/")
+			if end < 0 {
+				continue
+			}
+			inBlock = false
+			line = strings.TrimSpace(line[end+2:])
+		}
+		if strings.HasPrefix(line, "/*") {
+			if end := strings.Index(line[2:], "*/"); end >= 0 {
+				line = strings.TrimSpace(line[2+end+2:])
+			} else {
+				inBlock = true
+				continue
+			}
+		}
+		if m := goPackageClause.FindStringSubmatch(line); m != nil {
 			return m[1]
 		}
 	}
@@ -611,7 +753,7 @@ func isPythonSrcLayoutWithoutEntryPoint(src api.SourceView) bool {
 			return false
 		}
 	}
-	return true
+	return !isPythonWebAppPackage(src)
 }
 
 // bidFromPlanOnly bids when no manifest matched but the planner can build and
@@ -623,6 +765,11 @@ func (d BuildpackDetector) bidFromPlanOnly(ctx context.Context, src api.SourceVi
 		return Candidate{Confidence: 0}, nil
 	}
 	c := d.bidFor(ctx, src, &plannedOnly)
+	if c.Blocked != nil {
+		//nolint:nilerr // The reason travels on the candidate, as a library's
+		// does (Bid), so the auction surfaces it rather than dropping the bid.
+		return c, nil
+	}
 	if len(c.Draft.Build.GeneratedFiles) == 0 || len(c.Questions) > 0 {
 		return Candidate{Confidence: 0}, nil
 	}
@@ -655,7 +802,16 @@ func (d BuildpackDetector) bidFor(ctx context.Context, src api.SourceView, signa
 	// and the builder will try again at build time with a real error to show.
 	var planned string
 	if d.Planner != nil {
-		if plan, err := d.Planner.Plan(ctx, src); err == nil && len(plan.Files) > 0 {
+		plan, err := d.Planner.Plan(ctx, src)
+		// A planner that recognized the repository and found it cannot be
+		// built from what it holds — a Hugo theme left behind as a submodule
+		// — says why, and that is the answer rather than a question nobody
+		// can usefully answer.
+		if errs.CodeOf(err) == errs.ValidInvalid {
+			c.Blocked = err
+			return c
+		}
+		if err == nil && len(plan.Files) > 0 {
 			c.Draft.Build.GeneratedFiles = plan.Files
 			c.Draft.Build.Dockerfile = plan.Entry
 			c.Evidence = append(c.Evidence, "build plan generated, and editable before it runs")
@@ -750,15 +906,116 @@ func (d BuildpackDetector) bidFor(ctx context.Context, src api.SourceView, signa
 	c.Draft.Slots, c.Draft.Workloads[0].Env = readEnvExample(src)
 	if isRailsApp(src) {
 		c.Draft = asRailsProduction(c.Draft)
-		c.Evidence = append(c.Evidence,
-			"a Rails app, run in production: SECRET_KEY_BASE is needed before it can start")
 	}
-	if isLaravelApp(src) {
-		c.Draft = withLaravelKey(c.Draft)
+	var required []string
+	c.Draft, required = withSourceRequirements(src, c.Draft, ".", "")
+	c.Evidence = append(c.Evidence, required...)
+	if isMeteorApp(src) {
+		c.Draft = withMeteorMongo(c.Draft)
 		c.Evidence = append(c.Evidence,
-			"a Laravel app: APP_KEY is needed before it can serve a page")
+			"a Meteor app: MONGO_URL, the MongoDB it keeps its data in, is needed before it can start")
+	}
+	if isPlayApp(src) {
+		c.Draft = withPlaySecret(c.Draft)
+		c.Evidence = append(c.Evidence,
+			"a Play app, run in production: APPLICATION_SECRET is needed before it can start")
 	}
 	return c
+}
+
+// isMeteorApp reports a Meteor application: a .meteor/release file.
+func isMeteorApp(src api.SourceView) bool {
+	info, err := src.Stat(".meteor/release")
+	return err == nil && !info.IsDir
+}
+
+// meteorMongoEvidence says what MONGO_URL is, for a person who has never run
+// Meteor in production (R-105).
+const meteorMongoEvidence = "A Meteor app keeps its data in MongoDB, which `meteor run` starts for " +
+	"development and a production server is given as MONGO_URL. Pando does not provide MongoDB. Valid " +
+	"answer: a MongoDB connection string, such as \"mongodb://user:password@db.example.com:27017/app\", or " +
+	"the \"mongodb+srv://\" address a hosted MongoDB gives."
+
+// withMeteorMongo asks for MONGO_URL as a required value (R-132). A Meteor
+// server stops at start without one, and Pando has no MongoDB to supply, so
+// the person deploying names the one the app uses. A declared value stands.
+func withMeteorMongo(d Draft) Draft {
+	const key = "MONGO_URL"
+	for _, s := range d.Slots {
+		if s.Key == key {
+			return d
+		}
+	}
+	for _, e := range d.Workloads[0].Env {
+		if e.Key == key && (e.Source != spec.EnvFromDetection || e.Value == nil || *e.Value != "") {
+			return d
+		}
+	}
+	env := d.Workloads[0].Env[:0:0]
+	for _, e := range d.Workloads[0].Env {
+		if e.Key != key {
+			env = append(env, e)
+		}
+	}
+	ref := key
+	d.Workloads[0].Env = append(env, spec.EnvEntry{Key: key, SlotRef: &ref, Source: spec.EnvFromDetection})
+	d.Slots = append(d.Slots, spec.Slot{
+		Key: key, Type: spec.SlotUnknown, Required: true,
+		Evidence: []string{meteorMongoEvidence},
+	})
+	return d
+}
+
+// isPlayApp reports a Play Framework app: an sbt build with Play's plugin.
+func isPlayApp(src api.SourceView) bool {
+	if info, err := src.Stat("build.sbt"); err != nil || info.IsDir {
+		return false
+	}
+	f, err := src.Open("project/plugins.sbt")
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+	body, _ := io.ReadAll(io.LimitReader(f, 64<<10))
+	plugins := string(body)
+	return strings.Contains(plugins, `"sbt-plugin"`) &&
+		(strings.Contains(plugins, "org.playframework") || strings.Contains(plugins, "com.typesafe.play"))
+}
+
+// playSecretEvidence says what APPLICATION_SECRET is and how to make one, for
+// a person who has never run Play (R-105).
+const playSecretEvidence = "Play signs its session cookies with an application secret and refuses to start in " +
+	"production without one. Valid answer: a random string of at least 32 characters, such as the output of " +
+	"`openssl rand -base64 48`. Keep it: changing it signs everyone out."
+
+// withPlaySecret asks for APPLICATION_SECRET as a required value (R-132),
+// which the plan passes to Play as play.http.secret.key. The person deploying
+// owns it and Pando does not invent it, as with Rails' SECRET_KEY_BASE.
+func withPlaySecret(d Draft) Draft {
+	const key = "APPLICATION_SECRET"
+	for _, s := range d.Slots {
+		if s.Key == key {
+			return d
+		}
+	}
+	for _, e := range d.Workloads[0].Env {
+		if e.Key == key && (e.SlotRef != nil || (e.Value != nil && *e.Value != "")) {
+			return d
+		}
+	}
+	env := d.Workloads[0].Env[:0:0]
+	for _, e := range d.Workloads[0].Env {
+		if e.Key != key {
+			env = append(env, e)
+		}
+	}
+	ref := key
+	d.Workloads[0].Env = append(env, spec.EnvEntry{Key: key, SlotRef: &ref, Source: spec.EnvFromDetection})
+	d.Slots = append(d.Slots, spec.Slot{
+		Key: key, Type: spec.SlotUnknown, Required: true, Format: spec.FormatRandomLong,
+		Evidence: []string{playSecretEvidence},
+	})
+	return d
 }
 
 // isLaravelApp reports a Laravel application: an artisan script beside a
@@ -785,41 +1042,6 @@ const laravelKeyEvidence = "Laravel encrypts sessions and cookies with APP_KEY a
 	"which `php artisan key:generate --show` prints, as does `echo \"base64:$(openssl rand -base64 32)\"`. " +
 	"Keep it: changing it signs everyone out."
 
-// withLaravelKey asks for APP_KEY as a required value (R-132).
-//
-// It is the secret a Laravel app encrypts with, the person deploying owns it,
-// and Pando does not invent it — as with SECRET_KEY_BASE for Rails. Every
-// Laravel .env.example names it with no value, which on its own would become an
-// empty variable, unset at deploy, and the app would fail on its first page
-// with "No application encryption key has been specified". So an empty
-// declaration is replaced by the slot; a declared value stands.
-func withLaravelKey(d Draft) Draft {
-	const key = "APP_KEY"
-	for _, s := range d.Slots {
-		if s.Key == key {
-			return d
-		}
-	}
-	env := d.Workloads[0].Env[:0:0]
-	for _, e := range d.Workloads[0].Env {
-		if e.Key == key {
-			if e.Source != spec.EnvFromDetection || e.Value == nil || *e.Value != "" {
-				return d
-			}
-			continue
-		}
-		env = append(env, e)
-	}
-	ref := key
-	env = append(env, spec.EnvEntry{Key: key, SlotRef: &ref, Source: spec.EnvFromDetection})
-	d.Workloads[0].Env = env
-	d.Slots = append(d.Slots, spec.Slot{
-		Key: key, Type: spec.SlotUnknown, Required: true,
-		Evidence: []string{laravelKeyEvidence},
-	})
-	return d
-}
-
 // isRailsApp reports a Rails application rather than a gem that uses Rails.
 func isRailsApp(src api.SourceView) bool {
 	if info, err := src.Stat("config/application.rb"); err != nil || info.IsDir {
@@ -836,7 +1058,8 @@ func isRailsApp(src api.SourceView) bool {
 // so run as it was, the app was reachable by nothing outside its container
 // (issue #55). Production also needs SECRET_KEY_BASE, and that is a secret the
 // person deploying supplies, so it is asked for as a required value (R-132)
-// rather than invented.
+// rather than invented — by withSourceRequirements, which asks it of a Rails
+// app however it is built.
 func asRailsProduction(d Draft) Draft {
 	production := "production"
 	env := d.Workloads[0].Env
@@ -849,52 +1072,104 @@ func asRailsProduction(d Draft) Draft {
 			env = append(env, spec.EnvEntry{Key: key, Value: &production, Source: spec.EnvFromDetection})
 		}
 	}
-	if !set["SECRET_KEY_BASE"] {
-		ref := "SECRET_KEY_BASE"
-		env = append(env, spec.EnvEntry{Key: "SECRET_KEY_BASE", SlotRef: &ref, Source: spec.EnvFromDetection})
-		d.Slots = append(d.Slots, spec.Slot{
-			Key: "SECRET_KEY_BASE", Type: spec.SlotUnknown, Required: true,
-			Evidence: []string{"a Rails app running in production signs its sessions with SECRET_KEY_BASE"},
-		})
-	}
 	d.Workloads[0].Env = env
 	return d
 }
 
 var argDeclaration = regexp.MustCompile(`(?i)^\s*ARG\s+([A-Za-z_][A-Za-z0-9_]*)\s*$`)
 
-// requiredBuildArgs are the ARGs a Dockerfile declares without a default and
-// refuses to build without — `${NAME:?…}`, or a `-z` test on it that exits.
+// buildArgNeeds sorts the ARGs a Dockerfile declares without a default into
+// the ones it refuses to build without and the ones it only needs to be set.
 //
-// Only those. An ARG with no default is usually optional (a version to stamp,
-// a platform BuildKit fills in), and asking about every one would put
-// questions in front of people that the build does not need answered (R-104).
-// A Dockerfile that stops itself when one is empty has said, in as many
-// words, that it is required; the build failed on exactly that and nobody had
-// been asked (issue #55).
-func requiredBuildArgs(src api.SourceView, name string) []string {
+// Required is an ARG the Dockerfile stops itself over when it is empty:
+// `${NAME:?…}`, `test -n "$NAME" || …`, or a `-z` test on it that exits. That
+// is the file saying, in as many words, that a value is needed; the build
+// failed on exactly that and nobody had been asked (issue #55).
+//
+// Only those. An ARG with no default is usually optional — a version to stamp,
+// a platform BuildKit fills in — and asking about every one puts questions in
+// front of people that the build does not need answered (R-104). So is an ARG
+// the file guards itself: `[ -z $ARCH ] || __ARCH=$ARCH` falls back to
+// something else when it is empty, and asking for it made a question nobody
+// could answer from the repository.
+//
+// Empty is the third kind: an ARG a RUN reads under `set -u`. The shell stops
+// on a variable that was never set, and an ARG with no default and no value is
+// exactly that — `EXTRA_ARGS: parameter not set` — while an empty value is all
+// the build wanted. That is a default, not a question (R-104), so it is passed
+// as empty and shown on the plan, where it can be changed.
+func buildArgNeeds(src api.SourceView, name string) (required, empty []string) {
 	f, err := src.Open(name)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	defer func() { _ = f.Close() }()
 	scanner := bufio.NewScanner(io.LimitReader(f, 256<<10))
 	lines := joinContinuations(scanner)
 	body := strings.Join(lines, "\n")
 
-	var required []string
 	for _, line := range lines {
 		m := argDeclaration.FindStringSubmatch(line)
 		if m == nil {
 			continue
 		}
 		arg := m[1]
-		if strings.Contains(body, "${"+arg+":?") ||
-			regexp.MustCompile(`-z\s+"?\$\{?`+arg+`\}?"?`).MatchString(body) {
+		switch {
+		case argAsserted(body, arg):
 			required = append(required, arg)
+		case argReadUnderNounset(lines, arg):
+			empty = append(empty, arg)
 		}
 	}
-	return required
+	return required, empty
+}
+
+// argAsserted reports whether the Dockerfile stops the build when arg is empty.
+func argAsserted(body, arg string) bool {
+	q := regexp.QuoteMeta(arg)
+	ref := `"?\$\{?` + q + `\}?"?`
+	if strings.Contains(body, "${"+arg+":?") || strings.Contains(body, "${"+arg+"?") {
+		return true
+	}
+	// `test -n "$X" || exit 1`, `[ -n "$X" ] || (echo …; exit 1)`: anything
+	// after the `||` runs only when the value is missing, and it is there to
+	// say so.
+	if regexp.MustCompile(`-n\s+` + ref + `\s*\]{0,2}\s*\|\|`).MatchString(body) {
+		return true
+	}
+	// `[ -z "$X" ] && exit 1`, `if [ -z "$X" ]; then echo …; exit 1; fi`. A
+	// `-z` test followed by `||` is the opposite — a fallback when it is empty —
+	// and so is one whose branch assigns something rather than exiting.
+	for _, loc := range regexp.MustCompile(`-z\s+`+ref+`\s*\]{0,2}\s*(&&|;\s*then)`).FindAllStringIndex(body, -1) {
+		rest := body[loc[1]:]
+		if end := strings.IndexAny(rest, "\n"); end >= 0 {
+			rest = rest[:end]
+		}
+		if end := regexp.MustCompile(`\bfi\b`).FindStringIndex(rest); end != nil {
+			rest = rest[:end[0]]
+		}
+		if regexp.MustCompile(`\bexit\s+[1-9]|\bfalse\b`).MatchString(rest) {
+			return true
+		}
+	}
+	return false
+}
+
+var nounset = regexp.MustCompile(`\bset\s+(-[a-zA-Z]*u[a-zA-Z]*\b|-o\s+nounset\b)`)
+
+// argReadUnderNounset reports a RUN that turns on `set -u` and reads arg with
+// no default of its own.
+func argReadUnderNounset(lines []string, arg string) bool {
+	use := regexp.MustCompile(`\$(\{` + regexp.QuoteMeta(arg) + `\}|` + regexp.QuoteMeta(arg) + `\b)`)
+	for _, line := range lines {
+		if !strings.HasPrefix(strings.ToUpper(strings.TrimSpace(line)), "RUN") {
+			continue
+		}
+		if nounset.MatchString(line) && use.MatchString(line) {
+			return true
+		}
+	}
+	return false
 }
 
 // --- shared helpers --------------------------------------------------------
@@ -990,9 +1265,19 @@ func joinContinuations(scanner *bufio.Scanner) []string {
 // which is exactly what a slot is for (R-131). Anything unrecognized stays a
 // workload — Pando does not guess at what an unfamiliar image is.
 func backingService(service, image string) (spec.SlotType, bool) {
+	// A database image with extensions built in is not the stock one Pando
+	// provisions: ziit's migration stopped at `extension "timescaledb" is not
+	// available`, and AdventureLog needs PostGIS (issue #90). It is run as the
+	// compose file wrote it.
+	for _, extended := range []string{"timescale", "postgis", "pgvector", "pgvecto", "paradedb", "citus", "supabase", "apache/age", "pgrouting"} {
+		if strings.Contains(strings.ToLower(image), extended) {
+			return "", false
+		}
+	}
+
 	known := map[string]spec.SlotType{
-		"postgres": spec.SlotPostgres, "postgis": spec.SlotPostgres,
-		"mysql": spec.SlotMySQL, "mariadb": spec.SlotMySQL,
+		"postgres": spec.SlotPostgres,
+		"mysql":    spec.SlotMySQL, "mariadb": spec.SlotMySQL,
 		"redis": spec.SlotRedis, "valkey": spec.SlotRedis,
 	}
 
@@ -1118,6 +1403,14 @@ func namesAConnection(key string) bool {
 			return true
 		}
 	}
+	// A cache named by itself — PAPERLESS_REDIS — is its address: a Redis has
+	// nothing else a variable would be named after it for. A database is not
+	// read this way, because MYSQL_DATABASE is the name of one, not the place.
+	for _, service := range []string{"REDIS", "VALKEY"} {
+		if strings.HasSuffix(upper, "_"+service) {
+			return true
+		}
+	}
 	return false
 }
 
@@ -1232,40 +1525,20 @@ func (d MonorepoDetector) Bid(_ context.Context, src api.SourceView) (Candidate,
 		}
 	}
 
-	var markers []string
-	for _, name := range workspaceMarkers {
-		if info, err := src.Stat(name); err == nil && !info.IsDir {
-			markers = append(markers, name)
-		}
-	}
-	if hasWorkspacesField(src) {
-		markers = append(markers, "package.json workspaces")
-	}
-	if hasCargoWorkspace(src) {
-		markers = append(markers, "Cargo.toml [workspace]")
-	}
+	// What the manifests declare, not that they exist (workspace.go).
+	markers := declaredWorkspaceMarkers(src)
 	if len(markers) == 0 {
+		// No workspace, and perhaps no app at the root either: the projects
+		// one level down are what there is to deploy.
+		return nestedProjectsBid(src), nil
+	}
+	if workspaceResolved(src, markers) {
 		return Candidate{Confidence: 0}, nil
 	}
 
 	// Name what was found. R-105 requires the question stand on its own, and
 	// "which one do you want?" without a list is exactly the fragment it bans.
-	var found []string
-	for _, dir := range packageDirs {
-		entries, err := src.Glob(dir + "/*")
-		if err != nil {
-			continue
-		}
-		for _, entry := range entries {
-			if strings.HasPrefix(path.Base(entry), ".") {
-				continue
-			}
-			if info, err := src.Stat(entry); err == nil && info.IsDir {
-				found = append(found, entry)
-			}
-		}
-	}
-	sort.Strings(found)
+	found := workspaceMembers(src)
 
 	evidence := []string{"workspace declared by " + strings.Join(markers, ", ")}
 	if len(found) > 0 {
@@ -1358,21 +1631,6 @@ func isJekyllSource(src api.SourceView) bool {
 		}
 	}
 	return false
-}
-
-// hasWorkspacesField reports whether package.json declares workspaces.
-//
-// The field is either an array of globs or an object with a "packages" array,
-// so it is read as raw JSON and only tested for being present and non-empty.
-func hasWorkspacesField(src api.SourceView) bool {
-	var pkg struct {
-		Workspaces json.RawMessage `json:"workspaces"`
-	}
-	if !readJSON(src, "package.json", &pkg) {
-		return false
-	}
-	trimmed := strings.TrimSpace(string(pkg.Workspaces))
-	return trimmed != "" && trimmed != "null" && trimmed != "[]" && trimmed != "{}"
 }
 
 // hasCargoWorkspace reports whether Cargo.toml declares a [workspace] table.

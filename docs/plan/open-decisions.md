@@ -31,6 +31,8 @@ resolution both here and in the requirements or design doc that owns it.
 | **O-57** | Whether a private repository's submodules are fetched with its source connection (issue #127) | The issue asks for it. Submodules are not fetched for any repository today: `source.fetchGitOnce` turns them off citing R-021 — silently pulling in another repository's contents is inventing topology. Fetching them with the parent's credential would also send that credential to whatever hosts the `.gitmodules` file names, which the repository's author controls and the administrator does not. `[P]` keep them off; if wanted, fetch only submodules on a host the same connection covers | Not blocking — design 03 §10 |
 | **O-31** | Whether an upload may be a `docker save` tarball as well as source files (issue #41) | The runtime can already import an image from a stream (`SupportsImageImport`); accepting one is a third kind of upload with its own scanning and pinning story, not an extension of this one | Not blocking — design 04 §4 |
 | **O-59** | Whether a VM-class runtime builds inside the app's own VM (R-116), and how the first build runs before the VM exists | Needs a third image delivery in core, a builder holding its own runtime connection, and an answer to builds competing with the live app for committed capacity (R-242). `[P]` BuildKit builds and the registry delivers until then | Not blocking — `notes-incus-runtime.md` |
+| **O-60** | Whether a public repository's submodules are fetched when the build needs them — a Hugo theme kept as one (issue #90) | Not fetched today (design 03 §10, R-021), so a Hugo site whose theme is a submodule is refused at planning with the theme named, rather than built into empty pages. Fetching only public submodules on the same host would make those sites deploy; it is still pulling in another repository's contents, which is the decision R-021 cites. `[P]` keep them off and refuse by name | Not blocking |
+| **O-61** | What detection asks when no detector recognizes a repository (issue #90) | The `build_method` question has no answer Pando can act on: `CheckAnswers` accepts only the name of a reading some detector made, and when none did it refuses every answer. Its prompt invited a start command, and the answers given as asked were refused with `VALID_INVALID`. The prompt now says no answer is accepted and what to add instead; what the question should be is a product call | Not blocking — `internal/detect/detect.go` |
 
 **O-4** has a `[P]` fallback that preserves R-103: default `Required: false` for anything the file
 gives a sample value for, and let the trial run settle it — a slot whose absence crashes the trial run
@@ -45,6 +47,17 @@ slot, so a `.env.example` with eleven variables produced eleven "dependencies" o
 offering to connect to something that already exists. Untyped keys are variables now, declared empty
 on the app, and O-4 applies to what is left: of the keys that really are dependencies, which are
 required.
+
+*Note (issue #90 benchmark, owner decision):* O-4 is still open, and nothing below decides it. The
+fallback stands for `.env.example`, which on its own still makes nothing required. What changed is the
+list of things that *do* say a variable is required, each one a statement by the app or its framework
+rather than an inference by Pando: a framework convention (Rails, Laravel, Phoenix, Symfony, Strapi),
+an environment schema the app validates at boot (AdonisJS, envalid, t3-env/zod), a read with no
+fallback at import (`os.environ["X"]`, `System.fetch_env!`), a placeholder in a compose `env_file`
+template, and a trial run that failed and named the variable in its
+log. Each becomes a required slot, typed where its name or framework says what it holds. Design 01
+§2.5 lists them. The false-block rate is still the measurement O-4 waits on; across the issue #90
+corpus's trial logs, no app that deployed successfully gained a required variable from its log.
 
 **O-27** is what issue #60 left open once retention shipped. Two of its questions were answered
 with a `[P]` default so retention could land, and can be overridden: **three months is a floor as well
@@ -560,6 +573,20 @@ Separately, the issue asks whether an app with storage that has had no backup in
 should notify its owner. Every attempt is now recorded and shown on the app and on the Backups screen,
 so the question is only whether it should also reach somebody who is not looking. That is a notification
 policy, and R-231 leaves which events notify to be decided.
+
+**O-61** was raised by issue #90, where 44 repositories reached the `build_method` question and every
+answer the benchmark gave — the start command each app's README names — was refused. The question is
+still asked because the AI adapter's `repair_plan` keys on a winner of strategy `unknown`, and a
+blocked detection is not screened. The options:
+
+1. **Keep it, honestly.** The prompt says no answer is accepted and names what to add. A question that
+   cannot be answered is still a question, which R-104 says Pando asks only when it can proceed.
+2. **Ask nothing, and say why.** A detection with no reading ends without a question and with its
+   reason shown, as a blocked one does, while still offering the AI adapter its repair. Needs a status,
+   or a change to how a blocked detection is screened.
+3. **Accept a start command and build from it.** A plan that installs the toolchain the command's first
+   word names (mise can install most of them) and runs the command. Broadens R-095's "wrap a buildpack"
+   to "build anything a command names", which is the scope R-010 warns about.
 
 **O-13 — one clock, not two.** The re-authorization interval is *exactly* the assertion lifetime
 rather than an independently chosen value. Two clocks measuring the same thing drift apart the first

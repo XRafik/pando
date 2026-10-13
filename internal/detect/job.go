@@ -3,7 +3,6 @@ package detect
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -215,15 +214,23 @@ func (j *Job) Run(ctx context.Context, appID string, src spec.Source, view api.S
 	}
 
 	// Step 7 — R-094 tier 1. An image the maintainer already publishes.
-	if p, found := j.checkRegistry(ctx, appID, src); found {
-		return p, nil
-	}
+	published := j.published(ctx, src)
 
 	// Steps 8 and 9 — the auction.
 	Report(ctx, StageDetecting, nil)
 	result, err := j.Auction.Run(ctx, view)
 	if err != nil {
 		return Proposal{}, err
+	}
+
+	// A compose file outranks the published image (R-094, amended by issue
+	// #90); the image outranks everything else the auction found.
+	if len(published) > 0 {
+		compose, ok := composeAnswer(result)
+		if !ok {
+			return j.checkRegistry(ctx, appID, src, published, view), nil
+		}
+		result = withComposeOverImage(result, compose, registryCandidate(published, view))
 	}
 
 	proposal := Proposal{
@@ -252,27 +259,18 @@ func (j *Job) Run(ctx context.Context, appID string, src spec.Source, view api.S
 	partial := proposal
 	partial.DraftSpec = j.assemble(appID, src, draft)
 
-	// Step 9a — the build (R-311). What the app would deploy, built the way a
-	// deploy builds it, so the plan can show the score of the image that will
-	// run and the trial run has something to start. A build that fails stops
-	// here with its log, the way a trial run that crashes does (R-107).
-	trialDraft, trialAuth := draft, (*api.RegistryAuth)(nil)
-	if build := buildFrom(ctx); build != nil {
-		outcome, err := build(ctx, &partial)
-		if err != nil {
-			return Proposal{}, err
-		}
-		if outcome.Built != nil {
-			proposal.Built, partial.Built = outcome.Built, outcome.Built
-			if image := outcome.Built.Scanned(&partial.DraftSpec); image != "" {
-				trialDraft, trialAuth = withPrimaryImage(draft, image), outcome.PullAuth
-			}
-		}
+	draft, trialDraft, trialAuth, err := j.buildForTrial(ctx, appID, src, draft, &proposal, &partial)
+	if err != nil {
+		return Proposal{}, err
 	}
 	Report(ctx, StageTrying, &partial)
 
 	// Step 10 — the trial run.
 	trial := j.trialWith(ctx, trialDraft, trialAuth)
+	draft, trial, movedHost := j.listenEverywhere(ctx, draft, trialDraft, trialAuth, trial)
+	if movedHost {
+		proposal.Winner.Evidence = append(append([]string(nil), proposal.Winner.Evidence...), listenedEverywhere)
+	}
 	draft, proposal.Questions = ApplyTrial(draft, proposal.Questions, trial)
 	proposal.TrialLog = trial.Log
 	proposal.Trial = trial.Observation()
@@ -299,7 +297,46 @@ func (j *Job) Run(ctx context.Context, appID string, src spec.Source, view api.S
 	proposal.Status = StatusFor(result.Winner, proposal.Questions)
 	proposal.Winner.Draft = draft
 	proposal.DraftSpec = j.assemble(appID, src, draft)
+
+	// A program that ran, finished and never listened is not a web app, and
+	// the trial is the evidence (R-107).
+	if refused := exitedRefusal(trial); refused != nil {
+		proposal.Status = StatusBlocked
+		proposal.Blocked = refused
+	}
 	return proposal, nil
+}
+
+// buildForTrial is step 9a — the build (R-311). What the app would deploy,
+// built the way a deploy builds it, so the plan can show the score of the image
+// that will run and the trial run has something to start. A build that fails
+// stops here with its log, the way a trial run that crashes does (R-107).
+//
+// It returns the draft with the build's plan applied, and the draft and pull
+// credentials the trial run should start; proposal and partial record what
+// was built.
+func (j *Job) buildForTrial(ctx context.Context, appID string, src spec.Source, draft Draft, proposal, partial *Proposal) (Draft, Draft, *api.RegistryAuth, error) {
+	trialDraft, trialAuth := draft, (*api.RegistryAuth)(nil)
+	build := buildFrom(ctx)
+	if build == nil {
+		return draft, trialDraft, trialAuth, nil
+	}
+	outcome, err := build(ctx, partial)
+	if err != nil {
+		return draft, trialDraft, trialAuth, err
+	}
+	if len(outcome.Plan) > 0 {
+		draft = withPlan(draft, outcome.Plan)
+		partial.Winner.Draft = draft
+		partial.DraftSpec = j.assemble(appID, src, draft)
+	}
+	if outcome.Built != nil {
+		proposal.Built, partial.Built = outcome.Built, outcome.Built
+		if image := outcome.Built.Scanned(&partial.DraftSpec); image != "" {
+			trialDraft, trialAuth = withPrimaryImage(draft, image), outcome.PullAuth
+		}
+	}
+	return draft, trialDraft, trialAuth, nil
 }
 
 // StatusFor recomputes detection status after the trial run, and again
@@ -332,24 +369,120 @@ func StatusFor(winner Candidate, questions []Question) string {
 	}
 }
 
-// checkRegistry is R-094 tier 1.
-//
-// A published image short-circuits everything below it, including the trial
-// run: there is nothing to detect about how to build something that is already
-// built, and spec.BuildPrebuilt is exactly that case.
-func (j *Job) checkRegistry(ctx context.Context, appID string, src spec.Source) (Proposal, bool) {
+// published asks the registry probe for images the maintainer publishes.
+func (j *Job) published(ctx context.Context, src spec.Source) []PublishedImage {
 	if j.Registry == nil {
-		return Proposal{}, false
+		return nil
 	}
-
 	images, err := j.Registry.Published(ctx, src)
-	if err != nil || len(images) == 0 {
+	if err != nil {
 		// A registry that is unreachable is not a detection failure. Everything
 		// below tier 1 still works, and refusing to detect because a network
 		// call failed would be the opposite of degrading gracefully.
-		return Proposal{}, false
+		return nil
 	}
+	return images
+}
 
+// composeAnswer returns the compose candidate that outranks a published image:
+// one that imported, and describes the app rather than only what it needs.
+//
+// A compose file Pando refused does not. Its refusal is shown when nothing
+// else answers (see Auction.Run), but a published image is an answer — the
+// maintainer's own — and refusing an app that has one for a construct in a
+// file it does not need would be a regression nobody asked for.
+func composeAnswer(result Result) (Candidate, bool) {
+	for _, c := range append([]Candidate{result.Winner}, result.RunnersUp...) {
+		if c.Strategy == spec.BuildCompose && c.Blocked == nil && !onlyBackingServices(c.Draft) &&
+			len(c.Draft.Workloads) > 0 {
+			return c, true
+		}
+	}
+	return Candidate{}, false
+}
+
+// withComposeOverImage makes the compose candidate the winner over a published
+// image, and the image a runner-up.
+//
+// R-094 put the published image above everything, and a repository's compose
+// file is where its maintainer says how that image runs: beside which
+// database, with which variables, keeping which volumes. Planka, Listmonk and
+// a dozen more ran their image alone and crashed on `ECONNREFUSED
+// 127.0.0.1:5432` (issue #90). The compose file is the answer now, and a
+// service in it that builds the image the maintainer publishes runs the
+// published image instead — the same image, already built.
+//
+// The ladder settles it, so there is no question between them: compose over
+// the image, and the image over every other reading the auction found.
+func withComposeOverImage(result Result, compose, image Candidate) Result {
+	compose.Draft = runPublished(compose.Draft, image)
+	compose.Evidence = append(compose.Evidence,
+		"the compose file says how the published image "+image.Draft.Workloads[0].Image+" runs, so it is used rather than the image alone")
+
+	runnersUp := []Candidate{image}
+	for _, c := range append([]Candidate{result.Winner}, result.RunnersUp...) {
+		if c.Detector != compose.Detector {
+			runnersUp = append(runnersUp, c)
+		}
+	}
+	questions := append([]Question(nil), compose.Questions...)
+	return Result{
+		Winner:    compose,
+		RunnersUp: runnersUp,
+		Questions: questions,
+		Status:    StatusFor(compose, questions),
+	}
+}
+
+// runPublished has each compose service that builds the published image run
+// it instead: `build: .` beside `image: ghcr.io/acme/app` is the maintainer's
+// build of the image they publish, and that image already exists.
+func runPublished(d Draft, image Candidate) Draft {
+	published := imageRepository(image.Draft.Workloads[0].Image)
+	out := d
+	out.Workloads = append([]spec.Workload(nil), d.Workloads...)
+	building := false
+	for i, w := range out.Workloads {
+		if w.Build != nil && w.Image != "" && imageRepository(w.Image) == published {
+			out.Workloads[i].Build = nil
+		}
+		if out.Workloads[i].Build != nil {
+			building = true
+		}
+	}
+	if !building && out.Build.Strategy == spec.BuildCompose {
+		out.Build.Strategy = spec.BuildPrebuilt
+	}
+	return out
+}
+
+// imageRepository is an image reference without its tag or digest, with
+// Docker Hub's implied parts spelled out, so `planka` and
+// `docker.io/library/planka:latest` compare equal.
+func imageRepository(ref string) string {
+	ref = strings.ToLower(strings.TrimSpace(ref))
+	if at := strings.Index(ref, "@"); at >= 0 {
+		ref = ref[:at]
+	}
+	if colon := strings.LastIndex(ref, ":"); colon > strings.LastIndex(ref, "/") {
+		ref = ref[:colon]
+	}
+	first, rest, nested := strings.Cut(ref, "/")
+	switch {
+	case !nested:
+		return "docker.io/library/" + ref
+	case (first == "docker.io" || first == "index.docker.io") && !strings.Contains(rest, "/"):
+		return "docker.io/library/" + rest
+	case !strings.ContainsAny(first, ".:") && first != "localhost":
+		return "docker.io/" + first + "/" + rest
+	case first == "index.docker.io":
+		return "docker.io/" + rest
+	}
+	return ref
+}
+
+// registryCandidate is R-094 tier 1's reading: run the image as published.
+func registryCandidate(images []PublishedImage, view api.SourceView) Candidate {
 	best := images[0]
 	draft := Draft{
 		Build: spec.Build{Strategy: spec.BuildPrebuilt},
@@ -368,8 +501,17 @@ func (j *Job) checkRegistry(ctx context.Context, appID string, src spec.Source) 
 				"image was built from the commit you are deploying — only that it is published under " +
 				"the same owner and name.",
 		},
-		Draft: draft,
 	}
+
+	// The image is the repository built, so what the repository says the app
+	// needs, the image needs: a Rails app published by its maintainer still
+	// signs with SECRET_KEY_BASE, and nobody had been asked for it (R-132).
+	if view != nil {
+		var evidence []string
+		draft, evidence = withSourceRequirements(view, draft, ".", "")
+		candidate.Evidence = append(candidate.Evidence, evidence...)
+	}
+	candidate.Draft = draft
 
 	// The port is still unknown, and still the trial run's to answer.
 	candidate.Questions = []Question{{
@@ -383,8 +525,17 @@ func (j *Job) checkRegistry(ctx context.Context, appID string, src spec.Source) 
 				"succeed it needs to be told. Valid answer: a port number, such as 8080.", best.Ref),
 		Why: "Pando needs to know where to send traffic once the app is running.",
 	}}
+	return candidate
+}
 
-	return j.prebuilt(ctx, appID, src, candidate), true
+// checkRegistry proposes the published image, R-094 tier 1, when no compose
+// file outranks it.
+//
+// It short-circuits everything the auction found below it, and the build: there
+// is nothing to build of something that is already built, and
+// spec.BuildPrebuilt is exactly that case. The trial run still answers the port.
+func (j *Job) checkRegistry(ctx context.Context, appID string, src spec.Source, images []PublishedImage, view api.SourceView) Proposal {
+	return j.prebuilt(ctx, appID, src, registryCandidate(images, view))
 }
 
 // runImage proposes running an app's published image as it is.
@@ -452,6 +603,10 @@ func (j *Job) prebuiltWith(ctx context.Context, appID string, src spec.Source, c
 	proposal := Proposal{Winner: candidate, Questions: candidate.Questions}
 
 	trial := j.trialWith(ctx, draft, auth)
+	draft, trial, movedHost := j.listenEverywhere(ctx, draft, draft, auth, trial)
+	if movedHost {
+		proposal.Winner.Evidence = append(append([]string(nil), proposal.Winner.Evidence...), listenedEverywhere)
+	}
 	draft, proposal.Questions = ApplyTrial(draft, proposal.Questions, trial)
 	proposal.TrialLog = trial.Log
 	proposal.Trial = trial.Observation()
@@ -460,21 +615,15 @@ func (j *Job) prebuiltWith(ctx context.Context, appID string, src spec.Source, c
 	proposal.DraftSpec = j.assemble(appID, src, draft)
 
 	// An image that serves only a database's or a mail server's protocol has
-	// nothing for Pando's proxy to send a browser to. Redis was deployed, and
-	// answered every request with a protocol error (issue #55). Said so, the
-	// way a library is.
-	if onlyNonHTTP(trial.ObservedPorts) {
-		listed := make([]string, 0, len(trial.ObservedPorts))
-		for _, p := range trial.ObservedPorts {
-			listed = append(listed, strconv.Itoa(p))
-		}
+	// nothing for Pando's proxy to send a browser to, and one that runs and
+	// exits has nothing at all. Said so, the way a library is.
+	refused := nonHTTPRefusal(trial, draft)
+	if refused == nil {
+		refused = exitedRefusal(trial)
+	}
+	if refused != nil {
 		proposal.Status = StatusBlocked
-		proposal.Blocked = errs.Newf(errs.PlanCapabilityUnsupported,
-			"This image listens only on port %s, which carries a protocol other than HTTP — a "+
-				"database's or a mail server's — so there is no web page for Pando to serve.",
-			strings.Join(listed, ", ")).
-			WithRemedy("To give an app a database, fill one of its slots instead: Pando runs the " +
-				"database inside that app, where nothing else can reach it.")
+		proposal.Blocked = refused
 	}
 	return proposal
 }
@@ -511,9 +660,16 @@ func (j *Job) trialWith(ctx context.Context, draft Draft, auth *api.RegistryAuth
 
 	env := map[string]secret.Value{}
 	for _, e := range primary.Env {
-		if e.Value != nil {
-			env[e.Key] = secret.New(*e.Value)
+		// A name read out of .env.example and left empty is unset, as it is
+		// at deploy (deploy.resolveEnv). Set empty, it overrode the image's
+		// own ENV and the app's defaults: Strapi read HOST="" and PORT="" and
+		// stopped on "http://:NaN/admin", AdonisJS reported NODE_ENV missing
+		// though its Dockerfile sets it — and the trial's log, which is what
+		// finds what an app is missing, described a failure no deploy has.
+		if e.Value == nil || (*e.Value == "" && (e.Source == spec.EnvFromDetection || e.Source == "")) {
+			continue
 		}
+		env[e.Key] = secret.New(*e.Value)
 	}
 
 	result, err := j.Runtime.Trial(ctx, api.TrialRequest{
@@ -575,7 +731,12 @@ func (j *Job) assemble(appID string, src spec.Source, draft Draft) spec.AppSpec 
 // A plain function because answering the tie-break needs it too: adopting the
 // other candidate's reading means assembling that candidate's draft, and doing
 // it a second way is how the two would drift.
+//
+// A build that reaches above the app's directory moves the directory up to
+// where it reaches (liftBuildContexts): what the build reads is decided here,
+// once, for whichever reading is accepted.
 func Assemble(appID string, src spec.Source, draft Draft) spec.AppSpec {
+	src, draft = liftBuildContexts(src, draft)
 	return spec.AppSpec{
 		SchemaVersion: spec.SchemaVersion,
 		AppID:         appID,

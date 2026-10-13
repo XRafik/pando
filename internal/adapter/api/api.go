@@ -118,6 +118,14 @@ type RuntimeCapabilities struct {
 	// the user a question per app.
 	SupportsPortObservation bool
 
+	// SupportsHTTPProbe means Trial also sends each observed port an HTTP
+	// request and reports which answered (TrialResult.HTTPAnswers). An image
+	// that listens on several ports — epmd beside a web UI, MQTT beside a
+	// dashboard, Tomcat's shutdown port beside its connector — is routed to
+	// the one that speaks HTTP rather than to whichever was listed first
+	// (R-097, R-102). Without it, an empty HTTPAnswers says nothing.
+	SupportsHTTPProbe bool
+
 	// SupportsWriteObservation means Trial reports ObservedWrites, which is
 	// what lets the persistence warning name the directory (R-202) instead of
 	// being generic (R-201).
@@ -307,6 +315,14 @@ type RuntimeAdapter interface {
 	// workload is recreated from (R-146).
 	ImportImage(ctx context.Context, r io.Reader) (string, error)
 
+	// HasImage reports whether an image ImportImage returned is still on the
+	// runtime. An imported image lives only in the runtime's own store, and
+	// something other than Pando can remove it — a prune — so a deploy that
+	// would run one detection built checks first and builds again when it is
+	// gone (R-311). A runtime that takes images only from a registry answers
+	// true: what it runs is in the registry, not on it.
+	HasImage(ctx context.Context, ref string) (bool, error)
+
 	Logs(ctx context.Context, ref WorkloadRef, opts LogOptions) (io.ReadCloser, error)
 	Exec(ctx context.Context, ref WorkloadRef, req ExecRequest) (ExecSession, error)
 
@@ -461,6 +477,13 @@ type TrialResult struct {
 	// nothing in the log to say why.
 	LoopbackPorts []int
 
+	// HTTPAnswers are the ObservedPorts that answered an HTTP request, with
+	// the status each returned, in port order. Only meaningful on a runtime
+	// with SupportsHTTPProbe: listening is not serving, and a port that
+	// carries a database's or a broker's protocol answers a browser with
+	// nothing at all.
+	HTTPAnswers []HTTPAnswer
+
 	// ObservedWrites are directories written outside DeclaredPaths (R-202).
 	ObservedWrites []string
 
@@ -473,6 +496,13 @@ type TrialResult struct {
 	// is the entire answer Pando has and R-107 says showing it and stopping is
 	// the correct outcome rather than a gap to close with inference.
 	Log string
+}
+
+// HTTPAnswer is one port's answer to a trial's HTTP request.
+type HTTPAnswer struct {
+	Port int
+	// Status is the HTTP status code of the answer to GET /.
+	Status int
 }
 
 // BundleRef identifies an app's bundle to an adapter.
@@ -589,6 +619,11 @@ type WorkloadPlan struct {
 	Files     []FilePlan
 	Ports     []PortPlan
 	DependsOn []string
+
+	// Aliases are other names the workload is reachable by on the bundle's
+	// private network, beside Name. Nothing outside the bundle resolves them.
+	Aliases []string
+
 	Health    *HealthPlan
 	Resources ResourcePlan
 
@@ -1052,6 +1087,17 @@ type BuildRequest struct {
 	// after it was built is never mistaken for the one that runs (R-146).
 	// Empty lets the builder choose.
 	Tag string
+
+	// Steer lets a builder that planned this build from convention revise
+	// that plan when it fails in a way the builder recognizes, and build
+	// again (a bounded number of times). The plan it built from in the end
+	// comes back in BuildResult.GeneratedFiles, so the caller can record it:
+	// the spec stays the sole record of how the app is built (R-020).
+	//
+	// Only detection sets it, where the plan is still being made and the
+	// revision is recorded before anyone accepts it. A deploy builds exactly
+	// the plan the spec carries, and fails if that plan does.
+	Steer bool
 }
 
 // PushTarget is where a build pushes its image (issue #72, PR 5).
@@ -1094,6 +1140,11 @@ const ImageLabelBundle = "io.pando.built-for"
 type BuildResult struct {
 	ImageRef string
 	Digest   string
+
+	// GeneratedFiles is the plan the image was built from, when it is not the
+	// one the request carried: a builder asked to Steer revised it after a
+	// build of it failed. Nil when the build used the plan it was given.
+	GeneratedFiles map[string]string
 }
 
 // --- secrets ---------------------------------------------------------------

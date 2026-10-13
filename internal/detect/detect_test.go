@@ -210,6 +210,30 @@ func TestR102_ACloseCallBecomesAQuestion(t *testing.T) {
 	require.True(t, asked, "an ambiguous repository produces a question rather than a pick")
 }
 
+// TestR102_ARefusedReadingIsNotOfferedAsATie asserts R-102 and R-021.
+//
+// A committed static site beside a package.json that publishes files reads two
+// ways: the site, and an npm library Pando refuses. The refusal is not a way to
+// build the repository, so the site is used without asking which (issue #90).
+func TestR102_ARefusedReadingIsNotOfferedAsATie(t *testing.T) {
+	result, err := auction().Run(context.Background(), memSource{
+		"dist/index.html": "<h1>hi</h1>",
+		"package.json":    `{"name":"boilerplate","files":["dist"],"scripts":{"build":"webpack"}}`,
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, spec.BuildStatic, result.Winner.Strategy)
+	require.Nil(t, result.Blocked)
+	var refused bool
+	for _, r := range result.RunnersUp {
+		refused = refused || r.Blocked != nil
+	}
+	require.True(t, refused, "the library reading is there, close behind, and refused")
+	for _, q := range result.Questions {
+		require.NotEqual(t, "build_strategy", q.Key, "a library refusal is not one of two ways to build this")
+	}
+}
+
 func TestDockerfileAtRootWins(t *testing.T) {
 	result, err := auction().Run(context.Background(), memSource{
 		"Dockerfile":   "FROM node:20\nEXPOSE 3000\nCMD [\"npm\",\"start\"]\n",
@@ -1155,19 +1179,19 @@ func TestR096_AComposeSubstitutionIsResolvedToItsDefault(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	env := map[string]string{}
+	env := map[string]spec.EnvEntry{}
 	for _, e := range result.Winner.Draft.Workloads[0].Env {
-		require.NotNil(t, e.Value)
-		env[e.Key] = *e.Value
+		env[e.Key] = e
 	}
-	require.Equal(t, "localhost", env["APP_DOMAIN"])
+	require.NotNil(t, env["APP_DOMAIN"].Value)
+	require.Equal(t, "localhost", *env["APP_DOMAIN"].Value)
 
-	// One with no default has no value to resolve to. It keeps its spelling —
-	// an empty string would be an app misconfigured with nothing to show for
-	// it — and says so, so somebody sets it (R-102).
-	require.Equal(t, "${APP_BASE_URL}", env["APP_BASE_URL"])
-	require.True(t, hasWarning(result.Winner.Draft.Warnings,
-		spec.WarnComposeConstructRewritten, "APP_BASE_URL"))
+	// One with no default has no value to resolve to. It used to keep its
+	// spelling, and the app was handed the text "${APP_BASE_URL}". It is a
+	// required slot now, so somebody sets it before the deploy (R-132).
+	require.Nil(t, env["APP_BASE_URL"].Value)
+	require.NotNil(t, env["APP_BASE_URL"].SlotRef)
+	require.Equal(t, "APP_BASE_URL", *env["APP_BASE_URL"].SlotRef)
 }
 
 // Compose services live in a map, and Go randomizes map iteration.

@@ -44,7 +44,8 @@ func TestR021_AGoFileThatNamesNoPackageIsNotAProgram(t *testing.T) {
 // TestR132_ARailsAppKeepsTheValuesItAlreadyDeclares asserts R-132. A Rails app
 // whose .env.example already names RAILS_ENV and SECRET_KEY_BASE is not given a
 // second of either: what the repository declares stands, and Pando adds only
-// what is missing.
+// what is missing. SECRET_KEY_BASE named with no value is still missing, so the
+// one entry it has becomes the required slot that asks for it.
 func TestR132_ARailsAppKeepsTheValuesItAlreadyDeclares(t *testing.T) {
 	result, err := detect.NewAuction(detect.BuildpackDetector{}).Run(context.Background(), memSource{
 		"Gemfile": "gem 'rails'\n", "config/application.rb": "", "bin/rails": "",
@@ -63,9 +64,15 @@ func TestR132_ARailsAppKeepsTheValuesItAlreadyDeclares(t *testing.T) {
 	require.Equal(t, 1, count["RAILS_ENV"])
 	require.Equal(t, 1, count["SECRET_KEY_BASE"])
 	require.Equal(t, "production", values["RACK_ENV"], "the one it did not declare is added")
+	var asked int
 	for _, s := range result.Winner.Draft.Slots {
-		require.NotEqual(t, "SECRET_KEY_BASE", s.Key, "a declared variable is not asked for again")
+		if s.Key == "SECRET_KEY_BASE" {
+			asked++
+			require.True(t, s.Required)
+			require.Equal(t, spec.FormatRandomLong, s.Format)
+		}
 	}
+	require.Equal(t, 1, asked, "asked for once")
 }
 
 // A Dockerfile the checkout lists but cannot open still bids — it is at the
@@ -145,6 +152,68 @@ func TestR094_APublishedImageShortCircuitsTheAuction(t *testing.T) {
 	require.Equal(t, "ghcr.io/acme/notes:latest", primary.Image)
 	require.Equal(t, 3000, primary.Ports[0].Number, "the port is the one watched, not the Dockerfile's")
 	require.Empty(t, detect.Asked(p.Questions))
+}
+
+// TestR094_AComposeFileOutranksAPublishedImage asserts R-094 as amended by
+// issue #90. A repository's compose file is where its maintainer says how the
+// image they publish runs — beside which database, with which variables — so
+// it is the answer, and a service that builds the published image runs it
+// instead. The image alone is a runner-up.
+func TestR094_AComposeFileOutranksAPublishedImage(t *testing.T) {
+	job := &detect.Job{
+		Auction:  detect.NewAuction(detect.DockerfileDetector{}, detect.ComposeDetector{}),
+		Registry: publishedProbe{images: []detect.PublishedImage{{Ref: "ghcr.io/acme/notes:latest", Registry: "ghcr.io"}}},
+	}
+	p, err := job.Run(context.Background(), "app_1",
+		spec.Source{Type: spec.SourceGit, URL: "https://github.com/acme/notes"},
+		memSource{
+			"Dockerfile": "FROM alpine\nEXPOSE 3000\n",
+			"compose.yaml": `
+services:
+  notes:
+    build: .
+    image: ghcr.io/acme/notes:${TAG:-latest}
+    environment:
+      DATABASE_URL: postgresql://postgres:secret@postgres/notes
+      SECRET_KEY: notsecret
+    ports: ["3000:3000"]
+  postgres:
+    image: postgres:16-alpine
+`,
+		})
+	require.NoError(t, err)
+
+	require.Equal(t, "compose", p.Winner.Detector)
+	require.Nil(t, p.Blocked)
+	notes := workloadsByName(p.Winner.Draft)["notes"]
+	require.Nil(t, notes.Build, "the service building the published image runs it")
+	require.Equal(t, "ghcr.io/acme/notes:latest", notes.Image)
+	require.Equal(t, spec.BuildPrebuilt, p.DraftSpec.Build.Strategy, "nothing is left to build")
+	require.True(t, hasSlot(p.DraftSpec.Slots, spec.SlotPostgres), "the database the compose file runs comes along")
+
+	var registry bool
+	for _, r := range p.RunnersUp {
+		registry = registry || r.Detector == "registry"
+	}
+	require.True(t, registry, "the image alone is shown as the reading not taken")
+	for _, q := range p.Questions {
+		require.NotEqual(t, detect.KeyBuildStrategy, q.Key, "the ladder decides; nothing is asked")
+	}
+}
+
+// A compose file Pando refuses does not outrank the published image: the image
+// is an answer, and the refusal is about a file the app does not need.
+func TestR094_ARefusedComposeFileDoesNotOutrankAPublishedImage(t *testing.T) {
+	job := &detect.Job{
+		Auction:  detect.NewAuction(detect.ComposeDetector{}),
+		Registry: publishedProbe{images: []detect.PublishedImage{{Ref: "ghcr.io/acme/notes:latest", Registry: "ghcr.io"}}},
+	}
+	p, err := job.Run(context.Background(), "app_1",
+		spec.Source{Type: spec.SourceGit, URL: "https://github.com/acme/notes"},
+		memSource{"compose.yaml": "services:\n  notes:\n    image: ghcr.io/acme/notes\n    privileged: true\n"})
+	require.NoError(t, err)
+	require.Equal(t, "registry", p.Winner.Detector)
+	require.Nil(t, p.Blocked)
 }
 
 // An answer adopting a runner-up keeps only the answers to that runner-up's own

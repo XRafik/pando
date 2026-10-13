@@ -204,6 +204,14 @@ type Workload struct {
 	DependsOn []string     `json:"depends_on,omitempty"`
 	Health    *Healthcheck `json:"healthcheck,omitempty"`
 
+	// Aliases are other names the workload answers to on the app's private
+	// network, beside its own. A compose file's `container_name` is one: the
+	// other services address it by that name — an nginx upstream, a database
+	// host in a URL — and Pando, which names containers itself, made the name
+	// resolve nowhere (issue #90). Reachable only inside the app, like the
+	// workload's own name (R-026).
+	Aliases []string `json:"aliases,omitempty"`
+
 	// Exposed means reachable through the proxy at a sub-route (R-026).
 	Exposed bool `json:"exposed"`
 
@@ -311,6 +319,26 @@ type Port struct {
 	Number   int        `json:"number"`
 	Protocol string     `json:"protocol"`
 	Source   PortSource `json:"source"`
+}
+
+// HTTPPort is the port a workload's web traffic goes to: the first port that
+// carries HTTP, or the workload's only port.
+//
+// Detection orders ports so the first HTTP one is the one people open (R-097),
+// and marks the ones it knows carry something else as tcp. Of several ports
+// none of which is HTTP, none is the answer: sending a browser to the first
+// one listed — epmd, MQTT, a database — was how apps came to answer every
+// request with a protocol error (issue #90).
+func (w Workload) HTTPPort() (int, bool) {
+	for _, p := range w.Ports {
+		if p.Protocol == "http" || p.Protocol == "" {
+			return p.Number, true
+		}
+	}
+	if len(w.Ports) == 1 {
+		return w.Ports[0].Number, true
+	}
+	return 0, false
 }
 
 // VolumeSource records how a volume came to be declared.
@@ -422,9 +450,22 @@ type Slot struct {
 	Required bool     `json:"required"`
 	Evidence []string `json:"evidence,omitempty"`
 
+	// Format is the shape the value must take, for a value the app checks:
+	// a Laravel APP_KEY, a Rails SECRET_KEY_BASE. What "generate a value"
+	// produces and what a literal is checked against (SecretFormat). Empty
+	// for a slot whose value Pando knows nothing about.
+	Format SecretFormat `json:"format,omitempty"`
+
 	// Resolution nil means unfilled. A required unfilled slot blocks deploy
 	// (R-132) at plan time, not at deploy time.
 	Resolution *Resolution `json:"resolution,omitempty"`
+
+	// Aliases are names a provisioned service also answers to on the app's
+	// network: the compose service it replaced. The URL is rewired to the new
+	// instance, but an app may reach the old name another way — a
+	// `while ! </dev/tcp/db/5432` wait in its start command never finished
+	// once `db` resolved to nothing (issue #90).
+	Aliases []string `json:"aliases,omitempty"`
 }
 
 // ResolutionMode is how a slot is filled (R-131).

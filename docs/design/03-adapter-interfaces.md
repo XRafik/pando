@@ -1040,9 +1040,80 @@ differently.
 sites that build to static files, Node servers, Go programs, .NET and JVM projects each have a plan
 of Pando's own (`laravel.go`, `jekyll.go`, `staticsite.go`, `node.go`, `golang.go`, `dotnet.go`,
 `jvm.go`), written because the deploy QA run found the general-purpose planner getting each one
-wrong (issue #55). Everything else goes to Railpack. Generated files of either kind live under
+wrong (issue #55). So do the languages Railpack has no provider for, or plans as a static site
+(`languages.go`, issue #90): Crystal (`shards build`, run on the Crystal image), R (a `plumber.R` API
+or a Shiny app, on `rocker/r-ver` with the packages its R files load), Clojure (`lein uberjar`, or a
+deps.edn alias or namespace with `-main`), Scala (`sbt stage` with sbt-native-packager, which Play
+always has; the assembly jar; or the classpath sbt exports), Haskell (`stack build`, its one
+executable run on Debian slim), Perl (`cpanm --installdeps`, then the Procfile, a PSGI app under
+`plackup`, or a Mojolicious script), a Python package with only a `setup.py` (its one console
+script, given `--host` and `--port` when it takes them), and PHP with no `composer.json` whose
+`index.php` is in a web root (Apache, document root that directory). Each image is the language's
+official one by line — `crystallang/crystal:1.14`, `rocker/r-ver:4.5`, `clojure:temurin-21-lein`
+and `-tools-deps`, `eclipse-temurin:17-jdk` with the sbt launcher, `haskell:9`, `perl:5.40`,
+`python:3.12-slim`, `php:8.4-apache` — each a `[P]` default chosen as a current, maintained line. A
+plan that cannot tell what to run declines, and the repository goes on to Railpack. Everything else
+goes to Railpack. Generated files of either kind live under
 `.pando-plan/` in the checkout; a spec stored before Railpack carries `.nixpacks/` paths and is
 replayed from them unchanged.
+
+The benchmark in issue #90 added more of the same, each a category the planners got wrong:
+
+- **Static site generators** (`staticsite.go`, `ssg.go`). A site is served from where its generator
+  writes — SvelteKit's adapter-static `build/` (or its `pages`), VitePress `.vitepress/dist`,
+  Eleventy `_site` (or `dir.output`), Hexo `public_dir`, Docusaurus `build`, Nuxt's generated
+  `.output/public`, Vite's and Astro's `outDir` — read from a literal in the config or build script,
+  never by running it. SvelteKit on another adapter and Nuxt rendering on request are servers and go
+  to `node.go`, started as their docs say (`node build`, `node .output/server/index.mjs`, and `vite
+  preview` for adapter-auto, which writes no server). Hugo, Zola and MkDocs are built with their own
+  release and served by the same nginx. `[P]` Hugo 0.167.0 and Zola 0.23.6 unless `netlify.toml`,
+  `vercel.json` or a workflow pins one; Hugo on `golang:1.25` so Hugo Modules resolve; MkDocs on
+  Python 3.12. A Hugo theme that is an unfetched submodule refuses the plan with `VALID_INVALID`,
+  which detection shows as blocked, rather than building empty pages.
+- **Node toolchain.** `[P]` Node sites build on `node:<major>-slim`, not Alpine: Gatsby and other
+  native modules need glibc. pnpm is installed at the version `packageManager` names, else the major
+  the lockfile's format implies (5.3→6, 5.4→7, 6.0→8, 9.0→9), never corepack's newest; pnpm 10 and
+  later are told to run dependency build scripts, as npm and earlier pnpm do. A Bun lockfile is
+  installed with Bun. An `engines.node` range gets 22 when it allows it, else the newest line it
+  allows; the same choice is passed to Railpack as `RAILPACK_NODE_VERSION`, because mise installed
+  the oldest release of an open range.
+- **Not Node.** A `package.json` beside `pom.xml` or a Gradle build is the JVM app's front end, and
+  detection reads the repository as Java. One beside `deno.json` is left to Railpack's Deno support.
+  A Meteor app (`.meteor/release`) is built with its release's `meteor build` into the server bundle
+  and run on that release's Node; detection asks for `MONGO_URL` as a required value (R-132).
+
+**[P] A repository's `.dockerignore` does not apply to a Dockerfile Pando writes.** A repository's
+own ignore file is written for its own Dockerfile, which often copies an artifact built on the
+developer's machine: every Quarkus quickstart ignores `*` and lets only `target/` back in, and
+Pando's from-source build of one found no `pom.xml` (issue #90). Every Dockerfile Pando writes gets
+a `Dockerfile.dockerignore` beside it, which BuildKit reads in place of the context's, and which
+ignores nothing: the checkout is already exactly the source to build, and any exclusion Pando chose
+would be a guess about what a build needs (a Maven plugin that stamps the commit reads `.git`). The
+file is part of the plan the spec carries. A Railpack plan has its own exclude list, and a plan
+stored under `.nixpacks/` is replayed as it was built.
+
+**[P] A JVM build runs what it produces.** The build file says what that is (`jvm.go`): a WAR is
+deployed as Tomcat's root application (Tomcat 11, or Tomcat 9 for a build naming `javax.servlet`);
+a WAR whose `pom.xml` has the Open Liberty plugin is packaged with its server as a runnable jar by
+that plugin; a Gradle build with the `application` plugin (or Ktor's or Play's, which apply it)
+runs `installDist` and starts the script it installs; anything else runs the largest jar the build
+writes — or Quarkus's `quarkus-app/` — with `java -jar`, beside the `libs/` its manifest names. The
+app's working directory is a copy of the repository, so an app that reads `views/` or `conf/` at
+run time finds them, as it does when its README starts it from the project. A Gradle toolchain is
+built on exactly the release it names, because Gradle refuses any other; a source or target level is
+a minimum and rounds up to an LTS release.
+
+**[P] A .NET solution builds its one web project.** With no project at the top of the repository,
+projects up to two directories down are read, and the one with the `Microsoft.NET.Sdk.Web` SDK is
+published — a Blazor WebAssembly client, a class library or a test project is not it. Several web
+projects is a choice that is not Pando's, and none is picked.
+
+**[P] A Procfile is followed when it runs the program Pando builds.** A Heroku-style Procfile names
+a Go program by its `go install` name (`miniflux.app` for module `miniflux.app/v2`). Pando's Go
+plan installs the program under that name and runs the Procfile's command, flags included; for a
+Railpack build of a Go module, the build also compiles that program into `bin/`, which the start
+command runs. A Procfile whose program is committed in the repository runs it as it is; one naming
+a program the module does not have is not followed by Pando's plan.
 
 **[P] `buildpack` falls back to Railpack, invoked only to plan.** `railpack prepare` writes a JSON
 build plan and builds nothing (R-095). BuildKit builds the plan through Railpack's frontend image,
@@ -1094,6 +1165,56 @@ does not evaluate. A handful of settings correct what Railpack gets wrong, each 
 failure (issue #55): a FastAPI or Flask module served by the uvicorn or gunicorn it depends on, Django's
 `collectstatic` as the build step, a PHP app served from `public/` (or a Heroku Procfile's document
 root) through `RAILPACK_PHP_ROOT_DIR`.
+
+Issue #90 added to both lists. Declared: a hosting platform's manifest — `railway.json`,
+`railway.toml`, a `render.yaml` with one web service — ranks with the Procfile (R-094 tier 2), and
+`deno.json`'s `build` and `start` tasks with the command runners (tier 3); a source that says how the
+app is built and not how it starts takes its start from the next source that does, so a Makefile
+builds and the Procfile beside it runs; a Makefile whose build recipe runs `go build -o name` starts
+`./name`. A start command may now read `$PORT` and quote its arguments (`safeStart`): it is stored
+whole as the image's command and run by `bash -c` when the container starts, which is where the
+variable belongs. Build commands keep the stricter rule, since Railpack wraps them in `sh -c '…'`.
+Corrected: a Python module that only creates its app — FastAPI, Starlette, BlackSheep, Litestar,
+Quart, Flask — or imports one, is served by the uvicorn, Hypercorn or gunicorn it installs (Flask's
+own server on every interface when it installs none), and one that serves itself on the loopback
+address the same; Streamlit by `streamlit run`; Reflex by `reflex run --env prod`; a Rack 3 app
+with Puma and no `rackup` gem by Puma; a PHP app by its Composer `start` script when that is `php
+-S`; and PHP's web root is any of `public/`, `www/`, `web/`, `htdocs/`, or the one subdirectory
+holding an `index.php`.
+
+**[P] Railpack is steered, up front and after a failed build.** Railpack picks a toolchain from what
+the repository says, and a default where it says nothing, and both go wrong in ways a build log
+names and Railpack never reads (issue #90). Each correction is one of Railpack's documented
+settings — `RAILPACK_RUST_VERSION`, `RAILPACK_PYTHON_VERSION`, `RAILPACK_RUBY_VERSION`,
+`RAILPACK_PHP_EXTENSIONS`, `RAILPACK_DEPLOY_APT_PACKAGES`, `RAILPACK_INSTALL_CMD` — or a small edit
+to the plan it wrote: a file left out of the build, a command rewritten, a step's variable set
+(`steer.go`).
+
+- *Up front*, from the repository: a Rust project that pins no toolchain is built on a current
+  stable, `[P]` 1.90.0 (Railpack treats the Cargo edition's oldest compiler, 1.84.0 for 2021, as the
+  version); a `.python-version` holding a range mise cannot install is left out of the build; a
+  pinned gunicorn older than 22, which imports `pkg_resources`, gets Python 3.11; a `pyproject.toml`
+  project with no lockfile Railpack reads is installed with pip into Railpack's virtualenv; the
+  extensions `composer.lock`'s packages require are installed; a lockfile on Rack 2 that names no
+  Ruby gets Ruby 3.3; Reflex gets `unzip`. Railpack also stops planning on a `require.php` it cannot
+  read (`>=7.4`, `~8.2.0 || ~8.3.0`), so for the moment it plans it is handed the newest of 8.4, 8.3
+  and 8.2 the constraint allows, and the repository's own `composer.json` is put back before
+  anything builds against it.
+- *After a failed build*, from its log: a crate requiring a newer `rustc`, or Cargo's
+  `edition2024`; a Python mise has no build of; a C extension that does not compile on the Python
+  chosen, or a module it no longer ships, stepping one minor release down within the project's own
+  `requires-python` and never past a version it pins; an extension Composer names as missing; a
+  PDM lockfile `pdm install --check` refuses; a native gem GCC 14 rejects for incompatible pointer
+  types, rebuilt with that error a warning (`BUNDLE_BUILD__<GEM>`); a Bundler binstub looking for
+  `ruby` beside it. The build is planned again with every steer so far and built once more — each
+  steer applied once, at most three retries, and a failure nothing recognizes reported as it was.
+
+Only detection's build steers (`api.BuildRequest.Steer`, set through `detect.WithSteer`), while the
+plan is still the one Pando just made; a rebuild after a person revised the plan does not, so their
+edits are what is built. Every steer is written to the build log and to `.pando-plan/steering.txt`
+beside the plan, and the plan the image was built from comes back in `api.BuildResult.GeneratedFiles`
+and replaces the proposal's, so what a person accepts is what was built and what every deploy replays
+(R-020). A deploy builds exactly the spec's plan and fails if it does.
 
 **[P] The planner runs twice when a declaration is an ordering rather than a command.** `//go:embed
 dist` beside a client that builds into that directory says the client comes first, and says nothing

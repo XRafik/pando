@@ -59,6 +59,10 @@ type declaration struct {
 	// the last thing that target does that is not another make invocation:
 	// `run: build` then `./macscout` means the app starts with ./macscout.
 	StartCommand string
+
+	// BuildOutput is the program the build target compiles, when its recipe
+	// says where — `go build -o realtime-advanced …` — or empty.
+	BuildOutput string
 }
 
 // declares reports whether this Makefile says enough to build from.
@@ -101,6 +105,7 @@ func readMakefileAt(dir string) (declaration, string) {
 // exactly where it was, planned by convention-matching.
 func parseMakefile(r io.Reader) declaration {
 	recipes := map[string][]string{}
+	prereqs := map[string][]string{}
 	var current string
 
 	scanner := bufio.NewScanner(io.LimitReader(r, 256<<10))
@@ -131,6 +136,10 @@ func parseMakefile(r io.Reader) declaration {
 			if _, seen := recipes[current]; !seen {
 				recipes[current] = nil
 			}
+			if _, rest, ok := strings.Cut(trimmed, ":"); ok {
+				rest, _, _ = strings.Cut(rest, ";")
+				prereqs[current] = append(prereqs[current], strings.Fields(rest)...)
+			}
 			continue
 		}
 		// A variable assignment, a directive, a conditional — none of which
@@ -138,7 +147,93 @@ func parseMakefile(r io.Reader) declaration {
 		current = ""
 	}
 
+	for _, name := range buildTargets {
+		if _, ok := recipes[name]; ok && buildsDocumentsOnly(name, recipes, prereqs) {
+			delete(recipes, name)
+		}
+	}
 	return declarationFrom(recipes, "make")
+}
+
+// documentTools are programs that typeset documents. A build target that runs
+// only these — demo-rust-axum's `all` makes an EPUB and a PDF of its README with
+// pandoc — builds the documentation, not the app, and running it as the image's
+// build failed on a tool no image has (`pandoc-from-markdown-to-epub: not
+// found`) while the Cargo build that was wanted never ran.
+var documentTools = []string{"pandoc", "latex", "pdflatex", "xelatex", "lualatex", "latexmk",
+	"asciidoctor", "sphinx-build", "a2x", "wkhtmltopdf", "groff", "texi2pdf"}
+
+// documentOutputs are file targets that are documents.
+var documentOutputs = []string{".pdf", ".epub", ".mobi", ".docx", ".tex", ".dvi", ".ps"}
+
+// buildsDocumentsOnly reports a target whose whole job, prerequisites
+// included, is making documents: some step runs a document tool or the target
+// produces a document file, and no step builds anything else.
+//
+// Conservative on purpose. A target that compiles the app and also renders a
+// manual still builds the app, and is left alone; only one with nothing but
+// documents in it is passed over, for the language's own build.
+func buildsDocumentsOnly(target string, recipes, prereqs map[string][]string) bool {
+	seen := map[string]bool{}
+	documents, other := false, false
+
+	var walk func(string, int)
+	walk = func(name string, depth int) {
+		if seen[name] || depth > 8 {
+			return
+		}
+		seen[name] = true
+		if isDocumentOutput(name) {
+			documents = true
+		}
+		d, o := recipeMakes(recipes[name])
+		documents, other = documents || d, other || o
+		for _, p := range prereqs[name] {
+			walk(p, depth+1)
+		}
+	}
+	walk(target, 0)
+	return documents && !other
+}
+
+// isDocumentOutput reports a file target that is a document.
+func isDocumentOutput(name string) bool {
+	for _, ext := range documentOutputs {
+		if strings.HasSuffix(strings.ToLower(name), ext) {
+			return true
+		}
+	}
+	return false
+}
+
+// recipeMakes reports whether a recipe's steps run a document tool, and
+// whether any builds something other than documents.
+func recipeMakes(steps []string) (documents, other bool) {
+	for _, step := range steps {
+		fields := strings.Fields(strings.TrimLeft(step, "@-+"))
+		if len(fields) == 0 {
+			continue
+		}
+		tool := strings.ToLower(filepath.Base(fields[0]))
+		switch {
+		case isDocumentTool(tool):
+			documents = true
+		case tool == "sed" || tool == "cat" || tool == "echo" || tool == "rm" || tool == "mkdir" || tool == "cp":
+			// Text plumbing around a document tool, not a build of its own.
+		default:
+			other = true
+		}
+	}
+	return documents, other
+}
+
+func isDocumentTool(tool string) bool {
+	for _, t := range documentTools {
+		if tool == t || strings.HasPrefix(tool, t+"-") {
+			return true
+		}
+	}
+	return false
 }
 
 // startCommandFrom picks the command a run target actually runs.
@@ -198,6 +293,12 @@ func readRunnerBuild(contextDir string) declaredBuild {
 		}
 		if d.StartCommand != "" && safeCommand(d.StartCommand) {
 			out.Start = d.StartCommand
+		} else if d.BuildOutput != "" {
+			// The program the build made, when nothing says how it runs.
+			// Railpack's Go plan starts ./out, which a build of the
+			// repository's own does not write: "./out: No such file or
+			// directory" (issue #90).
+			out.ImpliedStart = "./" + d.BuildOutput
 		}
 		out.Packages = append(out.Packages, runnerPackages[invoke])
 		out.Packages = append(out.Packages, toolchainPackages(contextDir)...)

@@ -343,6 +343,7 @@ func (a *Adapter) Capabilities(ctx context.Context) (api.RuntimeCapabilities, er
 		// Neither sees into a sandbox (above).
 		SupportsTrialRun:        true,
 		SupportsPortObservation: observes,
+		SupportsHTTPProbe:       observes,
 
 		// The daemon's event stream, filtered to Pando's containers (O-52,
 		// events.go).
@@ -652,7 +653,9 @@ func (a *Adapter) applyWorkload(ctx context.Context, p api.BundlePlan, w api.Wor
 	// R-026). Publishing here would be a bypass.
 	netCfg := &network.NetworkingConfig{
 		EndpointsConfig: map[string]*network.EndpointSettings{
-			networkName: {NetworkID: networkID, Aliases: []string{w.Name}},
+			// Its other names too, on this network only: a compose file's
+			// container_name, which the other services address it by.
+			networkName: {NetworkID: networkID, Aliases: append([]string{w.Name}, w.Aliases...)},
 		},
 	}
 
@@ -1268,29 +1271,102 @@ func (a *Adapter) DestroyVolume(ctx context.Context, h api.VolumeHandle) error {
 // pando/<app>:latest, and a workload recreated afterwards ran the refused image
 // (R-146).
 func (a *Adapter) ImportImage(ctx context.Context, r io.Reader) (string, error) {
+	// The daemon's own words are kept in every message below. "Could not load
+	// the built image." alone named no cause - a full disk, a layer the daemon
+	// refused, a daemon restarting - and the person reading it had nothing to
+	// act on (issue #90, R-105).
 	resp, err := a.cli.ImageLoad(ctx, r, client.ImageLoadWithQuiet(true))
 	if err != nil {
-		return "", errs.Wrap(errs.AdapterFailed, "Could not load the built image.", err)
+		return "", errs.Wrap(errs.AdapterFailed, "Could not load the built image: "+daemonReason(err.Error()), err).
+			WithRemedy("Check that the Docker daemon is running and has free disk space, then deploy again.")
 	}
 	defer func() { _ = resp.Close() }()
 
 	body, err := io.ReadAll(resp)
 	if err != nil {
-		return "", errs.Wrap(errs.AdapterFailed, "Could not load the built image.", err)
+		return "", errs.Wrap(errs.AdapterFailed, "Could not load the built image: "+daemonReason(err.Error()), err).
+			WithRemedy("Check that the Docker daemon is running and has free disk space, then deploy again.")
 	}
 
 	ref := parseLoadedRef(string(body))
 	if ref == "" {
-		return "", errs.New(errs.AdapterFailed, "The built image could not be loaded.").
-			WithRemedy("Check the build logs — the image may not have been produced correctly.")
+		msg := "The built image could not be loaded."
+		if reason := parseLoadError(string(body)); reason != "" {
+			msg = "The built image could not be loaded: " + reason
+		}
+		return "", errs.New(errs.AdapterFailed, msg).
+			WithRemedy("Check that the Docker daemon has free disk space and that the build log ends without an error, then deploy again.")
 	}
 	inspect, err := a.cli.ImageInspect(ctx, ref)
 	if err != nil || inspect.ID == "" {
-		return "", errs.Wrap(errs.AdapterFailed, "The built image was loaded, and Pando could not read its ID.", err).
+		msg := "The built image was loaded, and Pando could not read its ID."
+		if err != nil {
+			msg = "The built image was loaded, and Pando could not read its ID: " + daemonReason(err.Error())
+		}
+		return "", errs.Wrap(errs.AdapterFailed, msg, err).
 			WithRemedy("Check that the Docker daemon is responding, then deploy again.")
 	}
 	a.pruneBuildTags(ctx, ref)
 	return inspect.ID, nil
+}
+
+// HasImage reports whether the daemon still has an image, by its ID or name.
+// Not found is false and no error; any other failure is the daemon's.
+func (a *Adapter) HasImage(ctx context.Context, ref string) (bool, error) {
+	_, err := a.cli.ImageInspect(ctx, ref)
+	switch {
+	case err == nil:
+		return true, nil
+	case cerrdefs.IsNotFound(err):
+		return false, nil
+	default:
+		return false, errs.Wrap(errs.AdapterFailed, "Could not ask the Docker daemon whether it has the image: "+daemonReason(err.Error()), err)
+	}
+}
+
+// shortImageID is an image ID as Docker prints it: twelve hex digits.
+func shortImageID(id string) string {
+	hex := strings.TrimPrefix(id, "sha256:")
+	if len(hex) > 12 {
+		hex = hex[:12]
+	}
+	return hex
+}
+
+// parseLoadError is the error the daemon reported in its load output, which
+// is a stream of JSON objects: one with an "error" field ends a load that
+// failed. Empty when there is none.
+func parseLoadError(body string) string {
+	dec := json.NewDecoder(strings.NewReader(body))
+	for {
+		var msg struct {
+			Error       string `json:"error"`
+			ErrorDetail struct {
+				Message string `json:"message"`
+			} `json:"errorDetail"`
+		}
+		if err := dec.Decode(&msg); err != nil {
+			break
+		}
+		if msg.ErrorDetail.Message != "" {
+			return daemonReason(msg.ErrorDetail.Message)
+		}
+		if msg.Error != "" {
+			return daemonReason(msg.Error)
+		}
+	}
+	return ""
+}
+
+// daemonReason is a daemon's error on one line, held to a sentence's length
+// for quoting in a message.
+func daemonReason(text string) string {
+	text = strings.Join(strings.Fields(text), " ")
+	const limit = 500
+	if len(text) > limit {
+		text = strings.ToValidUTF8(text[:limit], "") + "..."
+	}
+	return text
 }
 
 // parseLoadedRef pulls the image reference out of Docker's load output, which
@@ -1636,6 +1712,16 @@ func (a *Adapter) ensureImageWith(ctx context.Context, ref string, auth *api.Reg
 		return nil
 	}
 
+	// A bare content ID names an image this daemon loaded (ImportImage), and
+	// no registry has it: pulled, it became docker.io/library/sha256:… and
+	// failed as an image nobody publishes (issue #90). Said as what it is.
+	if strings.HasPrefix(ref, "sha256:") {
+		return errs.Newf(errs.NotFound,
+			"The image this app was built into (%s) is no longer on this machine, and Pando cannot download it: it was built here, not published.",
+			shortImageID(ref)).
+			WithRemedy("Deploy the app again, which builds the image again. Something removed it from Docker — an image prune, most often.")
+	}
+
 	// Tried again when the daemon's own content store trips over a pull that
 	// ran beside another — Docker Desktop's containerd answers concurrent pulls
 	// with "lease does not exist" and failed ingest renames, and the same pull
@@ -1807,7 +1893,8 @@ func (a *Adapter) matchesPlan(ctx context.Context, containerID string, w api.Wor
 	}
 
 	if inspect.Container.NetworkSettings != nil && inspect.Container.NetworkSettings.Networks != nil {
-		if _, ok := inspect.Container.NetworkSettings.Networks[networkName]; !ok {
+		ep, ok := inspect.Container.NetworkSettings.Networks[networkName]
+		if !ok || !hasAliases(ep, containerID, w) {
 			return false, nil
 		}
 	}
@@ -1824,6 +1911,25 @@ func (a *Adapter) matchesPlan(ctx context.Context, containerID string, w api.Wor
 		}
 	}
 	return true, nil
+}
+
+// hasAliases reports whether a container answers on its network to every name
+// the plan gives it: its workload name and the compose container_name aliases
+// (R-096). A redeploy that added an alias reused the old container without it,
+// and whatever addressed the service by that name stopped resolving it. Names
+// Docker adds itself — the one derived from the container ID — are not the
+// plan's, so extra aliases are not a mismatch.
+func hasAliases(ep *network.EndpointSettings, containerID string, w api.WorkloadPlan) bool {
+	if ep == nil {
+		return false
+	}
+	have := keptAliases(ep.Aliases, containerID)
+	for _, want := range append([]string{w.Name}, w.Aliases...) {
+		if !slices.Contains(have, want) {
+			return false
+		}
+	}
+	return true
 }
 
 // removeContainer removes a container and its anonymous volumes.
