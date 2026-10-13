@@ -257,6 +257,14 @@ type EnvEntry struct {
 	SlotRef   *string `json:"slot_ref,omitempty"`
 	SecretRef *string `json:"secret_ref,omitempty"`
 
+	// SlotPart takes one piece of the slot's connection string rather than
+	// all of it, for an app that is configured the way libpq, Laravel and most
+	// official images are: PGHOST, PGUSER and PGPASSWORD, or DB_HOST and
+	// DB_PASSWORD, each its own variable. One slot fills them all, so a
+	// provisioned database is one answer however many variables it takes.
+	// Empty is the whole connection string. Set only with SlotRef.
+	SlotPart SlotPart `json:"slot_part,omitempty"`
+
 	// Source records where this entry came from, the way Port.Source and
 	// Volume.Declared already do.
 	//
@@ -420,7 +428,11 @@ const (
 	SlotRedis    SlotType = "redis"
 	SlotS3       SlotType = "s3"
 	SlotSMTP     SlotType = "smtp"
-	SlotUnknown  SlotType = "unknown"
+	SlotMongoDB  SlotType = "mongodb"
+	// SlotMemcached is a memcached cache, reached at "host:port". It has no
+	// URL scheme and no credentials, which is how its clients take it.
+	SlotMemcached SlotType = "memcached"
+	SlotUnknown   SlotType = "unknown"
 )
 
 // DisplayName is how a slot type reads in a sentence written for someone who
@@ -438,6 +450,10 @@ func (t SlotType) DisplayName() string {
 		return "file storage"
 	case SlotSMTP:
 		return "mail server"
+	case SlotMongoDB:
+		return "MongoDB database"
+	case SlotMemcached:
+		return "Memcached"
 	default:
 		return "connection"
 	}
@@ -466,7 +482,20 @@ type Slot struct {
 	// `while ! </dev/tcp/db/5432` wait in its start command never finished
 	// once `db` resolved to nothing (issue #90).
 	Aliases []string `json:"aliases,omitempty"`
+
+	// Scheme is how the app spells a provisioned service's URL: postgres or
+	// postgresql for a Postgres slot, empty for the default. Drivers disagree
+	// and each refuses the other's spelling — readflow's "unsupported database:
+	// postgresql", SQLAlchemy 2's "Can't load plugin: sqlalchemy.dialects:
+	// postgres" (issue #90) — so the spelling the app's own configuration used
+	// is the one it is given, and recorded here because nothing is read from
+	// the repository at deploy time (R-020).
+	Scheme string `json:"scheme,omitempty"`
 }
+
+// PostgresSchemes are the spellings a Postgres slot's Scheme may take. The
+// first is the default: postgresql://, the one libpq documents.
+var PostgresSchemes = []string{"postgresql", "postgres"}
 
 // ResolutionMode is how a slot is filled (R-131).
 type ResolutionMode string

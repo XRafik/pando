@@ -2,7 +2,10 @@ package docker_test
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"strings"
 	"testing"
@@ -34,7 +37,7 @@ func provision(t *testing.T, a *servicesdocker.Adapter, typ spec.SlotType, prior
 
 // TestR131_ProvisionFillsASlotWithSomethingRunnable asserts R-131.
 func TestR131_ProvisionFillsASlotWithSomethingRunnable(t *testing.T) {
-	for _, typ := range []spec.SlotType{spec.SlotPostgres, spec.SlotMySQL, spec.SlotRedis} {
+	for _, typ := range []spec.SlotType{spec.SlotPostgres, spec.SlotMySQL, spec.SlotRedis, spec.SlotMongoDB} {
 		t.Run(string(typ), func(t *testing.T) {
 			res := provision(t, configured(t), typ, secret.Value{})
 
@@ -109,12 +112,87 @@ func TestR131_RedeployingReusesTheCredentialsTheDataWasCreatedWith(t *testing.T)
 		"the same volume, or the redeploy connects the app to an empty database")
 }
 
-// TestR131_AProvisionedPostgresURLUsesTheSchemeEveryClientReads asserts R-131:
-// the connection string a provisioned Postgres fills its slot with is one the
-// app can use. SQLAlchemy 2 refuses postgres:// (issue #90).
-func TestR131_AProvisionedPostgresURLUsesTheSchemeEveryClientReads(t *testing.T) {
-	dsn := provision(t, configured(t), spec.SlotPostgres, secret.Value{}).ConnectionSecret.Reveal()
-	require.True(t, strings.HasPrefix(dsn, "postgresql://"), dsn)
+// TestR131_AProvisionedPostgresURLUsesTheSchemeTheAppSpells asserts R-131: the
+// connection string a provisioned Postgres fills its slot with is one the app
+// can use. SQLAlchemy 2 refuses postgres://, readflow refuses postgresql://,
+// and asyncpg refuses an sslmode in the query (issue #90).
+func TestR131_AProvisionedPostgresURLUsesTheSchemeTheAppSpells(t *testing.T) {
+	for spelled, want := range map[string]string{
+		"":           "postgresql",
+		"postgresql": "postgresql",
+		"postgres":   "postgres",
+		"mysql":      "postgresql",
+	} {
+		res, err := configured(t).Provision(context.Background(), api.ProvisionRequest{
+			AppID: "app_01HQ8", SlotKey: "DATABASE_URL", Type: spec.SlotPostgres,
+			ServiceID: "svc_01HQ9", Scheme: spelled,
+		})
+		require.NoError(t, err)
+		u := mustParse(t, res.ConnectionSecret.Reveal())
+		require.Equal(t, want, u.Scheme, "spelled %q", spelled)
+		require.Empty(t, u.RawQuery, "no sslmode: the server offers TLS, and asyncpg refuses the parameter")
+	}
+}
+
+// TestR131_AProvisionedPostgresServesTheSameCertificateEveryDeploy asserts
+// R-131: the provisioned Postgres serves TLS, so a driver that requires it
+// (lib/pq) connects with a URL that does not say sslmode. The certificate is the
+// same bytes on every deploy of one service, because a changed environment
+// recreates the container and Provision runs on every deploy and reconciler
+// tick.
+func TestR131_AProvisionedPostgresServesTheSameCertificateEveryDeploy(t *testing.T) {
+	a := configured(t)
+	first := provision(t, a, spec.SlotPostgres, secret.Value{})
+	second := provision(t, a, spec.SlotPostgres, first.ConnectionSecret)
+	other := provision(t, a, spec.SlotPostgres, secret.Value{})
+
+	env := first.Workloads[0].Env
+	certPEM, keyPEM := env["PANDO_TLS_CERT"].Reveal(), env["PANDO_TLS_KEY"].Reveal()
+	pair, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
+	require.NoError(t, err, "a certificate and the key that matches it")
+	leaf, err := x509.ParseCertificate(pair.Certificate[0])
+	require.NoError(t, err)
+	require.Equal(t, []string{first.Workloads[0].Name}, leaf.DNSNames)
+	require.True(t, leaf.NotAfter.Year() == 9999, "nothing to expire for: nobody verifies it")
+
+	require.Equal(t, certPEM, second.Workloads[0].Env["PANDO_TLS_CERT"].Reveal())
+	require.Equal(t, keyPEM, second.Workloads[0].Env["PANDO_TLS_KEY"].Reveal())
+	require.Equal(t, first.Workloads[0].Command, second.Workloads[0].Command)
+	require.NotEqual(t, keyPEM, other.Workloads[0].Env["PANDO_TLS_KEY"].Reveal(),
+		"another service, another password, another key")
+
+	cmd := strings.Join(first.Workloads[0].Command, " ")
+	require.Contains(t, cmd, "ssl=on")
+	require.Contains(t, cmd, "exec docker-entrypoint.sh postgres", "the image still creates the database")
+	require.NotContains(t, cmd, "BEGIN", "the key reaches the container through its environment, not its command")
+}
+
+// TestR194_TheProvisionedPostgresKeyNeverRenders asserts R-194: the private key
+// is a secret.Value, so a plan that is logged or marshaled shows [redacted].
+func TestR194_TheProvisionedPostgresKeyNeverRenders(t *testing.T) {
+	res := provision(t, configured(t), spec.SlotPostgres, secret.Value{})
+	b, err := json.Marshal(res.Workloads[0])
+	require.NoError(t, err)
+	require.NotContains(t, string(b), "PRIVATE KEY")
+	require.NotContains(t, fmt.Sprintf("%v %+v", res.Workloads[0], res.Workloads[0].Env), "PRIVATE KEY")
+}
+
+// TestR131_AProvisionedMongoDBSignsInWhereItsUserLives asserts R-131. The
+// image creates one user, a root user, and a root user lives in the admin
+// database: without authSource=admin the driver looks for it in the app's
+// database and every connection is refused.
+func TestR131_AProvisionedMongoDBSignsInWhereItsUserLives(t *testing.T) {
+	res := provision(t, configured(t), spec.SlotMongoDB, secret.Value{})
+	u, err := url.Parse(res.ConnectionSecret.Reveal())
+	require.NoError(t, err)
+	require.Equal(t, "mongodb", u.Scheme)
+	require.Equal(t, "admin", u.Query().Get("authSource"))
+	password, _ := u.User.Password()
+	require.Equal(t, password, res.Workloads[0].Env["MONGO_INITDB_ROOT_PASSWORD"].Reveal())
+	require.Equal(t, "/data/db", res.Workloads[0].Mounts[0].Path)
+
+	again := provision(t, configured(t), spec.SlotMongoDB, res.ConnectionSecret)
+	require.Equal(t, res.ConnectionSecret.Reveal(), again.ConnectionSecret.Reveal(), "and keeps its password")
 }
 
 // A stored connection string Pando cannot read is an error, not a new password.
@@ -195,4 +273,27 @@ func mustParse(t *testing.T, raw string) *url.URL {
 	u, err := url.Parse(raw)
 	require.NoError(t, err)
 	return u
+}
+
+// TestR131_AProvisionedMemcachedIsAnAddressWithNothingToKeep asserts R-131 for
+// a cache. Yopass reads MEMCACHED as "host:port", which is how memcached's
+// clients take it: no scheme and no credentials. It holds nothing to back up,
+// so it has no volume to outlive the app (R-204), and a redeploy hands back the
+// same address rather than refusing one with no password in it.
+func TestR131_AProvisionedMemcachedIsAnAddressWithNothingToKeep(t *testing.T) {
+	a := configured(t)
+	require.Contains(t, a.Supports(), spec.SlotMemcached)
+
+	res := provision(t, a, spec.SlotMemcached, secret.Value{})
+	require.Len(t, res.Workloads, 1)
+	w := res.Workloads[0]
+	require.Equal(t, w.Name+":11211", res.ConnectionSecret.Reveal())
+	require.Empty(t, res.Volumes)
+	require.Empty(t, w.Mounts)
+	require.NotNil(t, w.Health)
+	require.Equal(t, 11211, w.Health.Port)
+	require.False(t, w.Exposed, "R-134")
+
+	again := provision(t, a, spec.SlotMemcached, res.ConnectionSecret)
+	require.Equal(t, res.ConnectionSecret.Reveal(), again.ConnectionSecret.Reveal())
 }

@@ -109,6 +109,9 @@ func phpWebRoot(contextDir string) string {
 	if fileExists(contextDir, phpIndex) {
 		return ""
 	}
+	if dir := composerWebRoot(contextDir); dir != "" {
+		return dir
+	}
 	for _, dir := range phpWebRoots {
 		if fileExists(contextDir, dir+"/"+phpIndex) {
 			return dir
@@ -119,6 +122,48 @@ func phpWebRoot(contextDir string) string {
 		return dirs[0]
 	}
 	return phpPackageDir(contextDir, dirs)
+}
+
+// composerWebRootManifest is the part of composer.json that names a web root.
+type composerWebRootManifest struct {
+	Extra composerExtra `json:"extra"`
+}
+
+// composerExtra is composer.json's `extra`, as far as the web root goes.
+type composerExtra struct {
+	Scaffold  drupalScaffold `json:"drupal-scaffold"`
+	PublicDir string         `json:"public-dir"`
+}
+
+// drupalScaffold is the drupal/core-composer-scaffold plugin's settings.
+type drupalScaffold struct {
+	Locations drupalScaffoldLocations `json:"locations"`
+}
+
+// drupalScaffoldLocations is where the scaffold plugin writes its files.
+type drupalScaffoldLocations struct {
+	WebRoot string `json:"web-root"`
+}
+
+// composerWebRoot is the web root composer.json names for files Composer
+// writes there, or "": Drupal's scaffold plugin writes index.php into
+// extra.drupal-scaffold.locations.web-root, and Symfony Flex names
+// extra.public-dir. A Drupal project's repository holds only composer.json
+// and its lockfile, so nothing in the checkout says where the front
+// controller will be, and Railpack served the repository root, which 404s
+// (issue #90).
+func composerWebRoot(contextDir string) string {
+	var manifest composerWebRootManifest
+	if json.Unmarshal([]byte(readFile(contextDir, "composer.json")), &manifest) != nil {
+		return ""
+	}
+	for _, dir := range []string{manifest.Extra.Scaffold.Locations.WebRoot, manifest.Extra.PublicDir} {
+		dir = strings.Trim(strings.TrimPrefix(dir, "./"), "/")
+		if dir != "" && dir != "." && safeRelative(dir) {
+			return dir
+		}
+	}
+	return ""
 }
 
 // phpIndexDirs are the top-level directories holding an index.php that are

@@ -8,6 +8,7 @@ import (
 	"io"
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,7 +24,12 @@ func QuestionKindChoice() api.QuestionKind { return api.QuestionChoice }
 // --- Dockerfile ------------------------------------------------------------
 
 // DockerfileDetector recognizes a repository that says how to build itself.
-type DockerfileDetector struct{}
+type DockerfileDetector struct {
+	// Planner, when there is one, runs the repository's own build ahead of a
+	// Dockerfile that copies its output (BuildPlanner.PlanPrebuild). Nil
+	// builds the Dockerfile as it is.
+	Planner BuildPlanner
+}
 
 func (DockerfileDetector) Name() string { return "dockerfile" }
 
@@ -31,11 +37,11 @@ func (DockerfileDetector) Name() string { return "dockerfile" }
 // is Podman's and Buildah's, and means the same thing.
 var dockerfileNames = []string{"Dockerfile", "Containerfile"}
 
-func (d DockerfileDetector) Bid(_ context.Context, src api.SourceView) (Candidate, error) {
+func (d DockerfileDetector) Bid(ctx context.Context, src api.SourceView) (Candidate, error) {
 	var nested []string
 	for _, name := range dockerfileNames {
 		if root, err := src.Stat(name); err == nil && !root.IsDir {
-			return d.bidForRoot(src, name)
+			return d.bidForRoot(ctx, src, name)
 		}
 		found, _ := src.Glob(name)
 		for _, p := range deployable(found) {
@@ -49,7 +55,7 @@ func (d DockerfileDetector) Bid(_ context.Context, src api.SourceView) (Candidat
 	var tools []string
 	nested, tools = splitAuxiliary(nested)
 	if len(nested) == 0 && len(tools) == 1 {
-		c, err := d.bidForRoot(src, tools[0])
+		c, err := d.bidForRoot(ctx, src, tools[0])
 		c.Confidence = 0.5
 		c.Evidence[0] = tools[0] + " is the only Dockerfile in the repository, and it sits among helper tools rather than the app"
 		return c, err
@@ -64,7 +70,7 @@ func (d DockerfileDetector) Bid(_ context.Context, src api.SourceView) (Candidat
 		// and asking "which of these one files" is a question with one answer.
 		// Built from the repository root, the way `docker build -f
 		// docker/Dockerfile .` is written in nearly every README that has one.
-		c, err := d.bidForRoot(src, nested[0])
+		c, err := d.bidForRoot(ctx, src, nested[0])
 		c.Confidence = 0.85
 		c.Evidence[0] = nested[0] + " is the only Dockerfile in the repository"
 		return c, err
@@ -196,7 +202,7 @@ func underNotDeployable(p string) bool {
 	return false
 }
 
-func (d DockerfileDetector) bidForRoot(src api.SourceView, name string) (Candidate, error) {
+func (d DockerfileDetector) bidForRoot(ctx context.Context, src api.SourceView, name string) (Candidate, error) {
 	c := Candidate{
 		Strategy:   spec.BuildDockerfile,
 		Confidence: 0.92,
@@ -253,6 +259,19 @@ func (d DockerfileDetector) bidForRoot(src api.SourceView, name string) (Candida
 					"`docker build --build-arg %s=`.", arg, arg, arg),
 			Why: "The build cannot run without it.",
 		})
+	}
+
+	// A Dockerfile that copies what the repository's own build makes —
+	// target/*.war, dist/api — is built with that build run first. The
+	// builder writes it; the spec carries it (R-020).
+	if d.Planner != nil {
+		if plan, err := d.Planner.PlanPrebuild(ctx, src, name); err == nil && plan.Entry != "" {
+			c.Draft.Build.GeneratedFiles = plan.Files
+			c.Draft.Build.Dockerfile = plan.Entry
+			if plan.Declared != nil {
+				c.Evidence = append(c.Evidence, plan.Declared.Why)
+			}
+		}
 	}
 
 	c.Draft.Workloads = []spec.Workload{workload}
@@ -536,6 +555,12 @@ type BuildPlanner interface {
 	// convention-matching chose it. The builder knows which it was; detection
 	// shows it, and cannot derive it without a second copy of the same reading.
 	Plan(ctx context.Context, src api.SourceView) (api.BuildPlan, error)
+
+	// PlanPrebuild is the repository's Dockerfile with the repository's own
+	// build run before it, when the Dockerfile copies what that build makes
+	// and the repository does not have it — target/*.war before `mvn
+	// package`. An empty plan when the Dockerfile builds as it is.
+	PlanPrebuild(ctx context.Context, src api.SourceView, dockerfile string) (api.BuildPlan, error)
 }
 
 func (BuildpackDetector) Name() string { return "buildpack" }
@@ -814,6 +839,9 @@ func (d BuildpackDetector) bidFor(ctx context.Context, src api.SourceView, signa
 		if err == nil && len(plan.Files) > 0 {
 			c.Draft.Build.GeneratedFiles = plan.Files
 			c.Draft.Build.Dockerfile = plan.Entry
+			// A plan that builds from above the app's directory moves the
+			// directory up when the spec is assembled (liftBuildContexts).
+			c.Draft.Build.Context = plan.Context
 			c.Evidence = append(c.Evidence, "build plan generated, and editable before it runs")
 			declared := plan.Declared
 
@@ -880,7 +908,7 @@ func (d BuildpackDetector) bidFor(ctx context.Context, src api.SourceView, signa
 			Why: "Pando runs this command to start the app.",
 		})
 	} else {
-		c.Evidence = append(c.Evidence, "starts with "+planned)
+		c.Evidence = append(c.Evidence, startsWith+planned)
 	}
 
 	// The port is not asked at all, and the draft's framework default stands.
@@ -984,8 +1012,13 @@ func isPlayApp(src api.SourceView) bool {
 
 // playSecretEvidence says what APPLICATION_SECRET is and how to make one, for
 // a person who has never run Play (R-105).
+//
+// Play itself needs 32 characters (256 bits). The slot's format is
+// random_long, which checks for 64 and generates 64 bytes, so the valid answer
+// says 64: an evidence line that promised 32 had a 40-character answer refused
+// by the check beside it. `openssl rand -base64 48` prints exactly 64.
 const playSecretEvidence = "Play signs its session cookies with an application secret and refuses to start in " +
-	"production without one. Valid answer: a random string of at least 32 characters, such as the output of " +
+	"production without one. Valid answer: a random string of at least 64 characters, such as the output of " +
 	"`openssl rand -base64 48`. Keep it: changing it signs everyone out."
 
 // withPlaySecret asks for APPLICATION_SECRET as a required value (R-132),
@@ -1279,6 +1312,7 @@ func backingService(service, image string) (spec.SlotType, bool) {
 		"postgres": spec.SlotPostgres,
 		"mysql":    spec.SlotMySQL, "mariadb": spec.SlotMySQL,
 		"redis": spec.SlotRedis, "valkey": spec.SlotRedis,
+		"memcached": spec.SlotMemcached,
 	}
 
 	// Sorted, because two of these can match one service — a `postgres`
@@ -1357,6 +1391,7 @@ func readEnvExample(src api.SourceView) ([]spec.Slot, []spec.EnvEntry) {
 				// is promoted by the trial run if its absence breaks the app.
 				Required: value == "",
 				Evidence: []string{"declared in " + name},
+				Scheme:   spelledScheme(value, slotType),
 			})
 		}
 		_ = f.Close()
@@ -1406,7 +1441,7 @@ func namesAConnection(key string) bool {
 	// A cache named by itself — PAPERLESS_REDIS — is its address: a Redis has
 	// nothing else a variable would be named after it for. A database is not
 	// read this way, because MYSQL_DATABASE is the name of one, not the place.
-	for _, service := range []string{"REDIS", "VALKEY"} {
+	for _, service := range []string{"REDIS", "VALKEY", "MEMCACHED"} {
 		if strings.HasSuffix(upper, "_"+service) {
 			return true
 		}
@@ -1424,10 +1459,14 @@ func wordType(key string) spec.SlotType {
 			return spec.SlotMySQL
 		case "REDIS", "VALKEY":
 			return spec.SlotRedis
+		case "MEMCACHED", "MEMCACHE":
+			return spec.SlotMemcached
 		case "S3", "MINIO":
 			return spec.SlotS3
 		case "SMTP", "MAIL", "MAILER":
 			return spec.SlotSMTP
+		case "MONGO", "MONGODB":
+			return spec.SlotMongoDB
 		}
 	}
 	return spec.SlotUnknown
@@ -1450,9 +1489,25 @@ func schemeType(value string) spec.SlotType {
 		return spec.SlotS3
 	case "smtp", "smtps":
 		return spec.SlotSMTP
+	case "mongodb", "mongodb+srv":
+		return spec.SlotMongoDB
 	default:
 		return spec.SlotUnknown
 	}
+}
+
+// spelledScheme is the scheme a sample value spells for a service whose URL
+// Pando writes in more than one way (spec.Slot.Scheme), or empty when Pando's
+// default will do. Only Postgres has two: postgres:// and postgresql://.
+func spelledScheme(value string, t spec.SlotType) string {
+	if t != spec.SlotPostgres {
+		return ""
+	}
+	scheme, _, _ := strings.Cut(value, "://")
+	if scheme = strings.ToLower(scheme); slices.Contains(spec.PostgresSchemes, scheme) {
+		return scheme
+	}
+	return ""
 }
 
 func truncate(items []string, n int) []string {

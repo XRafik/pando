@@ -109,16 +109,26 @@ never a blocker.
 
 **[P] The web port is the one that answers HTTP (R-097, R-102; issue #90).** Traffic goes to a workload's
 first `http` port (`Workload.HTTPPort`), so the order of `Ports` is the routing decision. The trial run
-sends every port it observes `GET /` (`SupportsHTTPProbe`) and keeps watching until the set has been
-unchanged for a few seconds after one answers, or for longer with none answering, rather than stopping
-at the first socket. Detection then narrows, each step only when something is left: ports that answered
-HTTP; of those, ones that answered with a page (2xx, 3xx, 401, 403) over 404 or an error; ports below the
-ephemeral range; ports the image or compose file declares; and ports the app's log names as its `http`
-address or where it listens. Two or more still standing after a probe is a `primary_port` question
-naming them. The others stay in `Ports` for the review, marked `tcp` when they did not answer. A port
-the trial watched is not overridden by `PORT` at deploy, since the trial started the app without it.
+sends every port it observes `GET /` (`SupportsHTTPProbe`) and keeps watching rather than stopping at
+the first socket: until the set has been unchanged for a few seconds after a port below the ephemeral
+range answers with a page; for longer (45 seconds) while a port below that range is listening without
+having answered; and to the trial's timeout while every port is in the ephemeral range and silent, which
+is a server still starting (Open Liberty binds one long before 9080). A `400` that says plain HTTP was
+sent to a TLS port is not an answer. Detection then narrows, each step only when something is left:
+ports that answered HTTP; of those, ones that answered with a page (2xx, 3xx, 401, 403) over 404 or an
+error; ports below the ephemeral range; ports the image or compose file declares; and ports the app's
+log names as its `http` address or where it listens. Two or more still standing after a probe is a
+`primary_port` question naming them. The others stay in `Ports` for the review, marked `tcp` when they
+did not answer. A trial that watched no port below the ephemeral range that could carry HTTP — only a
+random ephemeral port, or only epmd — leaves a guessed or declared port as it was (`MayServeWeb`), at
+detection and at the deploy's port check. A port the trial watched is not overridden by `PORT` at
+deploy, since the trial started the app without it.
 An image whose observed ports — or, with none observed, its `EXPOSE`d ports — are all known non-HTTP
 protocols is refused at detection, as is any app that exits 0 during the trial without listening.
+**[P]** So is any app that kept running and listening through the trial and answered no HTTP request
+on any port it opened, each port asked at least three times (`TrialResult.HTTPProbedPorts`): a game
+server or a database on a port no table names (a Minecraft server on 25565, issue #90 round 2). A probe
+that could not run, a port not yet asked enough, and an app that crashed are not evidence for it.
 
 **[D] The source allowlist reads every kind of source (R-092).** An entry is a host (`github.com`), a
 suffix (`.corp.example`), or a host and a path prefix matched on whole segments (`github.com/acme`,
@@ -203,6 +213,7 @@ type EnvEntry struct {
     Value     *string `json:"value,omitempty"`      // literal, non-sensitive
     SlotRef   *string `json:"slot_ref,omitempty"`   // resolved at deploy from a slot
     SecretRef *string `json:"secret_ref,omitempty"` // resolved at deploy from secrets
+    SlotPart  SlotPart `json:"slot_part,omitempty"` // with SlotRef: host|port|hostport|user|password|database
 }
 
 type Port struct {
@@ -270,12 +281,13 @@ type Mount struct {
 ```go
 type Slot struct {
     Key        string      `json:"key"`         // e.g. REDIS_URL
-    Type       SlotType    `json:"type"`        // postgres|mysql|redis|s3|smtp|unknown
+    Type       SlotType    `json:"type"`        // postgres|mysql|redis|mongodb|memcached|s3|smtp|unknown
     Required   bool        `json:"required"`    // O-4 — see below
     Evidence   []string    `json:"evidence"`    // why we think this is a slot
-    Format     SecretFormat `json:"format,omitempty"` // random|random_long|django_key|laravel_key
+    Format     SecretFormat `json:"format,omitempty"` // random|random_long|django_key|laravel_key|hex_64
     Resolution *Resolution `json:"resolution"`  // nil = unfilled, blocks deploy (R-132)
     Aliases    []string    `json:"aliases,omitempty"` // a provisioned instance also answers to these: the compose service it replaced
+    Scheme     string      `json:"scheme,omitempty"`  // postgres|postgresql: how the app spells a provisioned Postgres URL
 }
 
 type Resolution struct {
@@ -297,15 +309,30 @@ type Resolution struct {
 **[P] Fallback that preserves R-103:** default `Required: false` for anything not typed to a known service, and let the trial run (R-097) settle it. A slot that isn't filled and whose absence crashes the trial run gets promoted to required with the crash log as evidence. This turns an unanswerable question into an observation, consistent with how port discovery works.
 
 **[D] What makes a variable required, besides the fallback** (owner decision, issue #90 benchmark). A variable becomes a required slot only when the app or its framework says, in as many words, that it cannot start without it. A `.env.example` on its own still does not (O-4). The sources, in `internal/detect/required.go`:
-- **Framework conventions.** Rails in production without `config/master.key`: `SECRET_KEY_BASE`. Laravel: `APP_KEY`. A Phoenix release whose `config/runtime.exs` raises without a variable, or reads it with `System.fetch_env!`. Symfony whose committed `.env` leaves `APP_SECRET` empty. Strapi's `APP_KEYS`, `API_TOKEN_SALT`, `ADMIN_JWT_SECRET`, `TRANSFER_TOKEN_SALT`, `JWT_SECRET`, when its config or template names them. These apply however the app is built: Railpack, its own Dockerfile, a compose service built from the repository, or the image its maintainer publishes (R-094 tier 1).
+- **Framework conventions.** Rails in production without `config/master.key`: `SECRET_KEY_BASE`. Laravel: `APP_KEY`. A Phoenix release whose `config/runtime.exs` raises without a variable, or reads it with `System.fetch_env!`; one whose `runtime.exs` starts the endpoint only when `PHX_SERVER` is set gets `PHX_SERVER=true` as a value, since nothing needs asking. Symfony whose committed `.env` leaves `APP_SECRET` empty. Strapi's `APP_KEYS`, `API_TOKEN_SALT`, `ADMIN_JWT_SECRET`, `TRANSFER_TOKEN_SALT`, `JWT_SECRET`, when its config or template names them. These apply however the app is built: Railpack, its own Dockerfile, a compose service built from the repository, or the image its maintainer publishes (R-094 tier 1).
 - **Environment schemas validated at boot.** AdonisJS `start/env.ts` (`Env.schema.*` without `.optional`), envalid `cleanEnv` (no `default:`; `devDefault` does not count in production), t3-env / zod `createEnv` (no `.optional()`, `.default()` or `.catch()`).
 - **Reads with no fallback at import.** Python `os.environ["X"]` at module level of the entry module or the Django settings module `manage.py` names; reads under an `if`, a `try` or a `def` do not count.
-- **A placeholder in a compose `env_file` template** (`change-me`, `tobemodified`), which says what `KEY=` says.
-- **The trial run's log**, when the app exited or never opened a port: a line saying a named variable is missing, unset, required or must be set; a list under "Missing environment variables:"; a `docker run -e X=` instruction alongside a "must"; a zod issue; a `KeyError` from `os.environ`; the framework messages that name no variable (Rails' "Missing `secret_key_base`", Laravel's "No application encryption key has been specified", Django's `security.W009`). Of alternatives ("A or A_FILE", "either A or B"), only the first is asked for. A database or cache variable the log names beside a refused connection becomes a slot of that type — a log naming `DATABASE_URL` is a mention, so R-107 still holds for a log that names nothing.
+- **A placeholder in a compose `env_file` template** (`change-me`, `tobemodified`): the author saying the value must be replaced. A bare `KEY=` in the same template is an optional slot, shown in review and promoted by the trial run like any other; a blank name typed as a service (`DATABASE_URL=`) is a required slot of that type (owner decision 2026-10-13, issue #90 — superseding issue #55's "every blank name is required": linkding leaves thirteen blank, ran with none of them set, and broke when `LD_DB_OPTIONS` was given a value).
+- **The trial run's log**, when the app exited or never opened a port — or opened one and reported "Invalid environment variables" (t3-env serves a 500 that way): a line saying a named variable is missing, unset, required or must be set; a list under "Missing environment variables:"; a `docker run -e X=` instruction alongside a "must"; a zod issue, bracketed or in zod 4's own words; a t3-env issue `path: [ 'X' ]`; a `KeyError` from `os.environ`; the framework messages that name no variable (Rails' "Missing `secret_key_base`", Laravel's "No application encryption key has been specified", Django's `security.W009`). Of alternatives ("A or A_FILE", "either A or B", "either A or all of [B, C]"), only the first is asked for. A database or cache variable the log names beside a refused connection becomes a slot of that type — a log naming `DATABASE_URL` is a mention, so R-107 still holds for a log that names nothing.
+- **The trial run again, with stand-ins.** An app stops at the first missing variable, so a failed trial that names one is run again with a stand-in for each it named — a value of the right shape that reaches nothing (`*.invalid` hosts, RFC 2606) — up to three more runs, until it serves or names nothing new. Each variable any run named is required; no stand-in reaches the draft. Flatnotes names its username, then its password, then its secret key; Zipline checks its database before it says `CORE_SECRET` (issue #90).
+- **A database a framework reads from `DATABASE_URL`.** Rails' `config/database.yml` naming `postgresql`/`postgis` or `mysql2`/`trilogy` for production with no `host:`; a Django settings module naming a PostgreSQL or MySQL engine with no `HOST` that reads `DATABASE_URL`. Either connects to a local socket no container has. The slot is typed by the adapter or engine, not the name.
+- **A Node entry file that connects at start** — `mongoose.connect(process.env.X)`, `new Pool(process.env.X)`, `createClient(process.env.X)` with nothing to fall back on — where X names a database or cache.
+- **A name only one framework reads**, declared and left empty: `SECRET_KEY_BASE` (Rails, Phoenix), `NEXTAUTH_SECRET` (NextAuth). A template value that is an instruction (`[generate with <openssl rand -base64 36>]`) is no value.
+- **The image's own `ENV`.** A variable the image sets to a database URL (`ME_CONFIG_MONGODB_URL=mongodb://mongo:27017`) is a slot of that type — optional, promoted by the trial like any other; unfilled, the image's own value stands.
+- **An example compose file below the root** **[P]**, for an app built from its own Dockerfile or by Railpack. A compose file in a subdirectory (`deploy/docker-compose/…`) whose service *is this app* — it builds from the app's directory, or runs the image named for the repository (`jhaals/yopass` for `github.com/jhaals/yopass`) — and points a variable at a database or cache beside it gives the draft that variable and a slot of that type, required and provisioned as the example runs it. Only the connection is taken; the example's ports, proxy and other settings describe one way to run the app and are not imported. Two services that both qualify give nothing (R-102), and `test/`, `tests/`, `testdata/`, `fixtures/` and `vendor/` are not examples. This is R-021 and R-130 (a compose image name types a slot), not inference: yopass's Dockerfile won, its compose files were never read, and its first stored secret failed on `dial tcp 127.0.0.1:11211` — it connects on first write, so the trial could not see it.
+
+**[D] One database, several variables, one slot.** An app configured the way libpq, Laravel and most official images are — `PGHOST`, `PGUSER`, `PGPASSWORD`; `DB_HOST` and `DB_PASSWORD` — has one database, and it is one slot named for its host variable, typed, provisionable; each variable takes its part of the slot's connection string (`EnvEntry.SlotPart`: `host`, `port`, `hostport`, `user`, `password`, `database`), read at deploy, so a rotated password reaches every part. This replaces "no slot resolution fills four variables from one answer" (notes-console-findings). Variables are folded only when one of them is required and the kind of database is known: from the names (`PG`, `MYSQL_`, `MONGO_`), or, for a prefix that says only `DB`, from the one kind of database the trial log names (Joomla's `MYSQL_PORT_3306_TCP`). `SMTP_HOST` beside a MySQL error stays a mail server. A Laravel app whose log shows a `QueryException` with `(Connection: mysql` or `pgsql` is given `DB_CONNECTION` and Laravel's five `DB_*` variables from one slot of that type. A value that is not a URL cannot be split, and the deploy says which slot and why. **[P]** The slot takes the host variable's name rather than one Pando makes up, for the reason compose wiring takes the URL variable's.
 
 Where the requirement carries its own answer, nothing is asked: `PORT` is Pando's to set, `HOST` is `0.0.0.0` in a container, `NODE_ENV` is `production`, and a schema-required setting with a real sample in `.env.example` (not a placeholder, not a secret, not an address) takes it. A variable the Dockerfile already sets with `ENV` is not asked for.
 
-**[D] `Format`** is the shape a value must take when the app checks it, so the console's Generate produces one the app accepts and a literal that does not fit is refused with the reason (R-105) when it is set, by `PUT /slots/{key}` and by the review's accept. `laravel_key` is `base64:` and 32 bytes (or 32 raw characters); `random_long` at least 64 characters (Rails, Phoenix); `django_key` at least 50 characters, 5 distinct, no `django-insecure-` prefix; `random` any non-empty value, generated as 32 random bytes. Empty means Pando knows nothing about the shape. The slot's `Type` stays `unknown`: a key is a value, not a service to provision (R-131).
+**[D] `Format`** is the shape a value must take when the app checks it, so the console's Generate produces one the app accepts and a literal that does not fit is refused with the reason (R-105) when it is set, by `PUT /slots/{key}` and by the review's accept. `laravel_key` is `base64:` and 32 bytes (or 32 raw characters); `random_long` at least 64 characters (Rails, Phoenix); `django_key` at least 50 characters, 5 distinct, no `django-insecure-` prefix; `random` any non-empty value, generated as 32 random bytes; `hex_64` exactly 64 hexadecimal characters (32 bytes, `openssl rand -hex 32`), taken from a log that asks for "a 64 character secret in hex format". Empty means Pando knows nothing about the shape. The slot's `Type` stays `unknown`: a key is a value, not a service to provision (R-131).
+
+**[D] `Scheme`** is the URL scheme the app's own configuration spells for a provisioned Postgres —
+`postgres` or `postgresql`, empty for `postgresql` — recorded by detection from the compose value or
+`.env.example` sample that pointed at the database. Drivers refuse each other's spelling (readflow
+only `postgres://`, SQLAlchemy 2 only `postgresql://`), and the spec is the only place it can live,
+because nothing is read from the repository at deploy time (R-020). Validation refuses any other value
+and any scheme on a slot of another type. Changing it is a restart. See design 03 §7.1.
 
 ### 2.6 Routing, runtime, deploy
 

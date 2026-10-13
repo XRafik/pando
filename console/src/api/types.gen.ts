@@ -141,6 +141,7 @@ export interface Proposal {
   trial_log?: string;
   commit?: string;
   trial?: TrialObservation;
+  loopback_command?: string;
   built?: Built;
   screening?: Outcome;
   conversation?: (Turn[] | null);
@@ -558,6 +559,7 @@ export interface Slot {
   format?: string;
   resolution?: Resolution;
   aliases?: (string[] | null);
+  scheme?: string;
 }
 
 export interface RuntimeRef {
@@ -791,6 +793,7 @@ export interface EnvEntry {
   value?: string;
   slot_ref?: string;
   secret_ref?: string;
+  slot_part?: string;
   source?: string;
 }
 

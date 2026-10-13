@@ -52,6 +52,16 @@ func TestR095_LanguagesRailpackDoesNotPlanArePlannedByPando(t *testing.T) {
 		{"a Leiningen uberjar", map[string]string{
 			"project.clj": "(defproject ring-hello \"0.1.0\"\n  :main ring-hello.core\n  :profiles {:uberjar {:aot :all :uberjar-name \"ring-hello-standalone.jar\"}})\n",
 		}, []string{"FROM " + leinImage, "lein uberjar", "target/ring-hello-standalone.jar", `CMD ["exec java -jar /app.jar"]`}},
+		// reitit's ring-integrant example: no :aot and no :gen-class, so the
+		// uberjar has no main class (issue #90).
+		{"a Leiningen :main with no class of its own", map[string]string{
+			"project.clj":            "(defproject ring-integrant-example \"0.1.0\"\n  :main example.server)\n",
+			"src/example/server.clj": "(ns example.server\n  (:require [integrant.core :as ig]))\n(defn -main [])\n",
+		}, []string{"lein uberjar", `CMD ["exec java -cp /app.jar clojure.main -m example.server"]`}},
+		{"a Leiningen :main with :gen-class", map[string]string{
+			"project.clj":         "(defproject my-app \"0.1.0\"\n  :main my-app.core)\n",
+			"src/my_app/core.clj": "(ns my-app.core\n  (:gen-class))\n(defn -main [])\n",
+		}, []string{`CMD ["exec java -jar /app.jar"]`}},
 		{"a Leiningen project with a Procfile", map[string]string{
 			"project.clj": "(defproject x \"0.1.0\"\n  :main x.web\n  :uberjar-name \"x.jar\")\n",
 			"Procfile":    "web: java -jar target/x.jar\n",
@@ -66,10 +76,10 @@ func TestR095_LanguagesRailpackDoesNotPlanArePlannedByPando(t *testing.T) {
 		}, []string{"RUN clojure -P", `CMD ["exec clojure -M -m usermanager.main"]`}},
 		{"an sbt project with native-packager", map[string]string{
 			"build.sbt": "enablePlugins(JavaAppPackaging)\n", "project/plugins.sbt": `addSbtPlugin("com.github.sbt" % "sbt-native-packager" % "1.11.1")` + "\n",
-		}, []string{"FROM " + sbtJDKImage, "sbt -batch stage", `exec \"$(cat /app/.pando-start)\"`}},
+		}, []string{"FROM " + sbtJDKImage, "sbt -batch " + sbtNoDocs + " stage", `exec \"$(cat /app/.pando-start)\"`}},
 		{"a Play app", map[string]string{
 			"build.sbt": "enablePlugins(PlayScala)\n", "project/plugins.sbt": `addSbtPlugin("org.playframework" % "sbt-plugin" % "3.0.12")` + "\n",
-		}, []string{"sbt -batch stage", "-Dplay.http.secret.key=\\\"$APPLICATION_SECRET\\\"", "-Dplay.filters.hosts.allowed.0=.", "EXPOSE 9000"}},
+		}, []string{"sbt -batch " + sbtNoDocs + " stage", "install -y --no-install-recommends curl git", "COPY --from=" + sbtNodeImage + " /usr/local/bin/node", "-Dplay.http.secret.key=\\\"$APPLICATION_SECRET\\\"", "-Dplay.filters.hosts.allowed.0=.", "EXPOSE 9000"}},
 		{"an sbt project with neither", map[string]string{"build.sbt": "scalaVersion := \"3.3.1\"\n"},
 			[]string{"export Runtime / fullClasspath", "discoveredMainClasses", `exec java -cp \"$(cat /app/.pando-classpath)\"`}},
 		{"a Stack project", map[string]string{

@@ -13424,6 +13424,9 @@
           "secret_ref": {
             "type": "string"
           },
+          "slot_part": {
+            "type": "string"
+          },
           "source": {
             "type": "string"
           }
@@ -16159,6 +16162,9 @@
             "items": {
               "type": "string"
             }
+          },
+          "scheme": {
+            "type": "string"
           }
         },
         "required": [

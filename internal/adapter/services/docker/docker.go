@@ -7,6 +7,7 @@ import (
 	"io"
 	"math/big"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/trypando/pando/internal/adapter/api"
@@ -56,6 +57,9 @@ var defaultImages = map[spec.SlotType]string{
 	spec.SlotPostgres: "postgres:17-alpine",
 	spec.SlotMySQL:    "mysql:8.4",
 	spec.SlotRedis:    "redis:7-alpine",
+	// Not Alpine: MongoDB publishes no Alpine image.
+	spec.SlotMongoDB:   "mongo:7",
+	spec.SlotMemcached: "memcached:1.6-alpine",
 }
 
 func (a *Adapter) Kind() string           { return Kind }
@@ -78,7 +82,7 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 		if _, ok := defaultImages[t]; !ok {
 			return errs.Newf(errs.ValidInvalid,
 				"Pando cannot provision a %q service, so there is no image to set for it.", name).
-				WithRemedy("Valid types are postgres, mysql and redis.")
+				WithRemedy("Valid types are postgres, mysql, redis, mongodb and memcached.")
 		}
 		if img == "" {
 			return errs.Newf(errs.ValidInvalid, "The image for %q is empty.", name)
@@ -102,12 +106,12 @@ func (a *Adapter) Capabilities() api.ServicesCapabilities {
 
 // Supports lists the slot types this adapter can fill.
 //
-// Deliberately three. S3 and SMTP are slot types Pando recognizes (R-130) and
+// Databases and caches, deliberately nothing else. S3 and SMTP are slot types Pando recognizes (R-130) and
 // deliberately does not provision: standing up MinIO or an SMTP server is
 // running infrastructure, which is what R-010 says Pando is not. Those slots
 // are bound or literal, and the planner says so by name.
 func (a *Adapter) Supports() []spec.SlotType {
-	return []spec.SlotType{spec.SlotPostgres, spec.SlotMySQL, spec.SlotRedis}
+	return []spec.SlotType{spec.SlotPostgres, spec.SlotMySQL, spec.SlotRedis, spec.SlotMongoDB, spec.SlotMemcached}
 }
 
 // Provision plans one service instance.
@@ -136,9 +140,14 @@ func (a *Adapter) Provision(_ context.Context, req api.ProvisionRequest) (api.Pr
 	// Reuse the credentials this service was created with. See
 	// ProvisionRequest.ExistingSecret: a database sets its password at initdb
 	// and never reads the variable again.
-	password, err := reuseOrGenerate(req.ExistingSecret)
-	if err != nil {
-		return api.ProvisionResult{}, err
+	// A memcached has no password, and its stored address has none to reuse:
+	// reading one out of it refused every redeploy after the first.
+	var password string
+	if req.Type != spec.SlotMemcached {
+		var err error
+		if password, err = reuseOrGenerate(req.ExistingSecret); err != nil {
+			return api.ProvisionResult{}, err
+		}
 	}
 
 	var (
@@ -161,13 +170,19 @@ func (a *Adapter) Provision(_ context.Context, req api.ProvisionRequest) (api.Pr
 			"PGDATA": secret.New("/var/lib/postgresql/data/pgdata"),
 		}
 		path = "/var/lib/postgresql/data"
-		// postgresql://, the scheme libpq documents and every client reads.
-		// SQLAlchemy 2 refuses the short postgres:// outright ("Can't load
-		// plugin: sqlalchemy.dialects:postgres"), and an app whose compose
-		// file spelled the long one stopped at its first migration (issue #90).
+		cert, key, err := postgresTLS(name, password)
+		if err != nil {
+			return api.ProvisionResult{}, err
+		}
+		env["PANDO_TLS_CERT"] = cert
+		env["PANDO_TLS_KEY"] = key
+		// No query string. The server offers TLS (postgresTLS says why), so a
+		// client's own default connects, and a URL that names an sslmode is
+		// one some drivers refuse outright: asyncpg takes it as a keyword
+		// argument it does not have (issue #90).
 		dsn = (&url.URL{
-			Scheme: "postgresql", User: url.UserPassword("app", password),
-			Host: name + ":5432", Path: "/app", RawQuery: "sslmode=disable",
+			Scheme: postgresScheme(req.Scheme), User: url.UserPassword("app", password),
+			Host: name + ":5432", Path: "/app",
 		}).String()
 
 	case spec.SlotMySQL:
@@ -194,6 +209,33 @@ func (a *Adapter) Provision(_ context.Context, req api.ProvisionRequest) (api.Pr
 			Scheme: "redis", User: url.UserPassword("default", password),
 			Host: name + ":6379", Path: "/0",
 		}).String()
+
+	case spec.SlotMongoDB:
+		// The root user, because it is the only one the image's
+		// MONGO_INITDB_* variables create — and with it an app that creates
+		// its own databases, as most do, can. authSource=admin is where a
+		// root user lives; without it the driver looks for the user in the
+		// "app" database and every connection is refused.
+		env = map[string]secret.Value{
+			"MONGO_INITDB_ROOT_USERNAME": secret.New("app"),
+			"MONGO_INITDB_ROOT_PASSWORD": secret.New(password),
+			"MONGO_INITDB_DATABASE":      secret.New("app"),
+		}
+		path = "/data/db"
+		dsn = (&url.URL{
+			Scheme: "mongodb", User: url.UserPassword("app", password),
+			Host: name + ":27017", Path: "/app", RawQuery: "authSource=admin",
+		}).String()
+
+	case spec.SlotMemcached:
+		// "host:port", with no scheme and no credentials: memcached has no
+		// URL form and no password unless it is built with SASL, and its
+		// clients take a list of server addresses. Yopass reads MEMCACHED
+		// this way. It holds nothing worth keeping, so it has no volume
+		// (below), and it is not addressable from outside the bundle (R-134),
+		// which is the only lock it needs.
+		env = map[string]secret.Value{}
+		dsn = name + ":11211"
 	}
 
 	w := api.WorkloadPlan{
@@ -203,8 +245,30 @@ func (a *Adapter) Provision(_ context.Context, req api.ProvisionRequest) (api.Pr
 		// Not exposed and no ports (R-134). A provisioned service is reachable
 		// on the bundle's private network by name and nowhere else.
 		Exposed: false,
-		Mounts:  []api.MountPlan{{VolumeID: volumeID, Path: path}},
 		Health:  healthFor(req.Type),
+	}
+	// A cache with nothing on disk gets no volume. Volumes outlive the app
+	// (R-204), and one kept for a memcached would be a backup prompt for data
+	// that was never written anywhere.
+	var volumes []api.VolumePlan
+	if path != "" {
+		w.Mounts = []api.MountPlan{{VolumeID: volumeID, Path: path}}
+		volumes = []api.VolumePlan{{VolumeID: volumeID, Name: name + "-data"}}
+	}
+	if req.Type == spec.SlotPostgres {
+		// The certificate is written each start, like Redis's config below,
+		// and owned by postgres because the server refuses a key anyone else
+		// can read. The image's own entrypoint still runs — it is what creates
+		// the database on first start — with the TLS settings as arguments,
+		// and the key is out of its environment before it does.
+		w.Command = []string{"sh", "-c", `umask 077 && mkdir -p ` + postgresTLSDir +
+			` && printf '%s' "$PANDO_TLS_CERT" > ` + postgresTLSDir + `/server.crt` +
+			` && printf '%s' "$PANDO_TLS_KEY" > ` + postgresTLSDir + `/server.key` +
+			` && { [ "$(id -u)" != 0 ] || chown -R postgres:postgres ` + postgresTLSDir + `; }` +
+			` && unset PANDO_TLS_CERT PANDO_TLS_KEY` +
+			` && exec docker-entrypoint.sh postgres -c ssl=on` +
+			` -c ssl_cert_file=` + postgresTLSDir + `/server.crt` +
+			` -c ssl_key_file=` + postgresTLSDir + `/server.key`}
 	}
 	if req.Type == spec.SlotRedis {
 		w.Command = []string{"sh", "-c",
@@ -218,8 +282,24 @@ func (a *Adapter) Provision(_ context.Context, req api.ProvisionRequest) (api.Pr
 		Handle:           api.ServiceHandle{ServiceID: req.ServiceID, Handle: name},
 		ConnectionSecret: secret.New(dsn),
 		Workloads:        []api.WorkloadPlan{w},
-		Volumes:          []api.VolumePlan{{VolumeID: volumeID, Name: name + "-data"}},
+		Volumes:          volumes,
 	}, nil
+}
+
+// postgresScheme is the scheme a provisioned Postgres URL is written with: the
+// app's own spelling when it is one Postgres answers to (spec.Slot.Scheme),
+// postgresql:// otherwise.
+//
+// Drivers disagree and refuse each other's spelling. SQLAlchemy 2 will not load
+// postgres:// ("Can't load plugin: sqlalchemy.dialects:postgres"); readflow
+// will not accept postgresql:// ("unsupported database: postgresql", issue
+// #90). No single spelling works for both, but the app's configuration already
+// says which one it reads.
+func postgresScheme(spelled string) string {
+	if slices.Contains(spec.PostgresSchemes, spelled) {
+		return spelled
+	}
+	return spec.PostgresSchemes[0]
 }
 
 // healthFor is how the runtime knows the service is ready.
@@ -261,6 +341,18 @@ func healthFor(t spec.SlotType) *api.HealthPlan {
 		return &api.HealthPlan{
 			Port:            6379,
 			IntervalSeconds: 5, TimeoutSeconds: 3, Retries: 12,
+		}
+	case spec.SlotMemcached:
+		// memcached binds its port once it is ready to serve.
+		return &api.HealthPlan{
+			Port:            11211,
+			IntervalSeconds: 5, TimeoutSeconds: 3, Retries: 12,
+		}
+	case spec.SlotMongoDB:
+		// ping needs no credentials, so none go on argv.
+		return &api.HealthPlan{
+			Command:         []string{"mongosh", "--quiet", "--eval", "db.adminCommand('ping')"},
+			IntervalSeconds: 5, TimeoutSeconds: 5, Retries: 24,
 		}
 	}
 	return nil

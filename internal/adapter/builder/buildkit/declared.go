@@ -123,20 +123,59 @@ func readDeclaredBuild(contextDir string) declaredBuild {
 	// A source that says how the app is built and not how it starts — a CI
 	// workflow, a Makefile with no run target — leaves the start to the next
 	// source that says it: a Makefile builds, and the Procfile beside it runs
-	// what it built.
-	if best.found() && best.Start == "" {
-		var start declaredBuild
-		for _, d := range readings {
-			if d.Start != "" && d.Rank > start.Rank {
-				start = d
-			}
-		}
-		best.Start = start.Start
-		if best.Start == "" {
-			best.Start = best.ImpliedStart
-		}
+	// what it built. A `go run` start gives way the same way, to a start or a
+	// program a build writes.
+	if best.found() && (best.Start == "" || runsFromSource(best.Start)) {
+		best.Start = startFrom(best, readings)
 	}
 	return best
+}
+
+// startFrom is the start for best, which says none or only `go run`: the
+// best start another reading says, else a program a build writes.
+func startFrom(best declaredBuild, readings []declaredBuild) string {
+	start := best
+	for _, d := range readings {
+		if d.Start != "" && startBeats(d, start) {
+			start = d
+		}
+	}
+	switch {
+	case start.Start == "":
+		return best.ImpliedStart
+	case runsFromSource(start.Start):
+		for _, d := range append([]declaredBuild{best}, readings...) {
+			if d.ImpliedStart != "" {
+				return d.ImpliedStart
+			}
+		}
+	}
+	return start.Start
+}
+
+// startBeats reports whether d's start is a better one to run than best's. A
+// start that compiles the program as it runs, `go run main.go`, is a developer's
+// command: the image the app runs in has no Go, and miniflux's Makefile `run`
+// target exited 127 where its Procfile names the program the build makes
+// (issue #90). Any other start beats it; between equals, the higher rank wins.
+func startBeats(d, best declaredBuild) bool {
+	if best.Start == "" {
+		return true
+	}
+	if dev, bestDev := runsFromSource(d.Start), runsFromSource(best.Start); dev != bestDev {
+		return bestDev
+	}
+	return d.Rank > best.Rank
+}
+
+// runsFromSource reports a start command that runs `go run`, after any
+// VAR=value settings in front of it.
+func runsFromSource(start string) bool {
+	fields := strings.Fields(start)
+	for len(fields) > 0 && strings.Contains(fields[0], "=") {
+		fields = fields[1:]
+	}
+	return len(fields) > 1 && fields[0] == "go" && fields[1] == "run"
 }
 
 // railpackEnv turns a reading into Railpack settings, as KEY=value.

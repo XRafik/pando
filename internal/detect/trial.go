@@ -35,6 +35,10 @@ type Trial struct {
 	HTTPProbed  bool
 	HTTPAnswers []api.HTTPAnswer
 
+	// HTTPProbedPorts are the observed ports the runtime actually asked
+	// (api.TrialResult.HTTPProbedPorts); noHTTPRefusal reads them.
+	HTTPProbedPorts []int
+
 	ObservedWrites []string
 	ImageVolumes   []string
 	Log            string
@@ -65,6 +69,7 @@ func FromTrialResult(caps api.RuntimeCapabilities, r api.TrialResult) Trial {
 		if caps.SupportsHTTPProbe {
 			t.HTTPProbed = true
 			t.HTTPAnswers = r.HTTPAnswers
+			t.HTTPProbedPorts = r.HTTPProbedPorts
 		}
 	}
 	if caps.SupportsWriteObservation {
@@ -111,6 +116,11 @@ func ApplyTrial(draft Draft, questions []Question, t Trial) (Draft, []Question) 
 
 	draft.Slots = promoteSlots(draft.Slots, t)
 	draft = requireFromTrial(draft, t)
+	if trialFailed(t) {
+		primary := primaryIndex(draft)
+		draft = laravelDatabase(draft, primary, t.Log)
+		draft = groupConnections(draft, primary, t.Log)
+	}
 	draft.Warnings = append(draft.Warnings, persistenceWarnings(draft, t)...)
 
 	return draft, questions
@@ -144,11 +154,47 @@ func applyObservedPorts(draft Draft, t Trial) (Draft, []int) {
 				declared[p.Number] = true
 			}
 		}
+		if len(w.Ports) > 0 && !showsWebPort(t) {
+			// Nothing watched says where the app serves; the guess stands.
+			return draft, nil
+		}
 		var tied []int
 		draft.Workloads[i].Ports, tied = observedPorts(t, declared)
 		return draft, tied
 	}
 	return draft, nil
+}
+
+// showsWebPort reports a trial that watched a port the app could be serving
+// on: one outside the ephemeral range that answered HTTP or, failing an
+// answer, carries no protocol known not to be HTTP.
+//
+// A trial that saw only the others says nothing about the web port, and
+// replacing the guess with what it saw made things worse (issue #90). A Node
+// server that calls listen(process.env.PORT) is given no PORT by the trial and
+// listens on a random ephemeral port; recorded as watched, it was started
+// without PORT at deploy as well, on another random port, and answered 502.
+// A Phoenix release that crashed before its endpoint started left only epmd's
+// 4369. Kept as a guess, the port is the one the deploy tells the app through
+// PORT and checks again once the app is built.
+func showsWebPort(t Trial) bool {
+	answered := map[int]bool{}
+	for _, a := range t.HTTPAnswers {
+		answered[a.Port] = true
+	}
+	for _, p := range t.ObservedPorts {
+		if MayServeWeb(p, answered[p]) {
+			return true
+		}
+	}
+	return false
+}
+
+// MayServeWeb reports a watched port that could be where an app serves: one
+// outside the ephemeral range that answered HTTP or, failing an answer,
+// carries no protocol known not to be HTTP (see showsWebPort).
+func MayServeWeb(port int, answeredHTTP bool) bool {
+	return port < ephemeralPorts && (answeredHTTP || !notHTTP[port])
 }
 
 // applyImageVolumes gives the primary workload storage wherever its image
@@ -343,6 +389,9 @@ func mentionedIn(lowercaseLog string, slot spec.Slot) (string, bool) {
 	if key := strings.ToLower(slot.Key); key != "" && strings.Contains(lowercaseLog, key) {
 		return slot.Key, true
 	}
+	if flag, found := flagFor(lowercaseLog, slot.Key); found {
+		return flag, true
+	}
 
 	// A Postgres driver's connection error usually names the database rather
 	// than the environment variable that was supposed to configure it.
@@ -354,12 +403,45 @@ func mentionedIn(lowercaseLog string, slot spec.Slot) (string, bool) {
 	return "", false
 }
 
+// flagFor finds the command-line flag a variable sets, named in a crash log.
+//
+// Go's flag libraries, Python's click and others read a flag from a variable
+// named for it under the app's prefix, and complain about the flag: remark42,
+// given REMARK_URL and SECRET by neither, stops on "the required flags
+// `--secret' and `--url' were not specified" (issue #90). So REMARK_URL is
+// named by `--remark-url` or `--url`, and nothing shorter than the last word of
+// the name counts.
+func flagFor(lowercaseLog, key string) (string, bool) {
+	words := strings.Split(strings.ToLower(key), "_")
+	for i := range words {
+		flag := "--" + strings.Join(words[i:], "-")
+		for at := 0; ; {
+			j := strings.Index(lowercaseLog[at:], flag)
+			if j < 0 {
+				break
+			}
+			end := at + j + len(flag)
+			if end == len(lowercaseLog) || !isFlagRune(lowercaseLog[end]) {
+				return flag, true
+			}
+			at = end
+		}
+	}
+	return "", false
+}
+
+func isFlagRune(b byte) bool {
+	return b == '-' || b == '_' || (b >= 'a' && b <= 'z') || (b >= '0' && b <= '9')
+}
+
 var serviceWords = map[spec.SlotType][]string{
-	spec.SlotPostgres: {"postgres", "postgresql", "pg_hba", "libpq"},
-	spec.SlotMySQL:    {"mysql", "mariadb"},
-	spec.SlotRedis:    {"redis", "valkey"},
-	spec.SlotS3:       {"s3", "bucket"},
-	spec.SlotSMTP:     {"smtp"},
+	spec.SlotPostgres:  {"postgres", "postgresql", "pg_hba", "libpq"},
+	spec.SlotMySQL:     {"mysql", "mariadb"},
+	spec.SlotRedis:     {"redis", "valkey"},
+	spec.SlotS3:        {"s3", "bucket"},
+	spec.SlotSMTP:      {"smtp"},
+	spec.SlotMongoDB:   {"mongodb", "mongoserver", "mongonetwork", "mongoose"},
+	spec.SlotMemcached: {"memcache", "memcached"},
 }
 
 // persistenceWarnings produces WARN_NO_PERSISTENT_VOLUME (R-201, R-202).

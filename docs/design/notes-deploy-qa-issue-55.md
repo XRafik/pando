@@ -156,12 +156,20 @@ provisioned Redis required a password the app did not send. The rule is now:
 a backing service becomes a slot only when some workload's variable holds a URL
 in that service's own scheme that points at it. Otherwise the service is
 imported as the compose file wrote it, which is what R-096 requires. A JDBC URL
-does not count, because the provisioned URL cannot stand in for it.
+does not count, because the provisioned URL cannot stand in for it. Memcached,
+which has no URL form, counts when the variable is the whole address
+(`MEMCACHED: memcached:11211`), because the provisioned instance's value is one
+too; a bare host beside a separate port variable still does not (issue #90,
+yopass).
 
 **A compose file of only databases does not outbid the app.** When every
 service is a recognized backing service, the compose detector bids 0.2 and says
 why. Spring Petclinic's compose file runs a MySQL and a Postgres for
 development; taken as the app, it deployed two databases and nothing to open.
+
+*Superseded 2026-10-13 (issue #90): a blank name is now an optional slot the trial run promotes;
+placeholders and names typed as a service stay required. See design 01, "What makes a variable
+required".*
 
 **Blank names in an `env_file` template are required values (R-132).** A name
 in the template for a compose `env_file` that the template gives no value

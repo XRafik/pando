@@ -250,6 +250,13 @@ data rather than a probe (R-254). The planner compares it with the platforms an 
 published for and refuses a mismatch before anything is pulled. Empty means the runtime cannot say,
 and the check is left to the pull.
 
+**[P] `RuntimeCapabilities.RegistryMirrors`** are the mirrors the runtime pulls Docker Hub images
+through — the Docker daemon's `registry-mirrors` — as URLs. `core/oci` reads an anonymous Docker Hub
+reference through them first, in order, and from Docker Hub when each fails, as the daemon does. Docker
+Hub counts every manifest read against a download limit of 100 an hour per address, and Pando's reads
+of an image the daemon then fetched from its mirror spent that limit (issue #90). A read with a
+credential goes to Docker Hub: the credential is Docker Hub's, and a mirror cannot read a private image.
+
 **[D] Registry authentication is not an adapter category.** It fails §8.1's test on both halves: the
 planner asks it nothing — a credential either opens the registry or it does not — and "a username and a
 password for a host" is no vocabulary worth hiding. ECR's token minting is the one provider-specific
@@ -975,6 +982,7 @@ type ProvisionRequest struct {
     Type      SlotType
     ServiceID string        // minted by core, so Provision is idempotent
     ExistingSecret secret.Value // the DSN a previous Provision returned, if any
+    Scheme    string        // the URL scheme the app spells (spec.Slot.Scheme), empty for the default
 }
 
 type ProvisionResult struct {
@@ -1019,14 +1027,47 @@ alarming. Data and not a type assertion, per R-254.
 
 ### 7.1 The in-bundle provisioner
 
-**[P]** `internal/adapter/services/docker` fills `postgres`, `mysql` and `redis` and talks to no daemon.
+**[P]** `internal/adapter/services/docker` fills `postgres`, `mysql`, `redis`, `mongodb` and `memcached` and talks to no daemon.
 It *plans* a service; the runtime adapter runs it. Two properties follow, and both are the point: the
 service is reachable only on the app's private network because that is the only network its workloads
 join and nothing publishes a port (R-134), and its data is an ordinary app volume (R-135).
 
-**[P]** Images default to `postgres:17-alpine`, `mysql:8.4`, `redis:7-alpine`, overridable per install
+**[P]** Images default to `postgres:17-alpine`, `mysql:8.4`, `redis:7-alpine`, `mongo:7`, `memcached:1.6-alpine`, overridable per install
 through the adapter's config. Alpine variants because a hobbyist's host is the target and a 400MB
-Postgres image on a two-core VPS is a cost with nothing to show for it.
+Postgres image on a two-core VPS is a cost with nothing to show for it; MongoDB publishes none. A
+provisioned MongoDB's one user is the root user its image creates, so its URL carries
+`authSource=admin` (issue #90: hackathon-starter and mongo-express had nothing to connect to). A
+provisioned memcached is the address `host:11211` — no scheme, no credentials, which is how its
+clients and yopass's `MEMCACHED` take it — and has no volume: it holds nothing to back up, and a
+volume outlives the app (R-204). Its health is the port answering.
+
+**[D] A provisioned Postgres serves TLS, and its URL is spelled the way the app spells it** (owner
+decision, issue #90 round 2). Postgres drivers disagree on two things, and each refuses the other's
+answer:
+
+- *The scheme.* SQLAlchemy 2 will not load `postgres://` ("Can't load plugin:
+  sqlalchemy.dialects:postgres"); readflow will not accept `postgresql://` ("unsupported database:
+  postgresql"). No one spelling works for both, but the app's own configuration already says which it
+  reads. Detection records it as `Slot.Scheme` — from the compose value that pointed at the database,
+  or a sample in `.env.example` — and the URL is written with it. Empty is `postgresql://`, the
+  scheme libpq documents. Only `postgres` and `postgresql` are accepted, and only on a Postgres slot.
+- *TLS.* Go's lib/pq requires TLS unless the URL says `sslmode=disable`; asyncpg refuses a URL that
+  says it ("connect() got an unexpected keyword argument 'sslmode'"). A URL that says nothing works
+  for both only if the server offers TLS, so it does: `require` and `prefer` connect encrypted, and a
+  client that asks for `disable` is still let in, because the image's `pg_hba.conf` accepts either.
+  The URL carries no query string.
+
+**[P]** The certificate is self-signed ECDSA P-256, derived from the service's password (HKDF, then
+the deterministic RFC 6979 signature) with a fixed serial and a validity ending 9999-12-31, RFC
+5280's "no well-defined expiration". Derived and not generated because `Provision` runs on every
+deploy and reconcile and a changed environment recreates the container: a fresh certificate each call
+would restart the database every tick. Deriving it needs nothing stored that is not stored already —
+the password is the service's one persisted secret, and the key protects the same connection the
+password does. Nothing verifies it, which is what `sslmode=require` means; the network is private to
+the app either way (R-134). Certificate and key reach the container as `secret.Value` environment
+variables (R-194), are written outside the data volume on each start, and are unset before the
+image's own entrypoint runs. An image set in the adapter's config must keep the official image's
+`docker-entrypoint.sh`, as it already had to for `POSTGRES_*`.
 
 **[P] The builder writes a plan for strategies that have none.** `static` and `buildpack` both end
 as a plan BuildKit builds — a Dockerfile, or for most `buildpack` apps a Railpack plan — written
@@ -1044,7 +1085,8 @@ wrong (issue #55). So do the languages Railpack has no provider for, or plans as
 (`languages.go`, issue #90): Crystal (`shards build`, run on the Crystal image), R (a `plumber.R` API
 or a Shiny app, on `rocker/r-ver` with the packages its R files load), Clojure (`lein uberjar`, or a
 deps.edn alias or namespace with `-main`), Scala (`sbt stage` with sbt-native-packager, which Play
-always has; the assembly jar; or the classpath sbt exports), Haskell (`stack build`, its one
+always has; the assembly jar; or the classpath sbt exports — with Scaladoc turned off, and git and
+Node in the build image for sbt-git and sbt-web), Haskell (`stack build`, its one
 executable run on Debian slim), Perl (`cpanm --installdeps`, then the Procfile, a PSGI app under
 `plackup`, or a Mojolicious script), a Python package with only a `setup.py` (its one console
 script, given `--host` and `--port` when it takes them), and PHP with no `composer.json` whose
@@ -1069,11 +1111,30 @@ The benchmark in issue #90 added more of the same, each a category the planners 
   release and served by the same nginx. `[P]` Hugo 0.167.0 and Zola 0.23.6 unless `netlify.toml`,
   `vercel.json` or a workflow pins one; Hugo on `golang:1.25` so Hugo Modules resolve; MkDocs on
   Python 3.12. A Hugo theme that is an unfetched submodule refuses the plan with `VALID_INVALID`,
-  which detection shows as blocked, rather than building empty pages.
+  which detection shows as blocked, rather than building empty pages. Any other build that fails
+  reading a path inside an unfetched submodule fails naming it (O-60, decided 2026-10-13).
+- **Round-2 plans (issue #90).** A Dockerfile that copies what the repository's own build makes
+  (`target/` with a `pom.xml`, `build/` with a Gradle wrapper, `dist/`, `build/` or `out/` with a
+  package.json build script) is replayed with that build first in a `pando-prebuild` stage and those
+  COPYs taken from it; the rest is the author's. A crate whose `path` dependencies are above it is
+  built from there by `--manifest-path`, and the app's directory moves up (`BuildPlan.Context`).
+  `[P]` choices: GHC on aarch64 gets LLVM 13 (bookworm's newest that pre-9.2 GHCs accept); among
+  several Go main packages, none is picked by its directory's name (R-102: a `server/` beside a
+  `client/` is not guessed at); Perl
+  modules a cpanfile requires are installed at the cpanfile.snapshot version when the snapshot's
+  distribution is named after the module; Railpack PHP builds run composer's `post-install-cmd`
+  scripts after the app's files are in place, outside Railpack's `APP_ENV`; a web root named in
+  composer.json (`drupal-scaffold` `web-root`, `public-dir`) is served.
 - **Node toolchain.** `[P]` Node sites build on `node:<major>-slim`, not Alpine: Gatsby and other
   native modules need glibc. pnpm is installed at the version `packageManager` names, else the major
-  the lockfile's format implies (5.3→6, 5.4→7, 6.0→8, 9.0→9), never corepack's newest; pnpm 10 and
-  later are told to run dependency build scripts, as npm and earlier pnpm do. A Bun lockfile is
+  the lockfile's format implies (5.3→6, 5.4→7, 6.0→8, 9.0→9), never corepack's newest. A 9.0
+  lockfile beside a `pnpm-workspace.yaml` with no `packages` list gets pnpm 10: such a file holds
+  only settings, which pnpm 10 reads and pnpm 9 refuses. pnpm 10 and later are told to run
+  dependency build scripts, as npm and earlier pnpm do, unless the project already says which run
+  (`onlyBuiltDependencies`, `neverBuiltDependencies` or `allowBuilds`, in the workspace file,
+  `package.json` or `.npmrc`): pnpm refuses the flag beside a list of its own. A Node server that
+  depends on a native addon that compiles at install (`better-sqlite3`, `sqlite3`, `bcrypt`,
+  `argon2`) gets Python, make and g++ in its image. A Bun lockfile is
   installed with Bun. An `engines.node` range gets 22 when it allows it, else the newest line it
   allows; the same choice is passed to Railpack as `RAILPACK_NODE_VERSION`, because mise installed
   the oldest release of an open range.
@@ -1081,6 +1142,8 @@ The benchmark in issue #90 added more of the same, each a category the planners 
   detection reads the repository as Java. One beside `deno.json` is left to Railpack's Deno support.
   A Meteor app (`.meteor/release`) is built with its release's `meteor build` into the server bundle
   and run on that release's Node; detection asks for `MONGO_URL` as a required value (R-132).
+  `[P]` It builds and runs on `node:22-trixie-slim`: Meteor 3's uWebSockets.js binary needs glibc
+  2.38, which bookworm's `node:22-slim` does not have.
 
 **[P] A repository's `.dockerignore` does not apply to a Dockerfile Pando writes.** A repository's
 own ignore file is written for its own Dockerfile, which often copies an artifact built on the

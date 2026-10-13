@@ -101,6 +101,13 @@ type Config struct {
 	WorkingDir   string   `json:"working_dir,omitempty"`
 	User         string   `json:"user,omitempty"`
 	Healthcheck  *Health  `json:"healthcheck,omitempty"`
+
+	// Env is the image's ENV, as KEY=VALUE. Read by detection for the
+	// connections an image is configured to expect (mongo-express ships
+	// ME_CONFIG_MONGODB_URL=mongodb://mongo:27017). Never serialized: a
+	// private image's ENV is the image author's, and nothing that stores or
+	// returns an inspection needs it.
+	Env []string `json:"-"`
 }
 
 // Health is a HEALTHCHECK, as the image declares it.
@@ -170,6 +177,12 @@ type Inspector struct {
 	Transport http.RoundTripper
 	// Insecure allows plain HTTP, for a registry on localhost in tests.
 	Insecure bool
+
+	// Mirrors lists the mirrors to read Docker Hub images through, as URLs
+	// (https://mirror.gcr.io), in the order to try them: the runtime's own
+	// (api.RuntimeCapabilities.RegistryMirrors). Nil reads Docker Hub
+	// directly.
+	Mirrors func(context.Context) []string
 }
 
 // Inspect resolves a reference and reads the configuration for want.
@@ -183,6 +196,67 @@ func (in Inspector) Inspect(ctx context.Context, reference string, auth *Auth, w
 		return Inspection{}, err
 	}
 
+	// Docker Hub through the runtime's mirrors first, as the runtime pulls.
+	// Docker Hub counts every manifest read against a download limit of 100
+	// an hour for an address, and a benchmark deploying one image after
+	// another ran out of it reading images its daemon fetched from a mirror
+	// (issue #90). A mirror that fails for any reason is passed over, as the
+	// daemon passes over one, and Docker Hub answers last.
+	for _, mirrored := range in.mirrored(ctx, ref, auth) {
+		if out, err := in.inspect(ctx, reference, mirrored, nil, want); err == nil {
+			return out, nil
+		}
+	}
+	return in.inspect(ctx, reference, ref, auth, want)
+}
+
+// mirrored is ref at each of the runtime's mirrors, for an anonymous read of
+// a Docker Hub image. A read with a credential goes to Docker Hub itself: a
+// mirror cannot read a private image, and the credential is Docker Hub's,
+// not the mirror's to be sent.
+func (in Inspector) mirrored(ctx context.Context, ref name.Reference, auth *Auth) []name.Reference {
+	if in.Mirrors == nil || auth != nil || ref.Context().RegistryStr() != name.DefaultRegistry {
+		return nil
+	}
+	var out []name.Reference
+	for _, mirror := range in.Mirrors(ctx) {
+		if r, ok := atMirror(ref, mirror); ok {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// atMirror is ref with its registry replaced by the mirror's host. A mirror
+// given as http:// is read over plain HTTP, as the daemon reads it.
+func atMirror(ref name.Reference, mirror string) (name.Reference, bool) {
+	mirror = strings.TrimSpace(mirror)
+	var opts []name.Option
+	switch {
+	case strings.HasPrefix(mirror, "http://"):
+		opts = append(opts, name.Insecure)
+		mirror = strings.TrimPrefix(mirror, "http://")
+	case strings.HasPrefix(mirror, "https://"):
+		mirror = strings.TrimPrefix(mirror, "https://")
+	}
+	host := strings.TrimSuffix(mirror, "/")
+	if host == "" || strings.Contains(host, "/") {
+		// A mirror under a path is not one a registry client can address.
+		return nil, false
+	}
+	at := host + "/" + ref.Context().RepositoryStr()
+	if digest, ok := ref.(name.Digest); ok {
+		at += "@" + digest.DigestStr()
+	} else {
+		at += ":" + ref.Identifier()
+	}
+	r, err := name.ParseReference(at, opts...)
+	return r, err == nil
+}
+
+// readOptions are the registry client's options for one read, and the
+// transport that watches it for a download limit.
+func (in Inspector) readOptions(ctx context.Context, auth *Auth) (*limitWatch, []remote.Option) {
 	base := in.Transport
 	if base == nil {
 		base = remote.DefaultTransport
@@ -195,6 +269,12 @@ func (in Inspector) Inspect(ctx context.Context, reference string, auth *Auth, w
 		remote.WithRetryStatusCodes(http.StatusRequestTimeout, http.StatusInternalServerError,
 			http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout),
 	}
+	return watch, opts
+}
+
+// inspect is one read of ref, which reference names as the person gave it.
+func (in Inspector) inspect(ctx context.Context, reference string, ref name.Reference, auth *Auth, want Platform) (Inspection, error) {
+	watch, opts := in.readOptions(ctx, auth)
 	readable := func(err error) error { return readable(reference, ref, auth, watch.refused(), err) }
 
 	// Only the digest wanted: a HEAD answers it, and Docker Hub counts a
@@ -217,52 +297,67 @@ func (in Inspector) Inspect(ctx context.Context, reference string, auth *Auth, w
 	}
 
 	out := Inspection{Reference: reference, Digest: desc.Digest.String()}
-
 	if desc.MediaType.IsIndex() {
-		idx, err := desc.ImageIndex()
-		if err != nil {
-			return Inspection{}, readable(err)
-		}
-		manifest, err := idx.IndexManifest()
-		if err != nil {
-			return Inspection{}, readable(err)
-		}
-		var chosen *v1.Descriptor
-		for i, m := range manifest.Manifests {
-			// Attestations ride along in an index as platform unknown/unknown.
-			if m.Platform == nil || m.Platform.OS == "unknown" {
-				continue
-			}
-			p := Platform{OS: m.Platform.OS, Architecture: m.Platform.Architecture, Variant: m.Platform.Variant}
-			out.Platforms = append(out.Platforms, p)
-			if chosen == nil && want.OS != "" && p.Runs(want) {
-				chosen = &manifest.Manifests[i]
-			}
-		}
-		if chosen != nil {
-			img, err := idx.Image(chosen.Digest)
-			if err != nil {
-				return Inspection{}, readable(err)
-			}
-			cfg, err := img.ConfigFile()
-			if err != nil {
-				return Inspection{}, readable(err)
-			}
-			c := configOf(cfg)
-			out.Config = &c
-			p := Platform{OS: chosen.Platform.OS, Architecture: chosen.Platform.Architecture, Variant: chosen.Platform.Variant}
-			out.Matched = &p
-		}
-		return out, nil
+		err = readIndex(desc, want, &out)
+	} else {
+		err = readImage(desc, want, &out)
 	}
-
-	img, err := desc.Image()
 	if err != nil {
 		return Inspection{}, readable(err)
+	}
+	return out, nil
+}
+
+// readIndex fills out from a multi-platform index: every platform it lists,
+// and the configuration of the first that runs on want.
+func readIndex(desc *remote.Descriptor, want Platform, out *Inspection) error {
+	idx, err := desc.ImageIndex()
+	if err != nil {
+		return err
+	}
+	manifest, err := idx.IndexManifest()
+	if err != nil {
+		return err
+	}
+	var chosen *v1.Descriptor
+	for i, m := range manifest.Manifests {
+		// Attestations ride along in an index as platform unknown/unknown.
+		if m.Platform == nil || m.Platform.OS == "unknown" {
+			continue
+		}
+		p := Platform{OS: m.Platform.OS, Architecture: m.Platform.Architecture, Variant: m.Platform.Variant}
+		out.Platforms = append(out.Platforms, p)
+		if chosen == nil && want.OS != "" && p.Runs(want) {
+			chosen = &manifest.Manifests[i]
+		}
+	}
+	if chosen == nil {
+		return nil
+	}
+	img, err := idx.Image(chosen.Digest)
+	if err != nil {
+		return err
 	}
 	cfg, err := img.ConfigFile()
 	if err != nil {
-		return Inspection{}, readable(err)
+		return err
+	}
+	c := configOf(cfg)
+	out.Config = &c
+	p := Platform{OS: chosen.Platform.OS, Architecture: chosen.Platform.Architecture, Variant: chosen.Platform.Variant}
+	out.Matched = &p
+	return nil
+}
+
+// readImage fills out from a single-platform image.
+func readImage(desc *remote.Descriptor, want Platform, out *Inspection) error {
+	img, err := desc.Image()
+	if err != nil {
+		return err
+	}
+	cfg, err := img.ConfigFile()
+	if err != nil {
+		return err
 	}
 	p := Platform{OS: cfg.OS, Architecture: cfg.Architecture, Variant: cfg.Variant}
 	out.Platforms = []Platform{p}
@@ -271,7 +366,7 @@ func (in Inspector) Inspect(ctx context.Context, reference string, auth *Auth, w
 		out.Config = &c
 		out.Matched = &p
 	}
-	return out, nil
+	return nil
 }
 
 func (in Inspector) parse(reference string) (name.Reference, error) {
@@ -294,6 +389,7 @@ func configOf(cfg *v1.ConfigFile) Config {
 		Cmd:        cfg.Config.Cmd,
 		WorkingDir: cfg.Config.WorkingDir,
 		User:       cfg.Config.User,
+		Env:        cfg.Config.Env,
 	}
 	for port := range cfg.Config.ExposedPorts {
 		number, proto, _ := strings.Cut(port, "/")

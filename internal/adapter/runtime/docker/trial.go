@@ -187,7 +187,7 @@ func (a *Adapter) watch(ctx context.Context, id string, timeout time.Duration) a
 	poll := time.NewTicker(min(portPollInterval, timeout))
 	defer poll.Stop()
 
-	ports := &portWatch{answered: map[int]int{}}
+	ports := &portWatch{answered: map[int]int{}, probes: map[int]int{}}
 
 	for {
 		select {
@@ -214,10 +214,12 @@ func (a *Adapter) watch(ctx context.Context, id string, timeout time.Duration) a
 }
 
 // portWatch is what the trial's watch carries from one poll to the next: when
-// the observed ports last changed, and the HTTP status each port has answered.
+// the observed ports last changed, the HTTP status each port has answered, and
+// how many times a probe has reached each port.
 type portWatch struct {
 	lastChange time.Time
 	answered   map[int]int
+	probes     map[int]int
 }
 
 // pollPorts is one tick of watch: it records whether the container has
@@ -257,12 +259,20 @@ func (a *Adapter) pollPorts(ctx, deadline context.Context, id string, result *ap
 
 	// Asked again each tick until it answers: a server can bind its
 	// port a moment before it is ready to serve on it.
-	for p, status := range a.probeHTTP(deadline, id, unansweredPorts(routable, ports.answered)) {
+	unanswered := unansweredPorts(routable, ports.answered)
+	answers, probed := a.probeHTTP(deadline, id, unanswered)
+	if probed {
+		for _, p := range unanswered {
+			ports.probes[p]++
+		}
+	}
+	for p, status := range answers {
 		ports.answered[p] = status
 	}
 	result.HTTPAnswers = answersFor(routable, ports.answered)
+	result.HTTPProbedPorts = probedPorts(routable, ports)
 
-	return portsSettled(len(result.HTTPAnswers) > 0, now.Sub(ports.lastChange))
+	return portsSettled(routable, ports.answered, now.Sub(ports.lastChange))
 }
 
 // unansweredPorts returns the ports in routable that have not yet answered HTTP.
@@ -276,6 +286,10 @@ func unansweredPorts(routable []int, answered map[int]int) []int {
 	return unanswered
 }
 
+// minProbes is how many unanswered requests make a port one that does not
+// serve HTTP (TrialResult.HTTPProbedPorts).
+const minProbes = 3
+
 const (
 	// httpSettle is how long the ports must stay as they are, once one has
 	// answered HTTP, before the watch ends. Livebook opens a second web server
@@ -283,19 +297,72 @@ const (
 	// people open.
 	httpSettle = 5 * time.Second
 
-	// quietSettle is the same with nothing answering HTTP yet. Longer, because
-	// what the watch is waiting for is a web server that has not opened: Open
-	// Liberty binds an ephemeral port seconds before 9080 (issue #90).
-	quietSettle = 20 * time.Second
+	// pendingSettle is the same while a port outside the ephemeral range has
+	// not answered yet. Longer, because something is listening there
+	// and may be about to serve; bounded, because a database's or a broker's
+	// port never will.
+	pendingSettle = 45 * time.Second
 )
 
+// ephemeralPorts is where Linux's ephemeral range starts. A server rarely
+// listens there on purpose; a runtime does, for its own bookkeeping.
+const ephemeralPorts = 32768
+
 // portsSettled reports whether the observed ports have been unchanged long
-// enough that the watch can end.
-func portsSettled(answeredHTTP bool, quiet time.Duration) bool {
-	if answeredHTTP {
+// enough that the watch can end, given which of them have answered HTTP.
+//
+// A page on a port outside the ephemeral range is what the watch is for, and
+// ends it soon after. Anything less ends it only after pendingSettle while a
+// port outside that range is listening without having answered, and not at all
+// while every port is in it with none answering. Each of those is usually a web
+// server that has not finished starting: Grist's supervisor binds 8484 seconds
+// before the server behind it is ready, and the plugin server's ephemeral port
+// answered first; Kanboard's nginx answered on 443 before 80; Open Liberty
+// binds an ephemeral port tens of seconds before 9080 (issue #90). Ending early
+// routed each to the wrong port. The trial's own timeout bounds every wait.
+func portsSettled(routable []int, answered map[int]int, quiet time.Duration) bool {
+	var page, other, pending bool
+	for _, p := range routable {
+		status, ok := answered[p]
+		switch {
+		case ok && p < ephemeralPorts && servesAPage(status):
+			page = true
+		case ok:
+			other = true
+		case p < ephemeralPorts:
+			pending = true
+		}
+	}
+	switch {
+	case page:
+		return quiet >= httpSettle
+	case pending:
+		return quiet >= pendingSettle
+	case other:
 		return quiet >= httpSettle
 	}
-	return quiet >= quietSettle
+	// Every port is in the ephemeral range, and none has answered.
+	return false
+}
+
+// servesAPage is detect.ServesAPage, which an adapter may not import (R-027):
+// a status that means a person would see something.
+func servesAPage(status int) bool {
+	return (status >= 200 && status < 400) || status == 401 || status == 403
+}
+
+// probedPorts lists the ports still listening that a probe has reached, in
+// port order: one that answered, or one asked at least minProbes times. A
+// server can bind its port a moment before it serves on it, so a single
+// unanswered request is not yet evidence that it never will.
+func probedPorts(routable []int, ports *portWatch) []int {
+	var out []int
+	for _, p := range routable {
+		if _, answered := ports.answered[p]; answered || ports.probes[p] >= minProbes {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // answersFor lists the HTTP answers for the ports still listening, in port
@@ -388,20 +455,23 @@ func (a *Adapter) observePorts(ctx context.Context, targetID string) (routable, 
 // image may have no shell and no tools. The ports are probed in parallel, each
 // bounded by nc's own timeout, so a port that never replies costs seconds once
 // rather than once per port.
-func (a *Adapter) probeHTTP(ctx context.Context, targetID string, ports []int) map[int]int {
+func (a *Adapter) probeHTTP(ctx context.Context, targetID string, ports []int) (answers map[int]int, probed bool) {
 	if len(ports) == 0 {
-		return nil
+		return nil, false
 	}
 	out, ok := a.sidecar(ctx, targetID, probeScript(ports))
 	if !ok {
-		return nil
+		return nil, false
 	}
-	return httpAnswers(out)
+	return httpAnswers(out), true
 }
 
 // probeScript is the shell probeHTTP runs: for each port, the first bytes of
-// the reply to GET /, printed after the port number. The ports are integers,
-// so nothing from the app reaches the script's text.
+// the reply to GET /, on one line after the port number. The ports are
+// integers, so nothing from the app reaches the script's text.
+//
+// Enough of the reply to read past the headers into the body, where a TLS
+// port says it was spoken to in plain HTTP (see tlsComplaint).
 func probeScript(ports []int) string {
 	listed := make([]string, 0, len(ports))
 	for _, p := range ports {
@@ -409,7 +479,7 @@ func probeScript(ports []int) string {
 	}
 	return "for p in " + strings.Join(listed, " ") + "; do " +
 		`( r=$(printf 'GET / HTTP/1.0\r\nHost: localhost\r\nUser-Agent: pando-trial\r\n\r\n' | ` +
-		`nc -w 3 127.0.0.1 "$p" 2>/dev/null | head -c 16); echo "$p $r" ) & ` +
+		`nc -w 3 127.0.0.1 "$p" 2>/dev/null | head -c 1024 | tr '\r\n' '  '); echo "$p $r" ) & ` +
 		"done; wait"
 }
 
@@ -417,14 +487,23 @@ func probeScript(ports []int) string {
 // the port, then the start of an HTTP status line.
 var httpStatusLine = regexp.MustCompile(`^(\d{1,5}) HTTP/\d(?:\.\d)? (\d{3})`)
 
+// tlsComplaint is a TLS port's answer to plain HTTP: nginx's "The plain HTTP
+// request was sent to HTTPS port", Apache's "speaking plain HTTP to an
+// SSL-enabled server port", Go's "Client sent an HTTP request to an HTTPS
+// server". It is an HTTP status line, and it is not a port a browser can be
+// sent to over HTTP: Kanboard was routed to its 443 and answered every request
+// with a 400 (issue #90).
+var tlsComplaint = regexp.MustCompile(`(?i)plain HTTP request was sent to HTTPS port|speaking plain HTTP to an SSL-enabled|sent an HTTP request to an HTTPS server`)
+
 // httpAnswers reads probeScript's output. A port that answered with anything
 // other than an HTTP status line — nothing, a binary greeting, its own request
-// echoed back — is not in the result.
+// echoed back — is not in the result, and neither is a TLS port complaining
+// about plain HTTP.
 func httpAnswers(out string) map[int]int {
 	answers := map[int]int{}
 	for _, line := range strings.Split(out, "\n") {
 		m := httpStatusLine.FindStringSubmatch(strings.TrimSpace(line))
-		if m == nil {
+		if m == nil || tlsComplaint.MatchString(line) {
 			continue
 		}
 		port, _ := strconv.Atoi(m[1])

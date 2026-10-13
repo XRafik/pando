@@ -62,6 +62,31 @@ func TestR095_ANodeServerIsBuiltOnTheOfficialNodeImage(t *testing.T) {
 	}
 }
 
+// TestR095_AnAdonisAppStartsFromItsBuild asserts R-095. AdonisJS's start
+// script runs bin/server.js from the directory `node ace build` writes, and
+// run from the repository it exited with "Cannot find module
+// '/app/bin/server.js'" (issue #90).
+func TestR095_AnAdonisAppStartsFromItsBuild(t *testing.T) {
+	pkg := `{"scripts": {"build": "node ace build", "start": "node bin/server.js"},
+		"dependencies": {"@adonisjs/core": "^7.0.0"}}`
+	root := writeFiles(t, map[string]string{"package.json": pkg, "package-lock.json": "{}", "ace.js": ""})
+	n, ok := readNodeServer(root, "")
+	require.True(t, ok)
+	require.Equal(t, "node build/bin/server.js", n.Start)
+	require.True(t, n.Build)
+
+	// A start script whose file the repository has runs as it is written.
+	root = withFiles(t, map[string]string{"package.json": pkg, "package-lock.json": "{}", "bin/server.js": ""})
+	n, ok = readNodeServer(root, "")
+	require.True(t, ok)
+	require.Equal(t, "npm start", n.Start)
+
+	// So does one the person gave.
+	n, ok = readNodeServer(root, "node build/bin/server.js --inspect")
+	require.True(t, ok)
+	require.Equal(t, "node build/bin/server.js --inspect", n.Start)
+}
+
 func TestANodeServerPlanBuildsThenStartsThroughAShell(t *testing.T) {
 	root := t.TempDir()
 	name, err := writeNodeServerPlan(root, nodeServer{Node: "22", Install: "npm ci", Build: true, Start: "npm start"})
@@ -71,6 +96,31 @@ func TestANodeServerPlanBuildsThenStartsThroughAShell(t *testing.T) {
 	require.Contains(t, string(body), "FROM node:22-slim")
 	require.Contains(t, string(body), "RUN npm run build")
 	require.Contains(t, string(body), `CMD ["npm start"]`)
+}
+
+// TestR095_ANodeServerWithANativeAddonGetsACompiler asserts R-095.
+//
+// better-sqlite3 13 compiles at every install; the AdonisJS starter kits
+// stopped at "gyp ERR! find Python" on the slim image (issue #90).
+func TestR095_ANodeServerWithANativeAddonGetsACompiler(t *testing.T) {
+	server, ok := readNodeServer(writeTree(t, map[string]string{
+		"package.json":   `{"scripts":{"start":"node server.js"},"dependencies":{"better-sqlite3":"^13.0.3"}}`,
+		"pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
+	}), "")
+	require.True(t, ok)
+	require.True(t, server.Native)
+	root := t.TempDir()
+	name, err := writeNodeServerPlan(root, server)
+	require.NoError(t, err)
+	body, err := os.ReadFile(filepath.Join(root, name))
+	require.NoError(t, err)
+	require.Contains(t, string(body), "FROM node:22-slim\nRUN apt-get update && apt-get install -y --no-install-recommends python3 make g++")
+
+	plain, ok := readNodeServer(writeTree(t, map[string]string{
+		"package.json": `{"scripts":{"start":"node server.js"},"dependencies":{"express":"^5"}}`,
+	}), "")
+	require.True(t, ok)
+	require.False(t, plain.Native, "no compiler unless a dependency needs one")
 }
 
 // TestR095_ANodeServerWhoseScriptsCallPnpmGetsPnpm asserts R-095.

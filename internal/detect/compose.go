@@ -5,6 +5,7 @@ import (
 	"io"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -148,6 +149,7 @@ type composeService struct {
 	DependsOn   any            `yaml:"depends_on"`
 	Healthcheck *composeHealth `yaml:"healthcheck"`
 	Profiles    []string       `yaml:"profiles"`
+	Labels      any            `yaml:"labels"`
 
 	// Constructs that are rejected or rewritten (R-099).
 	Restart       string         `yaml:"restart"`
@@ -620,7 +622,18 @@ func (c *composeImport) draft() Draft {
 	// hostname ("label too long"). Those services are imported as the compose
 	// file wrote them, which is what R-096 asks for in the first place
 	// (issue #55).
+	//
+	// The ones imported go first. Pando starts a bundle's workloads one after
+	// another, dependencies before what depends on them, and otherwise in this
+	// order — and `docker compose up` starts them all at once, so a compose
+	// file seldom says that its app needs the Redis beside it. Last in the
+	// list, the Redis started last: awesome-compose's nginx-nodejs-redis
+	// backends crashed on a refused connection before it existed, and nginx
+	// then stopped on "host not found in upstream" (issue #90). A database or
+	// a cache depends on nothing in the app, so starting it first costs
+	// nothing.
 	backing := map[string]spec.SlotType{}
+	var services []spec.Workload
 	for _, name := range names {
 		slotType, candidate := candidates[name]
 		if !candidate {
@@ -631,14 +644,30 @@ func (c *composeImport) draft() Draft {
 			continue
 		}
 		running = append(running, name)
-		d.Workloads = append(d.Workloads, c.workload(name, false))
+		services = append(services, c.workload(name, false))
 	}
+	d.Workloads = append(services, d.Workloads...)
 	if len(d.Workloads) == 1 {
 		d.Workloads[0].Primary = true
 		d.Workloads[0].Exposed = true
 	}
 
-	d.Slots = append(c.wire(backing, d.Workloads), c.valueSlots...)
+	// One slot to a name. Linkwarden's .env.sample leaves DATABASE_URL blank,
+	// and its compose file points DATABASE_URL at the Postgres beside it, so
+	// the variable was both the provisioned slot and a value to type in — and
+	// accepting the plan failed on "Two slots are both named DATABASE_URL"
+	// (issue #90). The variable that reaches the provisioned service is the
+	// answer to the blank one.
+	d.Slots = c.wire(backing, d.Workloads)
+	wired := map[string]bool{}
+	for _, s := range d.Slots {
+		wired[s.Key] = true
+	}
+	for _, s := range c.valueSlots {
+		if !wired[s.Key] {
+			d.Slots = append(d.Slots, s)
+		}
+	}
 	d.Volumes = c.volumes(running)
 
 	// A service that is no longer a workload is no longer something to wait
@@ -687,18 +716,21 @@ func (c *composeImport) wire(backing map[string]spec.SlotType, workloads []spec.
 		image := c.file.Services[service].Image
 		key := strings.ToUpper(service) + "_URL"
 
-		// The variables whose value points at this service.
+		// The variables whose value points at this service, and the scheme the
+		// first of them spells, which is the one the app is given.
 		var filled []string
+		var scheme string
 		for i := range workloads {
 			for j := range workloads[i].Env {
 				e := &workloads[i].Env[j]
 				// A connection URL only. A bare `REDIS_HOST: redis` given the
 				// whole DSN is a hostname nothing can resolve.
-				if e.Value == nil || schemeType(*e.Value) != backing[service] || !pointsAtAny(*e.Value, c.hostnames(service)) {
+				if e.Value == nil || !reaches(*e.Value, c.hostnames(service), backing[service]) {
 					continue
 				}
 				if len(filled) == 0 {
 					key = e.Key
+					scheme = spelledScheme(*e.Value, backing[service])
 				}
 				filled = append(filled, e.Key)
 				ref := key
@@ -721,6 +753,7 @@ func (c *composeImport) wire(backing map[string]spec.SlotType, workloads []spec.
 			// The provisioned instance answers to the service's names too, so
 			// a start command waiting on `db:5432` still finds it.
 			Aliases: c.hostnames(service),
+			Scheme:  scheme,
 
 			// Filled, because the compose file already answered it: it runs a
 			// database in a container beside the app, and "Pando runs one
@@ -746,15 +779,31 @@ func (c *composeImport) wire(backing map[string]spec.SlotType, workloads []spec.
 func reachedByURL(workloads []spec.Workload, hosts []string, t spec.SlotType) bool {
 	for _, w := range workloads {
 		for _, e := range w.Env {
-			if e.Value == nil || !strings.Contains(*e.Value, "://") {
-				continue
-			}
-			if schemeType(*e.Value) == t && pointsAtAny(*e.Value, hosts) {
+			if e.Value != nil && reaches(*e.Value, hosts, t) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// reaches reports whether a value is the whole address of a service of type t:
+// a connection URL in the scheme the provisioned replacement's own URL uses,
+// or, for memcached, which has no URL form, "host:port" — the
+// `MEMCACHED: memcached:11211` yopass's compose file gives it. Either way the
+// value is one the provisioned instance's own value can stand in for. A bare
+// host is not: `MEMCACHED_HOST: memcached` beside a MEMCACHED_PORT would be
+// handed "host:port" and resolve nothing.
+func reaches(value string, hosts []string, t spec.SlotType) bool {
+	if t == spec.SlotMemcached {
+		for _, h := range hosts {
+			if port, ok := strings.CutPrefix(value, h+":"); ok && port != "" && strings.Trim(port, "0123456789") == "" {
+				return true
+			}
+		}
+		return false
+	}
+	return strings.Contains(value, "://") && schemeType(value) == t && pointsAtAny(value, hosts)
 }
 
 // hostnames are the names a service is reached by: its own, and its
@@ -815,6 +864,10 @@ func (c *composeImport) workload(name string, only bool) spec.Workload {
 		// with several, the detector asks rather than picking.
 		Primary: only,
 		Exposed: only,
+	}
+	if refs := c.vars.commandRefs[name]; len(refs) > 0 {
+		w.Command = shellCommand(w.Command, refs)
+		w.Env = c.commandEnv(name, w.Env, refs)
 	}
 
 	// A service that builds says so here rather than at the app level, so a
@@ -911,7 +964,53 @@ func (c *composeImport) ports(name string, s composeService) []spec.Port {
 	for _, raw := range s.Expose {
 		add(atoi(scalar(raw)), spec.PortCompose)
 	}
+
+	// A service published only through a socket proxy says its port in a
+	// routing label and nowhere else: awesome-compose's traefik-golang has
+	// `traefik.http.services.go.loadbalancer.server.port=80` and no ports at
+	// all. The proxy is left out (see routesBySocket), and the app was given
+	// no upstream port, so Pando's own proxy answered 503 (issue #90). The
+	// label is the author naming the port traffic goes to; it is read as
+	// that, and nothing else in it is.
+	if len(ports) == 0 {
+		for _, n := range labelPorts(s.Labels) {
+			add(n, spec.PortCompose)
+		}
+	}
 	return webPortsFirst(ports)
+}
+
+// proxyPortLabel is a socket proxy's label naming a service's port.
+var proxyPortLabel = regexp.MustCompile(`^traefik\.http\.services\.[^.]+\.loadbalancer\.server\.port$`)
+
+// labelPorts reads the ports a service's routing labels name, in either of
+// compose's label shapes: a map, or a list of `key=value`.
+func labelPorts(labels any) []int {
+	var ports []int
+	consider := func(key, value string) {
+		if proxyPortLabel.MatchString(strings.TrimSpace(key)) {
+			if n := atoi(strings.TrimSpace(value)); n > 0 {
+				ports = append(ports, n)
+			}
+		}
+	}
+	switch l := labels.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(l))
+		for k := range l {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			consider(k, scalar(l[k]))
+		}
+	case []any:
+		for _, raw := range l {
+			k, v, _ := strings.Cut(scalar(raw), "=")
+			consider(k, v)
+		}
+	}
+	return ports
 }
 
 // notHTTP are ports whose protocol is known and is not HTTP.
@@ -1079,16 +1178,23 @@ func (c *composeImport) files(name string, s composeService) []spec.File {
 		// It is also what keeps a `package-lock.json` from refusing an import:
 		// a lockfile is far too big to travel in a spec, and it never needed
 		// to.
-		if c.inBuildContext(name, m.hostPath) {
+		//
+		// Only where the build put it, though. Isso's server mounts
+		// `./contrib/isso-dev.cfg:/config/isso-dev.cfg` from a context of the
+		// whole repository: the file is in the image, at
+		// /isso/contrib/isso-dev.cfg, and /config was empty. The server
+		// stopped at start with no configuration (issue #90). A file the mount
+		// places somewhere else is carried, as it would be from outside the
+		// context; one that cannot be carried is still left to the image.
+		content, readable := c.read(m.hostPath)
+		if c.inBuildContext(name, m.hostPath) && (c.whereBuildPutsIt(name, m) || !readable) {
 			c.rewrote(name, "volume "+m.raw,
 				m.hostPath+" is inside this service's build context, so it is already in the "+
 					"image the build produces. The mount showed edits without rebuilding; Pando "+
 					"deploys a built image, and a deploy is how a change reaches this app.")
 			continue
 		}
-
-		content, ok := c.read(m.hostPath)
-		if !ok {
+		if !readable {
 			continue
 		}
 
@@ -1276,6 +1382,21 @@ func (c *composeImport) inBuildContext(service, hostPath string) bool {
 	return strings.HasPrefix(file, dir+"/")
 }
 
+// whereBuildPutsIt reports a mount that places a build-context file where a
+// `COPY . <dir>` would have put it: the container path ends with the file's
+// path inside the context. `./backend/package.json:/code/package.json` beside
+// `build: backend` is one; `./contrib/isso-dev.cfg:/config/isso-dev.cfg` beside
+// `build: .` is not, because the image has the file under contrib/.
+func (c *composeImport) whereBuildPutsIt(service string, m mount) bool {
+	context, _, _ := buildFields(c.file.Services[service].Build)
+	dir := path.Clean(strings.TrimPrefix(strings.TrimSpace(context), "./"))
+	rel := path.Clean(strings.TrimPrefix(m.hostPath, "./"))
+	if dir != "." && dir != "" {
+		rel = strings.TrimPrefix(rel, dir+"/")
+	}
+	return strings.HasSuffix(path.Clean("/"+m.containerPath), "/"+rel)
+}
+
 // read returns a repository file's contents, if it is one Pando can carry.
 func (c *composeImport) read(hostPath string) (string, bool) {
 	if c.src == nil {
@@ -1419,9 +1540,14 @@ func (c *composeImport) env(name string, s composeService) []spec.EnvEntry {
 		if bare {
 			v, ok := c.vars.values[key]
 			if !ok {
-				empty := ""
-				c.passedThrough = append(c.passedThrough, key)
-				put(spec.EnvEntry{Key: key, Value: &empty, Source: spec.EnvFromDetection})
+				// Compose leaves the variable out when its shell does not
+				// set it, so an env_file's value for it stands.
+				if _, seen := at[key]; seen {
+					return
+				}
+				ref := key
+				c.passThrough(key)
+				put(spec.EnvEntry{Key: key, SlotRef: &ref, Source: spec.EnvFromDetection})
 				return
 			}
 			value = v
@@ -1470,6 +1596,87 @@ func (c *composeImport) requireVariable(service, key, variable string) {
 	})
 }
 
+// shellCommand runs a command that names variables nothing in the repository
+// sets through a shell, so each is read from the workload's environment when
+// it starts (see composeVars.expandCommand). Every other `$` stays literal.
+func shellCommand(args, refs []string) []string {
+	keep := map[string]bool{}
+	for _, name := range refs {
+		keep["${"+name+"}"] = true
+	}
+	quoted := make([]string, 0, len(args))
+	for _, arg := range args {
+		quoted = append(quoted, shellQuote(arg, keep))
+	}
+	return []string{"sh", "-c", strings.Join(quoted, " ")}
+}
+
+// plainWord is an argument a shell reads as itself.
+var plainWord = regexp.MustCompile(`^[A-Za-z0-9_@%+=:,./-]+$`)
+
+// shellQuote quotes one argument for sh, leaving the references in keep to
+// expand.
+func shellQuote(arg string, keep map[string]bool) string {
+	if plainWord.MatchString(arg) {
+		return arg
+	}
+	var out strings.Builder
+	out.WriteByte('"')
+	for i := 0; i < len(arg); i++ {
+		if ref := simpleRef.FindString(arg[i:]); ref != "" && strings.HasPrefix(arg[i:], ref) && keep[ref] {
+			out.WriteString(ref)
+			i += len(ref) - 1
+			continue
+		}
+		switch arg[i] {
+		case '\\', '"', '`', '$':
+			out.WriteByte('\\')
+		}
+		out.WriteByte(arg[i])
+	}
+	out.WriteByte('"')
+	return out.String()
+}
+
+// commandEnv gives a workload each variable its command reads that its
+// environment does not already set, as the required slot named for it.
+func (c *composeImport) commandEnv(service string, env []spec.EnvEntry, refs []string) []spec.EnvEntry {
+	for _, name := range refs {
+		if envIndex(env, name) >= 0 {
+			continue
+		}
+		ref := name
+		c.requireVariable(service, name, name)
+		env = append(env, spec.EnvEntry{Key: name, SlotRef: &ref, Source: spec.EnvFromCompose})
+	}
+	return env
+}
+
+// passThrough records a variable an environment entry passes through from a
+// shell Pando does not have, as an optional slot named for it.
+//
+// It was an empty value on the app's variables. Remark42's compose file passes
+// SECRET and REMARK_URL through this way, the app stopped on "the required
+// flags `--secret' and `--url' were not specified", and nothing asked for
+// either (issue #90). A slot is the hole R-130 describes, and one the trial run
+// can promote when the app names it (promoteSlots); left unfilled, the variable
+// is left out, which is what compose does with a shell that does not set it.
+func (c *composeImport) passThrough(key string) {
+	for _, s := range c.valueSlots {
+		if s.Key == key {
+			return
+		}
+	}
+	c.passedThrough = append(c.passedThrough, key)
+	c.valueSlots = append(c.valueSlots, spec.Slot{
+		Key:    key,
+		Type:   slotTypeFor(key, ""),
+		Format: formatFor(key, ""),
+		Evidence: []string{"the compose file passes " + key + " through from the shell running " +
+			"`docker compose`, and nothing in the repository gives it a value"},
+	})
+}
+
 // fromEnvFiles imports what a service's `env_file:` points at.
 //
 // Ignoring the directive entirely is how crewmate deployed with two of its
@@ -1507,28 +1714,8 @@ func (c *composeImport) fromEnvFiles(service string, s composeService) []spec.En
 			continue
 		}
 
-		// A name the template gives no value is a value the app has to be
-		// given. Compose treats an env_file as required — `docker compose up`
-		// stops without it — so these are required by the author's own file,
-		// and a required slot is how Pando asks for one before deploying rather
-		// than after the app has refused to start (R-132). They had been left
-		// as empty variables, and the app crash-looped on "Missing required
-		// environment variables" (issue #55). A name with a sample value is a
-		// setting with a default, and stays a variable.
-		var named []string
-		for _, kv := range declared {
-			empty := ""
-			entry := spec.EnvEntry{Key: kv.Key, Value: &empty, Source: spec.EnvFromDetection}
-			// A placeholder is no value either: `SESSION_SECRET=change-me`
-			// says the same thing `SESSION_SECRET=` does, louder.
-			if strings.TrimSpace(kv.Value) == "" || isPlaceholder(kv.Value) {
-				ref := kv.Key
-				entry = spec.EnvEntry{Key: kv.Key, SlotRef: &ref, Source: spec.EnvFromDetection}
-				c.requireValue(kv.Key, template, name)
-			}
-			entries = append(entries, entry)
-			named = append(named, kv.Key)
-		}
+		imported, named := c.fromTemplate(declared, template, name)
+		entries = append(entries, imported...)
 
 		c.rewrote(service, "env_file: "+name,
 			"This points at "+name+", which is not in the repository — it holds this app's own "+
@@ -1539,19 +1726,82 @@ func (c *composeImport) fromEnvFiles(service string, s composeService) []spec.En
 	return entries
 }
 
-// requireValue records a value an env_file template says the app needs.
-func (c *composeImport) requireValue(key, template, envFile string) {
+// fromTemplate imports the names an env_file's template declares.
+//
+// A name the template gives no value is a slot: a hole the app may need
+// filled (R-130), shown in review. It is asked for only when something says
+// the app cannot run without it (requireValue). A name with a sample value is
+// a setting with a default, and stays a variable.
+func (c *composeImport) fromTemplate(declared []assignment, template, envFile string) (entries []spec.EnvEntry, named []string) {
+	for _, kv := range declared {
+		// A connection URL at one of this file's own services is not the
+		// author's machine: it is the address `docker compose up` gives the
+		// app, and the one Pando rewires to what it provisions (wire).
+		// Claper's .env.sample points DATABASE_URL at the compose file's own
+		// `db` service; left empty, the app had no database and the db
+		// service nothing pointing at it.
+		if c.atOwnService(kv.Value) {
+			value := kv.Value
+			entries = append(entries, spec.EnvEntry{Key: kv.Key, Value: &value, Source: spec.EnvFromCompose})
+			continue
+		}
+		empty := ""
+		entry := spec.EnvEntry{Key: kv.Key, Value: &empty, Source: spec.EnvFromDetection}
+		// A placeholder is no value either: `SESSION_SECRET=change-me`
+		// says the same thing `SESSION_SECRET=` does, louder.
+		if strings.TrimSpace(kv.Value) == "" || isPlaceholder(kv.Value) {
+			ref := kv.Key
+			entry = spec.EnvEntry{Key: kv.Key, SlotRef: &ref, Source: spec.EnvFromDetection}
+			c.requireValue(kv.Key, template, envFile, isPlaceholder(kv.Value))
+		}
+		entries = append(entries, entry)
+		named = append(named, kv.Key)
+	}
+	return entries, named
+}
+
+// atOwnService reports a connection URL whose host is a service in this
+// compose file.
+func (c *composeImport) atOwnService(value string) bool {
+	if schemeType(value) == spec.SlotUnknown {
+		return false
+	}
+	for _, name := range c.names() {
+		if pointsAtAny(value, c.hostnames(name)) {
+			return true
+		}
+	}
+	return false
+}
+
+// requireValue records a value an env_file template names and leaves for the
+// app's owner to give.
+//
+// A placeholder (`SESSION_SECRET=change-me`) is the author saying the value
+// must be replaced, and a name typed as a service (`DATABASE_URL=`) is a
+// dependency Pando can provision (R-131): both are required. A bare `KEY=` is
+// optional, and the trial run promotes it when the app stops naming it
+// (promoteSlots, design 01's O-4 fallback). Every blank name had been required
+// (issue #55); linkding's template leaves thirteen blank, its trial ran with
+// none of them set, and LD_DB_OPTIONS given a value broke its json.loads
+// (issue #90). Owner decision, 2026-10-13.
+func (c *composeImport) requireValue(key, template, envFile string, placeholder bool) {
 	for _, s := range c.valueSlots {
 		if s.Key == key {
 			return
 		}
 	}
+	typ := slotTypeFor(key, "")
+	evidence := fmt.Sprintf("named with no value in %s, the template for %s", template, envFile)
+	if placeholder {
+		evidence = fmt.Sprintf("given a placeholder in %s, the template for %s", template, envFile)
+	}
 	c.valueSlots = append(c.valueSlots, spec.Slot{
 		Key:      key,
-		Type:     spec.SlotUnknown,
-		Required: true,
+		Type:     typ,
+		Required: placeholder || typ != spec.SlotUnknown,
 		Format:   formatFor(key, ""),
-		Evidence: []string{fmt.Sprintf("named with no value in %s, the template for %s, which the compose file requires", template, envFile)},
+		Evidence: []string{evidence},
 	})
 }
 
@@ -1654,8 +1904,8 @@ func (c *composeImport) unsetWarnings() {
 		c.warnings = append(c.warnings, spec.Warning{
 			Code: spec.WarnComposeConstructRewritten,
 			Message: fmt.Sprintf("%s passes %s through from the shell running `docker compose`, which "+
-				"Pando does not have. They are on this app's variables with no value; set the ones "+
-				"the app needs.", c.source, strings.Join(truncate(c.passedThrough, 8), ", ")),
+				"Pando does not have. They are optional settings on this app, left out until they are "+
+				"filled; fill the ones the app needs.", c.source, strings.Join(truncate(c.passedThrough, 8), ", ")),
 		})
 	}
 }

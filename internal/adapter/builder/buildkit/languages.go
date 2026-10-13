@@ -159,7 +159,12 @@ func rPlan(contextDir string) (string, bool) {
 	default:
 		return "", false
 	}
-	if kind == "shiny" && !strings.Contains(rSources(contextDir), "shiny") {
+	// An app.R is any R script until it names Shiny. A ui.R beside a server.R
+	// is Shiny's own two-file layout, whose files need not name it: runApp
+	// loads Shiny before it reads them, and RStudio's own k-means example
+	// never calls library(shiny) (issue #90).
+	twoFile := fileExists(contextDir, "ui.R") && fileExists(contextDir, "server.R")
+	if kind == "shiny" && !twoFile && !strings.Contains(rSources(contextDir), "shiny") {
 		return "", false
 	}
 
@@ -225,7 +230,7 @@ const (
 )
 
 var (
-	leinMain        = regexp.MustCompile(`(?m):main\s+\^?:?[A-Za-z]*\s*([A-Za-z][A-Za-z0-9.\-_*+!?]*)`)
+	leinMain        = regexp.MustCompile(`(?m):main\s+(?:\^:[A-Za-z\-]+\s+)?([A-Za-z][A-Za-z0-9.\-_*+!?]*)`)
 	leinUberjarName = regexp.MustCompile(`:uberjar-name\s+"([A-Za-z0-9._\-]+\.jar)"`)
 	cljMainOpts     = regexp.MustCompile(`(?s):([A-Za-z][A-Za-z0-9\-_]*)\s*\{[^{}]*:main-opts\s*\[\s*"-m"\s*"([A-Za-z][A-Za-z0-9.\-_]*)"`)
 	cljNamespace    = regexp.MustCompile(`\(ns\s+([A-Za-z][A-Za-z0-9.\-_]*)`)
@@ -264,6 +269,9 @@ func leinPlan(contextDir, project string) (string, bool) {
 		build = "RUN lein uberjar && cp \"$(ls -1 " + find + " 2>/dev/null | head -n 1)\" /app.jar\n"
 		if start == "" {
 			start = "exec java -jar /app.jar"
+			if !leinMainCompiled(contextDir, project, main[1]) {
+				start = "exec java -cp /app.jar clojure.main -m " + main[1]
+			}
 		}
 	}
 	return fmt.Sprintf(`# A Leiningen project.
@@ -271,6 +279,33 @@ FROM %s
 WORKDIR /app
 COPY . .
 %s%s`, leinImage, build, shellCMD(start)), true
+}
+
+var (
+	leinSkipAOT = regexp.MustCompile(`:main\s+\^:skip-aot\b`)
+	cljGenClass = regexp.MustCompile(`\(:gen-class\b`)
+)
+
+// leinMainCompiled reports a :main namespace the uberjar's manifest can start:
+// one compiled ahead of time with a class of its own. Leiningen compiles the
+// :main namespace, but only `(:gen-class)` makes a class named for it.
+// reitit's ring-integrant example has neither that nor :aot, and `java -jar`
+// stopped with "Could not find or load main class example.server" (issue
+// #90). Such a namespace is started by Clojure, from the jar's sources.
+func leinMainCompiled(contextDir, project, ns string) bool {
+	if strings.Contains(project, ":aot") {
+		return true
+	}
+	if leinSkipAOT.MatchString(project) {
+		return false
+	}
+	file := strings.ReplaceAll(strings.ReplaceAll(ns, "-", "_"), ".", "/")
+	for _, ext := range []string{".clj", ".cljc"} {
+		if cljGenClass.MatchString(readFile(contextDir, "src/"+file+ext)) {
+			return true
+		}
+	}
+	return false
 }
 
 // depsPlan: a deps.edn project started by the alias that names a main
@@ -350,10 +385,20 @@ func cljMainNamespace(contextDir string) string {
 // The JDK and sbt launcher an sbt build runs with. [P] Temurin 17, which the
 // sbt and Scala releases of the last several years all run on; the launcher
 // boots whichever sbt project/build.properties names.
+//
+// The build also carries git and Node: sbt-git and sbt-dynver run git while
+// the build loads, and sbt-web compiles assets (CoffeeScript, LESS) with Node,
+// falling back otherwise to an embedded engine that cannot run them (issue #90).
 const (
 	sbtJDKImage   = "eclipse-temurin:17-jdk"
+	sbtNodeImage  = "node:22-slim"
 	sbtLauncher   = "1.10.7"
 	sbtLauncherAt = "https://github.com/sbt/sbt/releases/download/v" + sbtLauncher + "/sbt-" + sbtLauncher + ".tgz"
+
+	// sbtNoDocs keeps stage and assembly from running Scaladoc. A running app
+	// has no use for its API docs, and a doc comment Scaladoc cannot parse
+	// fails a build that compiles (issue #90).
+	sbtNoDocs = `"set every Compile / packageDoc / publishArtifact := false" "set every Compile / doc / sources := Seq.empty"`
 )
 
 // sbtPlan builds an sbt project into something that starts without sbt: the
@@ -371,7 +416,7 @@ func sbtPlan(contextDir string) (string, bool) {
 	var build, start string
 	switch {
 	case play || strings.Contains(plugins, "sbt-native-packager"):
-		build = `sbt -batch stage && ls -1 target/universal/stage/bin/* */target/universal/stage/bin/* 2>/dev/null | grep -v '\.bat$' | head -n 1 > /app/.pando-start && test -s /app/.pando-start`
+		build = `sbt -batch ` + sbtNoDocs + ` stage && ls -1 target/universal/stage/bin/* */target/universal/stage/bin/* 2>/dev/null | grep -v '\.bat$' | head -n 1 > /app/.pando-start && test -s /app/.pando-start`
 		start = `exec "$(cat /app/.pando-start)"`
 		if play {
 			// Play in production: its HTTP port, the secret it refuses to
@@ -380,7 +425,7 @@ func sbtPlan(contextDir string) (string, bool) {
 			start += ` -Dhttp.port=${PORT:-9000} -Dplay.http.secret.key="$APPLICATION_SECRET" -Dplay.filters.hosts.allowed.0=. -Dpidfile.path=/dev/null`
 		}
 	case strings.Contains(plugins, "sbt-assembly"):
-		build = `sbt -batch assembly && cp "$(ls -1 target/scala-*/*.jar */target/scala-*/*.jar 2>/dev/null | grep -i assembly | head -n 1)" /app.jar`
+		build = `sbt -batch ` + sbtNoDocs + ` assembly && cp "$(ls -1 target/scala-*/*.jar */target/scala-*/*.jar 2>/dev/null | grep -i assembly | head -n 1)" /app.jar`
 		start = "exec java -jar /app.jar"
 	default:
 		build = `sbt -batch -Dsbt.log.noformat=true compile "export Runtime / fullClasspath" "show Compile / discoveredMainClasses" > /tmp/sbt.out` +
@@ -398,13 +443,14 @@ func sbtPlan(contextDir string) (string, bool) {
 	}
 	return fmt.Sprintf(`# An sbt project.
 FROM %s
-RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/* \
+RUN apt-get update && apt-get install -y --no-install-recommends curl git && rm -rf /var/lib/apt/lists/* \
  && curl -fsSL %s | tar -xz -C /opt
+COPY --from=%s /usr/local/bin/node /usr/local/bin/node
 ENV PATH=/opt/sbt/bin:$PATH
 WORKDIR /app
 COPY . .
 RUN %s
-%s%s`, sbtJDKImage, sbtLauncherAt, build, exposeLine(port), shellCMD(start)), true
+%s%s`, sbtJDKImage, sbtLauncherAt, sbtNodeImage, build, exposeLine(port), shellCMD(start)), true
 }
 
 // --- Haskell (Stack) --------------------------------------------------------
@@ -445,7 +491,7 @@ func stackPlan(contextDir string) (string, bool) {
 	return fmt.Sprintf(`# A Haskell project, built with Stack.
 FROM %[1]s AS build
 RUN apt-get update && apt-get install -y --no-install-recommends libtinfo5 || true
-WORKDIR /src
+%[4]sWORKDIR /src
 COPY . .
 RUN stack build --install-ghc --copy-bins --local-bin-path /out
 
@@ -455,8 +501,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 WORKDIR /app
 COPY . .
 COPY --from=build /out/ /usr/local/bin/
-%[3]s`, haskellImage, programRuntimeImage, shellCMD(start)), true
+%[3]s`, haskellImage, programRuntimeImage, shellCMD(start), ghcLLVM), true
 }
+
+// ghcLLVM gives GHC the LLVM it compiles with on 64-bit Arm. GHC before 9.2
+// has no native code generator there and runs LLVM's opt and llc, which the
+// Haskell image does not carry: an LTS 18 project stopped at "ghc: could not
+// execute: opt" (issue #90). [P] LLVM 13, the newest Debian bookworm has that
+// those GHCs accept; GHC 9.2 and later do not use it. Other machines skip it.
+const ghcLLVM = `RUN if [ "$(uname -m)" = aarch64 ]; then \
+      (apt-get install -y --no-install-recommends llvm-13 || apt-get install -y --no-install-recommends llvm) && \
+      bin="$(ls -d /usr/lib/llvm-*/bin | sort -V | head -n 1)" && \
+      ln -sf "$bin/opt" /usr/local/bin/opt && ln -sf "$bin/llc" /usr/local/bin/llc; \
+    fi
+`
 
 // hpackExecutables are the names under package.yaml's executables:, two
 // spaces in.
@@ -514,8 +572,11 @@ func perlPlan(contextDir string) (string, bool) {
 		return "", false
 	}
 	install := ""
+	if pins := snapshotPins(contextDir); len(pins) > 0 {
+		install = "RUN cpanm --notest " + strings.Join(pins, " ") + "\n"
+	}
 	if hasDeps {
-		install = "RUN cpanm --notest --installdeps .\n"
+		install += "RUN cpanm --notest --installdeps .\n"
 	}
 	if extra != "" {
 		install += "RUN cpanm --notest" + extra + "\n"
@@ -525,6 +586,53 @@ FROM %s
 WORKDIR /app
 COPY . .
 %s%s%s`, perlImage, install, exposeLine(port), shellCMD(start)), true
+}
+
+var (
+	cpanRequires    = regexp.MustCompile(`(?m)^\s*requires\s+['"]([A-Za-z][A-Za-z0-9_]*(?:::[A-Za-z0-9_]+)*)['"]`)
+	snapshotDist    = regexp.MustCompile(`^  (\S+)-v?(\d[\w.]*)$`)
+	snapshotProvide = regexp.MustCompile(`^      (\S+) (\S+)$`)
+)
+
+// snapshotPins are the modules the cpanfile requires, at the versions
+// cpanfile.snapshot records, as cpanm installs one: Module@version.
+//
+// cpanm reads the cpanfile and installs the newest release of each module, so
+// an app written against an older one breaks: the perldancer.org site calls a
+// function Dancer2 has since removed ("Undefined subroutine
+// &Dancer2::FileUtils::read_file_content", issue #90). The snapshot is
+// Carton's record of what the app was written against. Carton itself installs
+// every module at its recorded version, and a ten-year-old snapshot's
+// modules no longer build on a current Perl; so only the modules the app
+// names, from a distribution named after the module, are held to theirs, and
+// what they depend on is the newest release that satisfies them.
+func snapshotPins(contextDir string) []string {
+	snapshot := readFile(contextDir, "cpanfile.snapshot")
+	if snapshot == "" {
+		return nil
+	}
+	versions := map[string]string{}
+	dist, distVersion := "", ""
+	for _, line := range strings.Split(snapshot, "\n") {
+		if m := snapshotDist.FindStringSubmatch(line); m != nil {
+			dist, distVersion = m[1], m[2]
+			continue
+		}
+		m := snapshotProvide.FindStringSubmatch(line)
+		if m == nil || dist != strings.ReplaceAll(m[1], "::", "-") || m[2] == "undef" {
+			continue
+		}
+		if m[2] == distVersion && safeVersion(m[2]) {
+			versions[m[1]] = m[2]
+		}
+	}
+	var pins []string
+	for _, m := range cpanRequires.FindAllStringSubmatch(readFile(contextDir, "cpanfile"), -1) {
+		if v, ok := versions[m[1]]; ok {
+			pins = append(pins, m[1]+"@"+v)
+		}
+	}
+	return dedupeKeepOrder(pins)
 }
 
 // mojoliciousScript is the Mojolicious::Lite script at the top of the app, or

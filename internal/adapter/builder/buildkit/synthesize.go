@@ -147,6 +147,12 @@ func buildpackPlan(req api.BuildRequest, contextDir string) (string, error) {
 // buildpackPlanSteered is buildpackPlan with Railpack steered (steer.go): the
 // steers the repository calls for, and any a failed build's log added.
 func buildpackPlanSteered(req api.BuildRequest, contextDir string, steers []steer) (string, error) {
+	// A Rust crate whose path dependencies are above it, built from where
+	// they are (rust.go). First, because the plan builds from a different
+	// directory than every other, and Plan reports it (BuildPlan.Context).
+	if crate, ok := readRustPathCrate(contextDir); ok {
+		return writeRustPathCratePlan(contextDir, crate)
+	}
 	// A Laravel app, on the PHP its composer.json asks for (laravel.go). Its
 	// package.json builds assets for the app, not a site or a server of its
 	// own. An answered start command is honored by the runtime, which runs it
@@ -286,7 +292,12 @@ func declaredFor(req api.BuildRequest, contextDir string) declaredBuild {
 		}
 		declared.Start = implied(contextDir)
 	}
-	if declared.Build == "" && declared.Before == "" && djangoCollectsStatic(contextDir) {
+	// Not when the start command collects them itself: Railway's Django
+	// template runs collectstatic at start, where its settings can read the
+	// database variables they need at import (os.environ["PGDATABASE"]), and
+	// the same command run at build stopped it on a KeyError (issue #90).
+	if declared.Build == "" && declared.Before == "" && !strings.Contains(declared.Start, "collectstatic") &&
+		djangoCollectsStatic(contextDir) {
 		declared.Build = "python manage.py collectstatic --noinput"
 	}
 	return declared
@@ -553,6 +564,9 @@ func (a *Adapter) Plan(_ context.Context, src api.SourceView) (api.BuildPlan, er
 		Files:    files,
 		Entry:    filepath.ToSlash(name),
 		Declared: readDeclaredBuild(root).asPlanDeclaration(),
+	}
+	if crate, ok := readRustPathCrate(root); ok {
+		plan.Context = crate.Context()
 	}
 	// A Railpack plan says how the app starts in its own terms; a Dockerfile
 	// is left for detection to read the way it reads any Dockerfile.

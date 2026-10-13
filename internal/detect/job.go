@@ -50,6 +50,12 @@ type Proposal struct {
 	// facts that an empty log reports identically.
 	Trial TrialObservation `json:"trial,omitzero"`
 
+	// LoopbackCommand is the command the trial started the app with when it
+	// listened only on 127.0.0.1, where it can be told: the answer to the
+	// question that asks for a command that moves it cannot be this one
+	// (CheckAnswers).
+	LoopbackCommand string `json:"loopback_command,omitempty"`
+
 	// Built is the image detection built for this proposal, when it built one
 	// (R-311): what the plan's score was read from, and what a deploy of the
 	// same build inputs runs instead of building again. Nil for an app that
@@ -233,6 +239,15 @@ func (j *Job) Run(ctx context.Context, appID string, src spec.Source, view api.S
 		result = withComposeOverImage(result, compose, registryCandidate(published, view))
 	}
 
+	// The backing services an example compose file below the root runs beside
+	// this app, for a draft that builds the app itself. To every candidate:
+	// which build strategy is picked says nothing about whether the app needs
+	// its cache.
+	result.Winner.Draft = WithExampleCompose(view, src, result.Winner.Draft)
+	for i := range result.RunnersUp {
+		result.RunnersUp[i].Draft = WithExampleCompose(view, src, result.RunnersUp[i].Draft)
+	}
+
 	proposal := Proposal{
 		Status:    result.Status,
 		Winner:    result.Winner,
@@ -267,6 +282,7 @@ func (j *Job) Run(ctx context.Context, appID string, src spec.Source, view api.S
 
 	// Step 10 — the trial run.
 	trial := j.trialWith(ctx, trialDraft, trialAuth)
+	draft, trialDraft, trial = j.rerunWithStandIns(ctx, draft, trialDraft, trialAuth, trial)
 	draft, trial, movedHost := j.listenEverywhere(ctx, draft, trialDraft, trialAuth, trial)
 	if movedHost {
 		proposal.Winner.Evidence = append(append([]string(nil), proposal.Winner.Evidence...), listenedEverywhere)
@@ -274,6 +290,7 @@ func (j *Job) Run(ctx context.Context, appID string, src spec.Source, view api.S
 	draft, proposal.Questions = ApplyTrial(draft, proposal.Questions, trial)
 	proposal.TrialLog = trial.Log
 	proposal.Trial = trial.Observation()
+	proposal.LoopbackCommand = loopbackCommand(trial, trialDraft, proposal.Winner.Evidence)
 
 	// Step 11 — warnings. Path routing is read from the source rather than the
 	// trial, so it is attached here regardless of whether a trial happened.
@@ -299,8 +316,9 @@ func (j *Job) Run(ctx context.Context, appID string, src spec.Source, view api.S
 	proposal.DraftSpec = j.assemble(appID, src, draft)
 
 	// A program that ran, finished and never listened is not a web app, and
-	// the trial is the evidence (R-107).
-	if refused := exitedRefusal(trial); refused != nil {
+	// nor is one that listened and answered no web request: the trial is the
+	// evidence (R-097, R-107).
+	if refused := trialRefusal(trial); refused != nil {
 		proposal.Status = StatusBlocked
 		proposal.Blocked = refused
 	}
@@ -603,13 +621,15 @@ func (j *Job) prebuiltWith(ctx context.Context, appID string, src spec.Source, c
 	proposal := Proposal{Winner: candidate, Questions: candidate.Questions}
 
 	trial := j.trialWith(ctx, draft, auth)
-	draft, trial, movedHost := j.listenEverywhere(ctx, draft, draft, auth, trial)
+	draft, trialDraft, trial := j.rerunWithStandIns(ctx, draft, draft, auth, trial)
+	draft, trial, movedHost := j.listenEverywhere(ctx, draft, trialDraft, auth, trial)
 	if movedHost {
 		proposal.Winner.Evidence = append(append([]string(nil), proposal.Winner.Evidence...), listenedEverywhere)
 	}
 	draft, proposal.Questions = ApplyTrial(draft, proposal.Questions, trial)
 	proposal.TrialLog = trial.Log
 	proposal.Trial = trial.Observation()
+	proposal.LoopbackCommand = loopbackCommand(trial, draft, proposal.Winner.Evidence)
 	proposal.Status = StatusFor(candidate, proposal.Questions)
 	proposal.Winner.Draft = draft
 	proposal.DraftSpec = j.assemble(appID, src, draft)
@@ -619,7 +639,7 @@ func (j *Job) prebuiltWith(ctx context.Context, appID string, src spec.Source, c
 	// exits has nothing at all. Said so, the way a library is.
 	refused := nonHTTPRefusal(trial, draft)
 	if refused == nil {
-		refused = exitedRefusal(trial)
+		refused = trialRefusal(trial)
 	}
 	if refused != nil {
 		proposal.Status = StatusBlocked
