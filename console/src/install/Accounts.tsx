@@ -16,7 +16,7 @@
 // generated (GeneratedPassword.tsx), for the administrator to pass on.
 
 import { useContext, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { Button, Dialog, Input, Select, StatusIndicator, Tabs, Tag } from '@design';
 
 import { api, RequestFailed } from '@api/client';
@@ -37,10 +37,30 @@ export interface Account {
   display_name?: string;
   status: string;
   must_change_password: boolean;
+  /** The role granted to the account itself; '' for none. What RolePicker sets. */
   install_role_id: string;
+  /**
+   * Every installation role the account holds, directly and through its
+   * groups (issue #221) — what authorization evaluates. Empty for none.
+   */
+  install_roles?: HeldRole[];
   created_at?: string;
   /** Set on an account whose sign-in identities were moved to another (O-1). */
   alias_of?: string;
+}
+
+export interface HeldRole {
+  role_id: string;
+  /** The role's name, from the account itself: readable without GET /roles. */
+  role_name?: string;
+  via: {
+    kind: 'direct' | 'group';
+    group_id?: string;
+    name?: string;
+    /** The identity provider a synced group comes from, and its name. */
+    source?: string;
+    source_name?: string;
+  };
 }
 
 export interface Role {
@@ -129,12 +149,12 @@ export function Accounts({ onOpen }: { onOpen: (account: Account) => void }) {
             header: 'Role',
             width: 'minmax(0,20ch)',
             filter: 'values',
-            filterValue: (row: Account) => {
-              const r = roles.data?.roles.find((x) => x.id === row.install_role_id);
-              return r ? sentence(r.name) : 'None';
-            },
-            // Read-only here; it changes on the account's page.
-            render: (row: Account) => <RoleLabel roleID={row.install_role_id} roles={roles.data?.roles ?? []} />,
+            // Each role on its own, so the filter offers roles rather than
+            // combinations of them.
+            filterValue: (row: Account) => heldRoleNames(row.install_roles ?? [], roles.data?.roles ?? []),
+            // Read-only here; it changes on the account's page, or on the
+            // group a role comes through.
+            render: (row: Account) => <HeldRoles held={row.install_roles ?? []} roles={roles.data?.roles ?? []} />,
           },
         ]}
         rows={rows}
@@ -151,6 +171,82 @@ export function RoleLabel({ roleID, roles }: { roleID: string; roles: Role[] }) 
   if (!roleID) return <span style={{ color: 'var(--ink-tertiary)' }}>None</span>;
   const role = roles.find((r) => r.id === roleID);
   return <Tag>{role ? sentence(role.name) : roleID}</Tag>;
+}
+
+/**
+ * A held role's name as the console shows it: from the roles list, else the
+ * name the account carries — somebody reading their own account cannot read
+ * GET /roles — else its ID.
+ */
+function roleName(h: HeldRole, roles: Role[]): string {
+  const name = roles.find((r) => r.id === h.role_id)?.name ?? h.role_name;
+  return name ? sentence(name) : h.role_id;
+}
+
+/** The distinct names of the roles an account holds, each once, for the Role column's filter; "None" for none. */
+export function heldRoleNames(held: HeldRole[], roles: Role[]): string[] {
+  const names = [...new Set(held.map((h) => roleName(h, roles)))];
+  names.sort((x, y) => x.localeCompare(y));
+  return names.length > 0 ? names : ['None'];
+}
+
+/**
+ * After a group's membership or links change: the groups, and every account
+ * view — an account, the list, its apps — since a group carries an
+ * installation role and app access to everyone in it (issue #221).
+ */
+export function refreshMembership(queries: QueryClient) {
+  void queries.invalidateQueries({ queryKey: ['groups'] });
+  void queries.invalidateQueries({ queryKey: ['users'] });
+}
+
+/** One held role, named. */
+export function HeldRoleTag({ held, roles }: Readonly<{ held: HeldRole; roles: Role[] }>) {
+  return <Tag>{roleName(held, roles)}</Tag>;
+}
+
+/** "through pando-administrator (Okta)" — where a group-held role comes from. */
+export function heldThrough(h: HeldRole): string {
+  const group = h.via.name ?? h.via.group_id ?? '';
+  const provider = h.via.source_name || h.via.source;
+  return provider ? `through ${group} (${provider})` : `through ${group}`;
+}
+
+const caption = { font: 'var(--type-caption)', color: 'var(--ink-secondary)' };
+
+/**
+ * The installation roles an account holds, each with where it comes from:
+ * a role through a group names the group, and its provider for a synced one.
+ */
+export function HeldRoles({ held, roles }: Readonly<{ held: HeldRole[]; roles: Role[] }>) {
+  if (held.length === 0) return <RoleLabel roleID="" roles={roles} />;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)', padding: 'var(--space-2) 0' }}>
+      {held.map((h) => (
+        <span
+          key={h.role_id + (h.via.group_id ?? '')}
+          style={{ display: 'flex', alignItems: 'baseline', gap: 'var(--space-2)', minWidth: 0 }}
+        >
+          <HeldRoleTag held={h} roles={roles} />
+          {h.via.kind === 'group' && <span style={caption}>{heldThrough(h)}</span>}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The roles an account holds through its groups, said rather than offered:
+ * each is changed on the group, not on the account.
+ */
+export function GroupHeldRoles({ held, roles }: Readonly<{ held: HeldRole[]; roles: Role[] }>) {
+  return held
+    .filter((h) => h.via.kind === 'group')
+    .map((h) => (
+      <span key={h.role_id + h.via.group_id} style={caption}>
+        {roleName(h, roles)} {heldThrough(h)}
+      </span>
+    ));
 }
 
 export function RolePicker({

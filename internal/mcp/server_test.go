@@ -335,6 +335,8 @@ func TestEachToolMapsToItsEndpoint(t *testing.T) {
 		{"pando_mark_notifications_read", `{"notification_id":"ntf_01"}`, "POST", "/me/notifications/ntf_01/read"},
 		{"pando_set_notification_preference", `{"kind":"app_shared","channel":"ntf_smtp","enabled":"true"}`, "PUT", "/notification-preferences"},
 		{"pando_create_section", `{"name":"Work"}`, "POST", "/me/sections"},
+		{"pando_list_users", `{"q":"dana"}`, "GET", "/users?q=dana"},
+		{"pando_get_user", `{"user_id":"usr_01"}`, "GET", "/users/usr_01"},
 		{"pando_list_user_apps", `{"user_id":"usr_01"}`, "GET", "/users/usr_01/apps"},
 		{"pando_get_usage", `{"app_id":"app_01HQ8"}`, "GET", "/apps/app_01HQ8/usage"},
 		{"pando_rename_section", `{"section_id":"sect_01","name":"Office"}`, "PATCH", "/me/sections/sect_01"},
@@ -415,6 +417,13 @@ func TestAMissingOrWrongTypedArgumentIsReportedToTheAgent(t *testing.T) {
 		require.True(t, result(t, replies[0])["isError"].(bool), args)
 		require.Empty(t, s.calls, "a malformed call does not reach the API")
 	}
+}
+
+func TestGetUserNeedsTheAccountsID(t *testing.T) {
+	srv, s := newSession()
+	replies := s.run(t, srv, call(1, "pando_get_user", `{}`))
+	require.Contains(t, text(t, replies[0]), "user_id")
+	require.Empty(t, s.calls, "a malformed call does not reach the API")
 }
 
 func TestCreateAppReportsEachMissingArgumentByName(t *testing.T) {

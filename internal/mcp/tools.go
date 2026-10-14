@@ -128,6 +128,15 @@ func pagedGet(path string, args map[string]any, keys ...string) (string, string,
 	return "GET", path, nil, nil
 }
 
+// getByID reads one object, at prefix followed by the ID the key names.
+func getByID(args map[string]any, key, prefix string) (string, string, any, error) {
+	id, err := stringArg(args, key, true)
+	if err != nil {
+		return "", "", nil, err
+	}
+	return "GET", prefix + url.PathEscape(id), nil, nil
+}
+
 func schema(props map[string]any, required ...string) map[string]any {
 	if required == nil {
 		required = []string{}
@@ -858,6 +867,31 @@ var toolList = []tool{
 				return "", "", nil, err
 			}
 			return "POST", "/me/sections", map[string]any{"name": name}, nil
+		},
+	},
+	{
+		Name: "pando_list_users",
+		Description: "The accounts on this installation, newest first, a page at a time: pass `next_cursor` " +
+			"back as `cursor` for the next page. Each carries install_roles — every installation role it holds, " +
+			"and whether it holds it directly or through a group (with the group's name, and the identity " +
+			"provider for a synced group) — and install_role_id, the role granted to the account itself. " +
+			"Needs install.view.",
+		Schema: schema(map[string]any{
+			"q":      str("Only accounts whose username, display name or email contains this."),
+			"cursor": str("The next_cursor from a previous page."),
+		}),
+		request: func(args map[string]any) (string, string, any, error) {
+			return pagedGet("/users", args, "q", "cursor")
+		},
+	},
+	{
+		Name: "pando_get_user",
+		Description: "One account, with every installation role it holds and where each comes from " +
+			"(install_roles), as pando_list_users shows it. Your own needs no permission; anyone else's needs " +
+			"install.view.",
+		Schema: schema(map[string]any{"user_id": str("The account's ID.")}, "user_id"),
+		request: func(args map[string]any) (string, string, any, error) {
+			return getByID(args, "user_id", "/users/")
 		},
 	},
 	{

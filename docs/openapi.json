@@ -6844,51 +6844,7 @@
                         "null"
                       ],
                       "items": {
-                        "type": "object",
-                        "properties": {
-                          "id": {
-                            "type": "string"
-                          },
-                          "adapter_id": {
-                            "type": "string"
-                          },
-                          "external_id": {
-                            "type": "string"
-                          },
-                          "email": {
-                            "type": "string"
-                          },
-                          "display_name": {
-                            "type": "string"
-                          },
-                          "status": {
-                            "type": "string"
-                          },
-                          "must_change_password": {
-                            "type": "boolean"
-                          },
-                          "created_at": {
-                            "type": "string",
-                            "format": "date-time"
-                          },
-                          "install_role_id": {
-                            "type": "string"
-                          },
-                          "alias_of": {
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "id",
-                          "adapter_id",
-                          "external_id",
-                          "email",
-                          "display_name",
-                          "status",
-                          "must_change_password",
-                          "created_at",
-                          "install_role_id"
-                        ]
+                        "$ref": "#/components/schemas/AccountJSON"
                       }
                     },
                     "next_cursor": {
@@ -10488,7 +10444,7 @@
       "get": {
         "operationId": "listUsers",
         "summary": "List accounts",
-        "description": "The accounts on this installation, newest first, each with its `install_role_id`. `limit` (default 100, at most 500) and `cursor` page; `next_cursor` continues; `q` matches the username, display name or email; `id`, repeatable, reads only those accounts; `total` counts the matches exactly up to 10,000; past that it is 10,000 and `total_is_lower_bound` is true.\n\nNeeds `install.view`.",
+        "description": "The accounts on this installation, newest first. Each carries `install_roles`, every installation role it holds as `{role_id, via}` — `via.kind` is `direct`, or `group` with the group's `group_id`, `name` and, for a group synced from a provider, `source` and `source_name` — read as authorization reads them, through linked provider groups too; and `install_role_id`, the role granted to the account itself (empty for none). `limit` (default 100, at most 500) and `cursor` page; `next_cursor` continues; `q` matches the username, display name or email; `id`, repeatable, reads only those accounts; `total` counts the matches exactly up to 10,000; past that it is 10,000 and `total_is_lower_bound` is true.\n\nNeeds `install.view`.",
         "tags": [
           "Identity"
         ],
@@ -10539,51 +10495,7 @@
                         "null"
                       ],
                       "items": {
-                        "type": "object",
-                        "properties": {
-                          "id": {
-                            "type": "string"
-                          },
-                          "adapter_id": {
-                            "type": "string"
-                          },
-                          "external_id": {
-                            "type": "string"
-                          },
-                          "email": {
-                            "type": "string"
-                          },
-                          "display_name": {
-                            "type": "string"
-                          },
-                          "status": {
-                            "type": "string"
-                          },
-                          "must_change_password": {
-                            "type": "boolean"
-                          },
-                          "created_at": {
-                            "type": "string",
-                            "format": "date-time"
-                          },
-                          "install_role_id": {
-                            "type": "string"
-                          },
-                          "alias_of": {
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "id",
-                          "adapter_id",
-                          "external_id",
-                          "email",
-                          "display_name",
-                          "status",
-                          "must_change_password",
-                          "created_at",
-                          "install_role_id"
-                        ]
+                        "$ref": "#/components/schemas/AccountJSON"
                       }
                     },
                     "next_cursor": {
@@ -10678,7 +10590,7 @@
       "get": {
         "operationId": "getUser",
         "summary": "Get an account",
-        "description": "One account. Your own needs no verb.\n\nNeeds `install.view`.",
+        "description": "One account, as GET /users shows it, with every installation role it holds and where each comes from (`install_roles`). Your own needs no verb.\n\nNeeds `install.view`.",
         "tags": [
           "Identity"
         ],
@@ -10698,51 +10610,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "type": "string"
-                    },
-                    "adapter_id": {
-                      "type": "string"
-                    },
-                    "external_id": {
-                      "type": "string"
-                    },
-                    "email": {
-                      "type": "string"
-                    },
-                    "display_name": {
-                      "type": "string"
-                    },
-                    "status": {
-                      "type": "string"
-                    },
-                    "must_change_password": {
-                      "type": "boolean"
-                    },
-                    "created_at": {
-                      "type": "string",
-                      "format": "date-time"
-                    },
-                    "install_role_id": {
-                      "type": "string"
-                    },
-                    "alias_of": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "adapter_id",
-                    "external_id",
-                    "email",
-                    "display_name",
-                    "status",
-                    "must_change_password",
-                    "created_at",
-                    "install_role_id"
-                  ]
+                  "$ref": "#/components/schemas/AccountJSON"
                 }
               }
             }
@@ -11449,6 +11317,63 @@
           "reply",
           "adapter_id",
           "model"
+        ]
+      },
+      "AccountJSON": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "adapter_id": {
+            "type": "string"
+          },
+          "external_id": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "must_change_password": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "install_role_id": {
+            "type": "string"
+          },
+          "install_roles": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/HeldInstallRole"
+            }
+          },
+          "alias_of": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "adapter_id",
+          "external_id",
+          "email",
+          "display_name",
+          "status",
+          "must_change_password",
+          "created_at",
+          "install_role_id",
+          "install_roles"
         ]
       },
       "Actor": {
@@ -13957,6 +13882,25 @@
           }
         }
       },
+      "HeldInstallRole": {
+        "type": "object",
+        "properties": {
+          "role_id": {
+            "type": "string"
+          },
+          "role_name": {
+            "type": "string"
+          },
+          "via": {
+            "$ref": "#/components/schemas/InstallRoleVia"
+          }
+        },
+        "required": [
+          "role_id",
+          "role_name",
+          "via"
+        ]
+      },
       "Identity": {
         "type": "object",
         "properties": {
@@ -14213,6 +14157,29 @@
           "list",
           "block_private",
           "loosening"
+        ]
+      },
+      "InstallRoleVia": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "group_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "source_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
         ]
       },
       "KV": {

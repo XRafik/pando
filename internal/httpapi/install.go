@@ -109,44 +109,70 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, err)
 		return
 	}
-	roles, err := s.Grants.InstallRolesByPrincipal(r.Context())
+	out, err := s.accountViews(r.Context(), users)
 	if err != nil {
 		Error(w, r, err)
 		return
 	}
-
-	out := make([]map[string]any, 0, len(users))
-	for _, u := range users {
-		out = append(out, accountView(u, roles[u.ID]))
-	}
 	JSON(w, http.StatusOK, withTotal(map[string]any{"users": out, "next_cursor": next}, total))
 }
 
-// accountView is an account as the API shows it, in the list and on its own:
+// accountJSON is an account as the API shows it, in the list and on its own:
 // one shape, so that a client reading one account does not need the list to
 // learn what role it holds.
-func accountView(u state.User, installRoleID string) map[string]any {
-	v := map[string]any{
-		"id":                   u.ID,
-		"adapter_id":           u.AdapterID,
-		"external_id":          u.ExternalID,
-		"email":                u.Email,
-		"display_name":         u.DisplayName,
-		"status":               u.Status,
-		"must_change_password": u.MustChangePassword,
-		"created_at":           u.CreatedAt,
+type accountJSON struct {
+	ID                 string    `json:"id"`
+	AdapterID          string    `json:"adapter_id"`
+	ExternalID         string    `json:"external_id"`
+	Email              string    `json:"email"`
+	DisplayName        string    `json:"display_name"`
+	Status             string    `json:"status"`
+	MustChangePassword bool      `json:"must_change_password"`
+	CreatedAt          time.Time `json:"created_at"`
 
-		// Empty when the account holds nothing install-wide, which is most
-		// of them. Not null: absent and empty are the same thing to a
-		// client, and only one of them is an answer.
-		"install_role_id": installRoleID,
-	}
+	// The role granted to the account itself, which PUT /users/{id}/role
+	// sets. Empty when it has none — not null: absent and empty are the same
+	// thing to a client, and only one of them is an answer.
+	InstallRoleID string `json:"install_role_id"`
+
+	// Every installation role the account holds, directly and through its
+	// groups, and where each comes from (R-078, issue #221): what
+	// authorization evaluates, not only the grant made to the account. Empty
+	// when it holds none by any route.
+	InstallRoles []state.HeldInstallRole `json:"install_roles"`
+
 	// An account whose identities were moved to another (O-1). Present only
 	// on those, so the console can say which account replaced it.
-	if u.AliasOf != "" {
-		v["alias_of"] = u.AliasOf
+	AliasOf string `json:"alias_of,omitempty"`
+}
+
+// accountViews shows a page of accounts, reading the installation roles of
+// the whole page in one query rather than one per account.
+func (s *Server) accountViews(ctx context.Context, users []state.User) ([]accountJSON, error) {
+	ids := make([]string, 0, len(users))
+	for _, u := range users {
+		ids = append(ids, u.ID)
 	}
-	return v
+	held, err := s.Grants.InstallRolesForUsers(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]accountJSON, 0, len(users))
+	for _, u := range users {
+		v := accountJSON{
+			ID: u.ID, AdapterID: u.AdapterID, ExternalID: u.ExternalID, Email: u.Email,
+			DisplayName: u.DisplayName, Status: u.Status, MustChangePassword: u.MustChangePassword,
+			CreatedAt: u.CreatedAt, AliasOf: u.AliasOf,
+			InstallRoles: append([]state.HeldInstallRole{}, held[u.ID]...),
+		}
+		for _, h := range v.InstallRoles {
+			if h.Via.Kind == "direct" {
+				v.InstallRoleID = h.RoleID
+			}
+		}
+		out = append(out, v)
+	}
+	return out, nil
 }
 
 // handleListRoles returns roles, read from the database rather than the Go

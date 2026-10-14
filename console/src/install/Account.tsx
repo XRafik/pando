@@ -22,7 +22,17 @@ import { AccountApps } from './AccountApps';
 import { AccountAppLimit } from './AppLimit';
 import { GeneratedPassword, PasswordToCopy } from './GeneratedPassword';
 import type { Account, Role } from './Accounts';
-import { Quiet, RoleLabel, RolePicker, StatusToggle, messageOf, refusal, sentence } from './Accounts';
+import {
+  GroupHeldRoles,
+  HeldRoleTag,
+  refreshMembership,
+  Quiet,
+  RoleLabel,
+  RolePicker,
+  StatusToggle,
+  messageOf,
+  refusal,
+} from './Accounts';
 import { NO_FILTERS, WHEN, linkQuery } from './audit';
 import type { AuditFilters } from './audit';
 import { AuditTable, LoadOlder, useAuditLog, usePeople } from './Installation';
@@ -131,10 +141,6 @@ export function AccountPage({
   const a = account.data;
   const active = a.status === 'active';
   const memberOf = (groups.data?.groups ?? []).filter((g) => g.members?.includes(a.id));
-  const roleName = (id: string) => {
-    const r = roles.data?.roles.find((x) => x.id === id);
-    return r ? sentence(r.name) : id;
-  };
 
   return (
     <Sheet
@@ -206,32 +212,11 @@ export function AccountPage({
             </Detail>
             <Detail term="Installation role">
               <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
-                {/* A picker with no roles in it yet would show the role's id. */}
-                {roles.isPending ? (
-                  manage ? (
-                    <FieldSkeleton width="32ch" />
-                  ) : (
-                    <LineSkeleton width="12ch" />
-                  )
-                ) : manage ? (
-                  <div style={{ maxWidth: '32ch' }}>
-                    <RolePicker account={a} roles={roles.data?.roles ?? []} isSelf={isSelf} />
-                  </div>
-                ) : (
-                  <span>
-                    <RoleLabel roleID={a.install_role_id} roles={roles.data?.roles ?? []} />
-                  </span>
-                )}
-                {/* A group's installation role is held by everyone in it. It is
-                    changed on the group, not here, so it is said rather than
-                    offered. */}
-                {memberOf
-                  .filter((g) => g.install_role_id)
-                  .map((g) => (
-                    <span key={g.id} style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)' }}>
-                      {roleName(g.install_role_id!)} through {g.name}
-                    </span>
-                  ))}
+                <InstallRole account={a} roles={roles.data?.roles} manage={manage} isSelf={isSelf} />
+                {/* A group's installation role is held by everyone in it, and by
+                    everyone in a provider group linked to it — as the server
+                    reports, since authorization reads it that way. */}
+                <GroupHeldRoles held={a.install_roles ?? []} roles={roles.data?.roles ?? []} />
               </div>
             </Detail>
             {/* R-244: what it may own, and where that comes from. */}
@@ -252,6 +237,45 @@ export function AccountPage({
 }
 
 const LOCAL = 'idp_local';
+
+/**
+ * The role granted to the account itself: a picker for somebody who manages
+ * accounts, otherwise its name — and "None" only when the account holds no
+ * role by any route, since a role through a group is listed beneath.
+ */
+export function InstallRole({
+  account,
+  roles,
+  manage,
+  isSelf,
+}: Readonly<{ account: Account; roles?: Role[]; manage: boolean; isSelf: boolean }>) {
+  if (manage) {
+    // A picker with no roles in it yet would show the role's id.
+    if (!roles) return <FieldSkeleton width="32ch" />;
+    return (
+      <div style={{ maxWidth: '32ch' }}>
+        <RolePicker account={account} roles={roles} isSelf={isSelf} />
+      </div>
+    );
+  }
+  // Named from the account itself, so this does not wait on GET /roles,
+  // which somebody reading their own account may not be allowed.
+  const held = account.install_roles ?? [];
+  const direct = held.find((h) => h.via.kind === 'direct');
+  if (direct) {
+    return (
+      <span>
+        <HeldRoleTag held={direct} roles={roles ?? []} />
+      </span>
+    );
+  }
+  if (held.length > 0) return null;
+  return (
+    <span>
+      <RoleLabel roleID="" roles={[]} />
+    </span>
+  );
+}
 
 /** The account's audit history: events where it is the actor or the target. */
 function Activity({ userID, onAudit }: { userID: string; onAudit: (query: string) => void }) {
@@ -448,9 +472,7 @@ function GroupMembership({
     // refused (R-088), and the remedy says what to do instead.
     onError: (e) => setError(refusal(e)),
     onSettled: () => {
-      void queries.invalidateQueries({ queryKey: ['groups'] });
-      // A group carries app access and possibly an installation role.
-      void queries.invalidateQueries({ queryKey: ['users', account.id, 'apps'] });
+      refreshMembership(queries);
       if (isSelf) void queries.invalidateQueries({ queryKey: ['me'] });
     },
   });
