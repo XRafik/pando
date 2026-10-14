@@ -14,13 +14,14 @@
 // The same shape as the audit log's ActorField — an Input with a listbox under
 // it, arrow keys and Enter — so the two pickers in the console behave alike.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Input } from '@design';
 
 import { api } from '@api/client';
 import type { Recipient } from './share-access';
 import { stepIndex, useCloseOnOutside } from '../ui/combobox';
+import { ComboOption } from '../ui/ComboOption';
 
 interface Principals {
   users: { id: string; username: string; name?: string }[] | null;
@@ -50,6 +51,7 @@ export function RecipientField({
   const [text, setText] = useState(value?.label ?? '');
   const [open, setOpen] = useState(false);
   const [at, setAt] = useState(0);
+  const listID = useId();
   const root = useRef<HTMLDivElement>(null);
   const q = useSettled(text.trim(), 200);
 
@@ -93,6 +95,8 @@ export function RecipientField({
         role="combobox"
         aria-expanded={open && options.length > 0}
         aria-autocomplete="list"
+        aria-controls={listID}
+        aria-activedescendant={open && options[at] !== undefined ? `${listID}-${at}` : undefined}
         placeholder={kind === 'user' ? 'Username, name or email' : 'Group name'}
         value={text}
         autoComplete="off"
@@ -122,6 +126,7 @@ export function RecipientField({
       {open && (options.length > 0 || none) && (
         <div
           role="listbox"
+          id={listID}
           aria-label={kind === 'user' ? 'Matching accounts' : 'Matching groups'}
           style={{
             position: 'absolute',
@@ -150,42 +155,15 @@ export function RecipientField({
             </p>
           )}
           {options.map((o, i) => (
-            <div
+            <ComboOption
               key={o.id}
-              role="option"
-              aria-selected={i === at}
-              onMouseDown={(e) => {
-                // Before the input blurs, so the choice lands.
-                e.preventDefault();
-                choose(o);
-              }}
-              onMouseEnter={() => setAt(i)}
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                gap: 'var(--space-3)',
-                padding: 'var(--space-2) var(--space-3)',
-                borderRadius: 'var(--radius-sm)',
-                cursor: 'pointer',
-                background: i === at ? 'var(--paper-sunken)' : 'transparent',
-                font: 'var(--type-body-ui)',
-                color: 'var(--ink)',
-              }}
-            >
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.label}</span>
-              {o.note && (
-                <span
-                  style={{
-                    color: 'var(--ink-secondary)',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {o.note}
-                </span>
-              )}
-            </div>
+              id={`${listID}-${i}`}
+              active={i === at}
+              onChoose={() => choose(o)}
+              onHover={() => setAt(i)}
+              label={o.label}
+              detail={o.note}
+            />
           ))}
         </div>
       )}

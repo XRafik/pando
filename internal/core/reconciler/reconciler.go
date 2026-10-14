@@ -216,8 +216,11 @@ func (r *Reconciler) Tick(ctx context.Context) {
 	lease := r.Reconciles.Lease()
 	keeper := newLeaseKeeper(lease, r.leaseDuration(), r.Logger)
 	keeperCtx, stopKeeper := context.WithCancel(ctx)
+	defer stopKeeper()
 	keeperDone := make(chan struct{})
 	go func() { defer close(keeperDone); keeper.run(keeperCtx) }()
+	// Runs before the deferred stopKeeper above, so it stops the keeper itself
+	// and then waits for it to return.
 	defer func() { stopKeeper(); <-keeperDone }()
 
 	sem := make(chan struct{}, Concurrency)

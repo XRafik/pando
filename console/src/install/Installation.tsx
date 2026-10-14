@@ -38,6 +38,7 @@ import { Quiet, Screen, messageOf } from './Accounts';
 import { NoMatches, SearchField } from '../ui/SearchField';
 import { matches } from '../ui/search';
 import { Table } from '../ui/Table';
+import { TipButton } from '../ui/TipButton';
 import { BesideField } from '../ui/BesideField';
 import { FieldSkeleton, LineSkeleton } from '../ui/Loading';
 import { ActorField } from './ActorField';
@@ -1442,11 +1443,13 @@ function StartupSettings({ config }: { config?: StartupConfig }) {
 function SetBy({ source, env }: { source: Source; env: string }) {
   if (source.kind === 'default') {
     return (
-      <Tooltip content={`Not set. Set ${env} to change it.`}>
-        <span tabIndex={0} style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)', cursor: 'help' }}>
-          Default
-        </span>
-      </Tooltip>
+      <TipButton
+        tip={`Not set. Set ${env} to change it.`}
+        label={`Default: not set. Set ${env} to change it.`}
+        style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)' }}
+      >
+        Default
+      </TipButton>
     );
   }
   const exact =
@@ -1454,11 +1457,9 @@ function SetBy({ source, env }: { source: Source; env: string }) {
       ? (source.name ?? env)
       : `${source.name ?? 'the config file'}${source.key ? `, at ${source.key}` : ''}`;
   return (
-    <Tooltip content={exact}>
-      <span tabIndex={0} aria-label={`${source.kind === 'env' ? 'Environment' : 'File'}: ${exact}`} style={{ cursor: 'help' }}>
-        <Tag tone="contour">{source.kind === 'env' ? 'Environment' : 'File'}</Tag>
-      </span>
-    </Tooltip>
+    <TipButton tip={exact} label={`${source.kind === 'env' ? 'Environment' : 'File'}: ${exact}`}>
+      <Tag tone="contour">{source.kind === 'env' ? 'Environment' : 'File'}</Tag>
+    </TipButton>
   );
 }
 
@@ -2276,16 +2277,13 @@ function GroupedAdapters({
                 {/* What this kind of adapter is for, on hover or focus, so the
                     category names explain themselves without a paragraph each. */}
                 {categoryNote(row.category) && (
-                  <Tooltip content={categoryNote(row.category)} side="right">
-                    <span
-                      tabIndex={0}
-                      role="img"
-                      aria-label={`About ${categoryLabel(row.category)} adapters: ${categoryNote(row.category)}`}
-                      style={{ display: 'inline-flex', cursor: 'help' }}
-                    >
-                      <Icon name="info" size={14} />
-                    </span>
-                  </Tooltip>
+                  <TipButton
+                    tip={categoryNote(row.category)}
+                    label={`About ${categoryLabel(row.category)} adapters: ${categoryNote(row.category)}`}
+                    side="right"
+                  >
+                    <Icon name="info" size={14} />
+                  </TipButton>
                 )}
               </span>
             </div>

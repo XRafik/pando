@@ -17,10 +17,11 @@
 // "Actor or target" filter: those are accounts, and a kind is not an ID that
 // can be on either side.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { Input } from '@design';
 
 import { matches } from '../ui/search';
+import { ComboOption } from '../ui/ComboOption';
 import { unionPeople, usePeopleSearch, type Person } from '../ui/people';
 import { stepIndex, useCloseOnOutside } from '../ui/combobox';
 
@@ -78,6 +79,7 @@ export function ActorField({
   }, [value, known, text]);
   const [open, setOpen] = useState(false);
   const [at, setAt] = useState(0);
+  const listID = useId();
   const root = useRef<HTMLDivElement>(null);
 
   // Cleared from outside — "Clear filters" — clears the text too.
@@ -109,6 +111,8 @@ export function ActorField({
         role="combobox"
         aria-expanded={open && found.length > 0}
         aria-autocomplete="list"
+        aria-controls={listID}
+        aria-activedescendant={open && found[at] !== undefined ? `${listID}-${at}` : undefined}
         placeholder="Username, email or ID"
         value={text}
         onChange={(e) => {
@@ -142,6 +146,7 @@ export function ActorField({
       {open && found.length > 0 && (
         <div
           role="listbox"
+          id={listID}
           aria-label={`Matching ${label.toLowerCase()}`}
           style={{
             position: 'absolute',
@@ -158,35 +163,16 @@ export function ActorField({
           }}
         >
           {found.map((o, i) => (
-            <div
+            <ComboOption
               key={o.value}
-              role="option"
-              aria-selected={i === at}
-              onMouseDown={(e) => {
-                // Before the input blurs, so the choice lands.
-                e.preventDefault();
-                choose(o);
-              }}
-              onMouseEnter={() => setAt(i)}
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                gap: 'var(--space-3)',
-                padding: 'var(--space-2) var(--space-3)',
-                borderRadius: 'var(--radius-sm)',
-                cursor: 'pointer',
-                background: i === at ? 'var(--paper-sunken)' : 'transparent',
-                font: 'var(--type-body-ui)',
-                color: 'var(--ink)',
-              }}
-            >
-              <span style={{ font: 'var(--type-code-sm)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {o.label}
-              </span>
-              <span style={{ color: 'var(--ink-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {o.note}
-              </span>
-            </div>
+              id={`${listID}-${i}`}
+              active={i === at}
+              onChoose={() => choose(o)}
+              onHover={() => setAt(i)}
+              label={o.label}
+              detail={o.note}
+              mono
+            />
           ))}
         </div>
       )}
