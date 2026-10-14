@@ -83,7 +83,7 @@ describe('AppOnboarding', () => {
   it('renders the review once detection has finished', () => {
     const html = render({ status: 'needs_answers', answers: {}, commit: '3f9a2c1d0000', detection } as never);
     expect(html).toContain('Plan ready');
-    expect(html).toContain('Check what AI filled in');
+    expect(html).toContain('AI answers');
     expect(html).toContain('Needs your answer');
     expect(html).toContain('Why AI picked this.');
     expect(html).toContain('STRIPE_SECRET_KEY');
@@ -160,7 +160,7 @@ describe('AppOnboarding', () => {
     } as never);
 
     // Where it will be, from the plan's routing.
-    expect(html).toContain('Once deployed, available at');
+    expect(html).toContain('>Address<');
     expect(html).toContain('http://localhost:9003');
     expect(html).toContain('rte_loopback');
 
@@ -169,19 +169,19 @@ describe('AppOnboarding', () => {
     expect(plan).not.toContain('The image’s own command');
     expect(plan).toContain('PostgreSQL');
     expect(plan).toContain('postgres:16-alpine');
-    expect(plan).toContain('Pando creates it');
+    expect(plan).toContain('Provisioned');
     expect(plan).not.toContain('CREW_TOKEN_ENC_KEY');
 
     // The database is a service the app needs, listed as one ahead of the
     // variables, with the choice of who provides it (R-131).
-    const servicesAt = html.indexOf('This app needs these to run');
-    const variablesAt = html.indexOf('Change any value');
+    const servicesAt = html.indexOf('Pando creates each one at the first deploy');
+    const variablesAt = html.indexOf('Used on every deploy');
     expect(servicesAt).toBeGreaterThan(-1);
     expect(variablesAt).toBeGreaterThan(servicesAt);
     const services = html.slice(servicesAt, variablesAt);
     expect(services).toContain('PostgreSQL');
-    expect(services).toContain('The app reads its address from DATABASE_URL');
-    expect(services).toContain('Pando creates it');
+    expect(services).toContain('Via DATABASE_URL');
+    expect(services).toContain('Provisioned');
     expect(services).toContain('Use your own PostgreSQL');
     expect(services).not.toContain('CREW_TOKEN_ENC_KEY');
 
@@ -196,7 +196,7 @@ describe('AppOnboarding', () => {
     expect(variables).toContain('Filled in by Pando at deploy');
     expect(variables).not.toContain('Use your own');
     expect(variables).not.toContain('which Pando creates');
-    expect(variables).not.toContain('runs one inside this app');
+    expect(variables).not.toContain('Provisioned');
     // Secret is a default on every value, never a lock.
     expect(variables).toContain('>Secret<');
     expect(variables).not.toMatch(/Secret<\/span><\/label>[^]*?disabled=""/);
@@ -241,6 +241,20 @@ describe('AppOnboarding', () => {
     expect(html).toContain('Changed: port 8080');
     expect(html).toContain('Pando didn’t apply: set HOST');
     expect(html).toContain('Ask AI');
+  });
+
+  it('says what AI changed after the plan failed (R-334)', () => {
+    const repaired = {
+      ...detection,
+      screening: {
+        ran: true,
+        function: 'repair_plan',
+        applied: [{ summary: 'set port', amendment: { kind: 'set_port', port: 8080, workload: 'web' } }],
+      },
+    };
+    const html = render({ status: 'ready', answers: {}, commit: '3f9a2c1d0000', detection: repaired } as never);
+    expect(html).toContain('AI changed the plan after it failed.');
+    expect(html).toContain('Serve for web on port 8080.');
   });
 
   it('has no conversation at all when no AI adapter is configured', () => {
@@ -349,6 +363,28 @@ describe('AppOnboarding', () => {
     expect(html).toContain('Everything’s answered.');
     expect(html).toContain('Ready to deploy');
     expect(html).not.toContain('Nothing runs until you accept');
+  });
+
+  it('tags an upload, lists a static directory, and marks the primary of several parts', () => {
+    const uploaded = { ...app, source: { type: 'upload' } } as unknown as AppWithVerbs;
+    const plan = {
+      ...detection,
+      questions: [],
+      screening: { ran: false },
+      draft_spec: {
+        build: { strategy: 'static', static_dir: 'dist' },
+        workloads: [
+          { name: 'web', primary: true, exposed: true, command: ['npm', 'start'], env: [] },
+          { name: 'worker', command: ['npm', 'run', 'work'], env: [] },
+        ],
+        slots: [],
+      },
+    };
+    const html = render({ status: 'ready', answers: {}, detection: plan } as never, undefined, uploaded).replaceAll('<!-- -->', '');
+    expect(html).toContain('>Upload<');
+    expect(html).toContain('Static directory');
+    expect(html).toContain('>Primary<');
+    expect(html).toContain('>Runs<');
   });
 
   describe('the plan’s security score (R-311)', () => {

@@ -83,7 +83,7 @@ describe('discoverySteps', () => {
       screening: { ran: true, function: 'answer_questions', answers: { primary_port: '3000' }, files_read: ['server.js'] },
     };
     const ai = discoverySteps({ status: 'ready', proposal: answered, source }).find((s) => s.ai);
-    expect(ai?.name).toBe('Answer what it can');
+    expect(ai?.name).toBe('Answer questions');
     expect(ai?.result).toBe('Answered 1 of 1');
     expect(ai?.findings).toContainEqual({ key: 'port', value: '3000' });
   });
@@ -93,6 +93,14 @@ describe('discoverySteps', () => {
     const steps = discoverySteps({ status: 'running', stage: 'screening', proposal: crashed, source });
     expect(steps.at(-1)?.name).toBe('Review the failed plan');
     expect(steps.at(-1)?.state).toBe('current');
+  });
+
+  it('labels the first line of evidence, and lists a bid with none as its strategy alone', () => {
+    const stack = (evidence?: string[]) =>
+      discoverySteps({ status: 'ready', proposal: { ...found, winning_bid: { ...found.winning_bid!, evidence } }, source }).find((s) => s.id === 'stack')!
+        .findings.map((f) => f.key);
+    expect(stack(['Dockerfile at the root', 'EXPOSE 3000'])).toEqual(['Strategy', 'Evidence', '']);
+    expect(stack(undefined)).toEqual(['Strategy']);
   });
 });
 
@@ -154,7 +162,17 @@ describe('services and commands', () => {
   it('names the image a service runs, and how Pando provides it', () => {
     const [postgres] = compose.slots!;
     expect(serviceImage(postgres!)).toBe('postgres:16-alpine');
-    expect(serviceProvision(postgres!)).toEqual({ status: 'info', label: 'Pando creates it' });
+    expect(serviceProvision(postgres!)).toEqual({ status: 'info', label: 'Provisioned' });
+  });
+
+  it('labels a bound service External and a literal one Value', () => {
+    expect(serviceProvision({ key: 'REDIS_URL', type: 'redis', required: false, resolution: { mode: 'bound' } })).toEqual({ status: 'info', label: 'External' });
+    expect(serviceProvision({ key: 'REDIS_URL', type: 'redis', required: false, resolution: { mode: 'literal' } })).toEqual({ status: 'info', label: 'Value' });
+  });
+
+  it('names an uploaded source plainly', () => {
+    const read = discoverySteps({ status: 'ready', proposal: found, source: { type: 'upload' } })[0]!;
+    expect(read.findings).toContainEqual({ key: 'Source', value: 'Upload', text: true });
   });
 
   it('says a service’s variable holds its address, not the service itself (R-131)', () => {
