@@ -28,6 +28,11 @@ import (
 // security release is seen within a working morning of being published.
 const DefaultInterval = 6 * time.Hour
 
+// MinCheckGap is the least time between two checks someone asks for. A request
+// inside it is answered from the last check, so a button pressed repeatedly
+// stays inside GitHub's limit for every installation behind one address.
+const MinCheckGap = time.Minute
+
 // Release is one published version.
 type Release struct {
 	Version     string    `json:"version"`
@@ -95,6 +100,9 @@ type Checker struct {
 	Logger   *zap.Logger
 	Interval time.Duration
 
+	// asking serializes CheckNow, so callers arriving while a check is under
+	// way wait for it and are answered from it rather than each sending one.
+	asking    sync.Mutex
 	mu        sync.Mutex
 	releases  []Release
 	checkedAt time.Time
@@ -116,6 +124,22 @@ func (c *Checker) Run(ctx context.Context) {
 		case <-c.Clock.After(interval):
 		}
 	}
+}
+
+// CheckNow asks Source on request rather than waiting for the next tick, and
+// answers with what it found. Within MinCheckGap of the last check it sends
+// nothing and answers from that one; while policy has the check off it sends
+// nothing at all (R-349).
+func (c *Checker) CheckNow(ctx context.Context) (Status, error) {
+	c.asking.Lock()
+	defer c.asking.Unlock()
+	c.mu.Lock()
+	recent := !c.checkedAt.IsZero() && c.Clock.Since(c.checkedAt) < MinCheckGap
+	c.mu.Unlock()
+	if !recent {
+		c.Check(ctx)
+	}
+	return c.Status(ctx)
 }
 
 // Check asks Source once, if policy allows it.
