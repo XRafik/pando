@@ -670,6 +670,14 @@ func (r *Reconciler) settle(ctx context.Context, app state.Reconcilable, to stri
 	// accumulates toward the threshold, because flapping is a failure mode.
 	if to == state.StateRunning {
 		_ = r.Reconciles.ClearFailures(ctx, app.ID)
+		// Coming up after the deploy stopped waiting is still coming up: the
+		// current deploy reads as healthy from here on (R-221, issue #233).
+		// On every visit rather than the transition alone, so a write that
+		// failed is retried; once the row reads running it matches nothing.
+		if err := r.Reconciles.RecoverCurrentDeploy(ctx, app.ID); err != nil {
+			r.Logger.Warn("could not record that the app's deploy came up",
+				zap.String("app_id", app.ID), zap.Error(err))
+		}
 	}
 }
 
