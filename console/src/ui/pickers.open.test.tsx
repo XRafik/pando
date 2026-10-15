@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act } from 'react';
+import { act, useState } from 'react';
 import type { ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { renderToString } from 'react-dom/server';
@@ -189,6 +189,102 @@ describe('Menu, open', () => {
     key(document.activeElement!, 'Escape');
     expect(container.querySelector('[role="menu"]')).toBeNull();
     expect(document.activeElement).toBe(button);
+  });
+  // jsdom lays nothing out, so the menu's position is stubbed: drawn at `at`
+  // with its transform undone, as fitting measures it. Tests move `at` to
+  // stand for a window that changed under an open menu.
+  let at = 0;
+  const stubMenuPosition = () =>
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      return this.getAttribute('role') === 'menu' ? new DOMRect(at, 0, 200, 100) : new DOMRect();
+    });
+  // The sideways shift in pixels, 0 when there is no transform.
+  const shift = () => {
+    const transform = container.querySelector<HTMLElement>('[role="menu"]')!.style.transform;
+    return Number(/-?\d+(\.\d+)?/.exec(transform)?.[0] ?? 0);
+  };
+  const openMenu = () => act(() => container.querySelector<HTMLButtonElement>('button')!.click());
+
+  const openAt = (left: number) => {
+    at = left;
+    const rect = stubMenuPosition();
+    try {
+      render(
+        <Menu label="Options for Notes">
+          {(close) => <MenuItem onSelect={close}>Rename</MenuItem>}
+        </Menu>,
+      );
+      openMenu();
+      return shift();
+    } finally {
+      rect.mockRestore();
+    }
+  };
+
+  it('slides back inside the window when its edge would open off-screen', () => {
+    // A leftward menu on a tile at the left of a narrow window.
+    expect(openAt(-40)).toBe(56);
+  });
+
+  it('slides left when it would run past the right of the window', () => {
+    // jsdom's window is 1024 wide; the menu ends at 1100.
+    expect(openAt(900)).toBe(-92);
+  });
+
+  it('stays where it opened when it fits', () => {
+    expect(openAt(100)).toBe(0);
+  });
+
+  it('fits again when the window is resized while it is open', () => {
+    at = 100;
+    const rect = stubMenuPosition();
+    try {
+      render(
+        <Menu label="Options for Notes">
+          {(close) => <MenuItem onSelect={close}>Rename</MenuItem>}
+        </Menu>,
+      );
+      openMenu();
+      expect(shift()).toBe(0);
+      at = -40;
+      act(() => {
+        window.dispatchEvent(new Event('resize'));
+      });
+      expect(shift()).toBe(56);
+    } finally {
+      rect.mockRestore();
+    }
+  });
+
+  it('fits again when it shows another page of items', () => {
+    function Paged() {
+      const [page, setPage] = useState('main');
+      return (
+        <Menu label="Options for Notes" view={page}>
+          {() => (
+            <MenuItem
+              onSelect={() => {
+                at = -40;
+                setPage('sections');
+              }}
+            >
+              Move to section…
+            </MenuItem>
+          )}
+        </Menu>
+      );
+    }
+    at = 100;
+    const rect = stubMenuPosition();
+    try {
+      render(<Paged />);
+      openMenu();
+      expect(shift()).toBe(0);
+      act(() => container.querySelector<HTMLElement>('[role="menuitem"]')!.click());
+      expect(shift()).toBe(56);
+    } finally {
+      rect.mockRestore();
+    }
   });
 });
 
