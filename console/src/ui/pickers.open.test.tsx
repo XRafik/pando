@@ -176,9 +176,11 @@ describe('Menu, open', () => {
     );
     const button = container.querySelector<HTMLButtonElement>('button')!;
     act(() => button.click());
-    const menu = container.querySelector<HTMLElement>('[role="menu"]')!;
+    // Portaled to the body, so no header that hides its overflow can cut it off.
+    const menu = document.querySelector<HTMLElement>('[role="menu"]')!;
+    expect(menu.parentElement).toBe(document.body);
     expect(menu.tabIndex).toBe(-1);
-    const items = () => Array.from(container.querySelectorAll<HTMLElement>('[role="menuitem"]'));
+    const items = () => Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]'));
     expect(document.activeElement).toBe(items()[0]);
 
     key(document.activeElement!, 'ArrowDown');
@@ -187,57 +189,55 @@ describe('Menu, open', () => {
     expect(document.activeElement).toBe(items()[0]);
 
     key(document.activeElement!, 'Escape');
-    expect(container.querySelector('[role="menu"]')).toBeNull();
+    expect(document.querySelector('[role="menu"]')).toBeNull();
     expect(document.activeElement).toBe(button);
   });
-  // jsdom lays nothing out, so the menu's position is stubbed: drawn at `at`
-  // with its transform undone, as fitting measures it. Tests move `at` to
-  // stand for a window that changed under an open menu.
+  // jsdom lays nothing out, so the button is stubbed at `at` (32 wide, 20
+  // down) and the menu at 200 by 100. jsdom's window is 1024 wide. Tests move
+  // `at` to stand for a page that moved under an open menu.
   let at = 0;
-  const stubMenuPosition = () =>
-    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
-      return this.getAttribute('role') === 'menu' ? new DOMRect(at, 0, 200, 100) : new DOMRect();
-    });
-  // The sideways shift in pixels, 0 when there is no transform.
-  const shift = () => {
-    const transform = container.querySelector<HTMLElement>('[role="menu"]')!.style.transform;
-    return Number(/-?\d+(\.\d+)?/.exec(transform)?.[0] ?? 0);
+  const stubLayout = () => {
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => new DOMRect(at, 20, 32, 32));
+    const width = vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(200);
+    const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(100);
+    return () => [rect, width, height].forEach((m) => m.mockRestore());
   };
+  const left = () => Number.parseFloat(document.querySelector<HTMLElement>('[role="menu"]')!.style.left);
   const openMenu = () => act(() => container.querySelector<HTMLButtonElement>('button')!.click());
 
-  const openAt = (left: number) => {
-    at = left;
-    const rect = stubMenuPosition();
+  const openAt = (x: number, align?: 'start' | 'end') => {
+    at = x;
+    const restore = stubLayout();
     try {
       render(
-        <Menu label="Options for Notes">
+        <Menu label="Options for Notes" align={align}>
           {(close) => <MenuItem onSelect={close}>Rename</MenuItem>}
         </Menu>,
       );
       openMenu();
-      return shift();
+      return left();
     } finally {
-      rect.mockRestore();
+      restore();
     }
   };
 
-  it('slides back inside the window when its edge would open off-screen', () => {
-    // A leftward menu on a tile at the left of a narrow window.
-    expect(openAt(-40)).toBe(56);
+  it('lines up with the right of its button when it fits', () => {
+    expect(openAt(500)).toBe(500 + 32 - 200);
   });
 
-  it('slides left when it would run past the right of the window', () => {
-    // jsdom's window is 1024 wide; the menu ends at 1100.
-    expect(openAt(900)).toBe(-92);
+  it('moves back inside the window when it would open off the left', () => {
+    // A leftward menu on a button near the left of the window: the admin
+    // sidebar's, or a tile's on a narrow window.
+    expect(openAt(20)).toBe(16);
   });
 
-  it('stays where it opened when it fits', () => {
-    expect(openAt(100)).toBe(0);
+  it('moves left when it would run past the right of the window', () => {
+    expect(openAt(900, 'start')).toBe(1024 - 200 - 16);
   });
 
-  it('fits again when the window is resized while it is open', () => {
-    at = 100;
-    const rect = stubMenuPosition();
+  it('follows its button when the window is resized or the page scrolls', () => {
+    at = 500;
+    const restore = stubLayout();
     try {
       render(
         <Menu label="Options for Notes">
@@ -245,18 +245,23 @@ describe('Menu, open', () => {
         </Menu>,
       );
       openMenu();
-      expect(shift()).toBe(0);
-      at = -40;
+      expect(left()).toBe(332);
+      at = 20;
       act(() => {
         window.dispatchEvent(new Event('resize'));
       });
-      expect(shift()).toBe(56);
+      expect(left()).toBe(16);
+      at = 400;
+      act(() => {
+        document.dispatchEvent(new Event('scroll'));
+      });
+      expect(left()).toBe(232);
     } finally {
-      rect.mockRestore();
+      restore();
     }
   });
 
-  it('fits again when it shows another page of items', () => {
+  it('is placed again when it shows another page of items', () => {
     function Paged() {
       const [page, setPage] = useState('main');
       return (
@@ -264,7 +269,7 @@ describe('Menu, open', () => {
           {() => (
             <MenuItem
               onSelect={() => {
-                at = -40;
+                at = 20;
                 setPage('sections');
               }}
             >
@@ -274,16 +279,16 @@ describe('Menu, open', () => {
         </Menu>
       );
     }
-    at = 100;
-    const rect = stubMenuPosition();
+    at = 500;
+    const restore = stubLayout();
     try {
       render(<Paged />);
       openMenu();
-      expect(shift()).toBe(0);
-      act(() => container.querySelector<HTMLElement>('[role="menuitem"]')!.click());
-      expect(shift()).toBe(56);
+      expect(left()).toBe(332);
+      act(() => document.querySelector<HTMLElement>('[role="menuitem"]')!.click());
+      expect(left()).toBe(16);
     } finally {
-      rect.mockRestore();
+      restore();
     }
   });
 });
