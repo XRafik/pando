@@ -769,6 +769,7 @@ func (a *Adapter) podFor(ns string, p api.BundlePlan, w api.WorkloadPlan, digest
 		ReadinessProbe:  readinessProbe(w.Health),
 		Resources:       resourcesFor(w.Resources),
 		ImagePullPolicy: corev1.PullIfNotPresent,
+		SecurityContext: workloadSecurity(),
 	}
 	for _, port := range w.Ports {
 		proto := corev1.ProtocolTCP
@@ -873,6 +874,22 @@ func intOrPort(port int) intstr.IntOrString { return intstr.FromInt32(int32(port
 
 // resourcesFor sets requests equal to limits, so the scheduler's arithmetic
 // and R-242's agree and the pod is in the Guaranteed class.
+// workloadSecurity is what an app's container is held to beyond the namespace's
+// Pod Security baseline: no gaining privileges through a setuid binary, and
+// the capability set the Docker adapter gives an app (docker/hardening.go) —
+// containerd's default without NET_RAW, MKNOD and AUDIT_WRITE. A process limit
+// is the kubelet's podPidsLimit, set per node, not per pod.
+func workloadSecurity() *corev1.SecurityContext {
+	caps := []corev1.Capability{
+		"CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "KILL", "NET_BIND_SERVICE",
+		"SETFCAP", "SETGID", "SETPCAP", "SETUID", "SYS_CHROOT",
+	}
+	return &corev1.SecurityContext{
+		AllowPrivilegeEscalation: ptr.To(false),
+		Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}, Add: caps},
+	}
+}
+
 func resourcesFor(r api.ResourcePlan) corev1.ResourceRequirements {
 	list := corev1.ResourceList{}
 	if r.CPUMillis > 0 {

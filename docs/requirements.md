@@ -393,7 +393,7 @@ lifecycle exports the image itself, to a registry or a daemon, and the daemon is
 
 **R-100 [D]** A user may **promote** a compose-declared service to a Pando-managed one — e.g. binding an ad-hoc Postgres to a real one. Shown as an explicit diff, never automatic.
 
-**R-101 [D]** There is always a bottom escape hatch: supply an image reference and a command, skipping detection.
+**R-101 [D]** There is always a bottom escape hatch: supply an image reference and a command, skipping detection. An image reference is a name and not a trust boundary. An image already present on the runtime under that name is run without a pull and without registry authentication, so whoever can put an image on the host under a name decides what that name runs. *(Amended after the 2026-10-16 security assessment.)*
 
 ### 7.3 When detection cannot decide
 
@@ -943,7 +943,7 @@ not part of this. Each would cross design 06 differently and needs its own requi
 
 ## 17. Resources and Capacity
 
-**R-240 [D]** Default CPU, memory, and disk limits are set at the host. Every new app inherits them.
+**R-240 [D]** Default CPU, memory, and disk limits are set at the host. Every new app inherits them. CPU and memory are enforced by the runtime (R-402). **A disk limit is an allocation that Pando holds the app to by measurement (R-403)**, because no container runtime can size a volume and only some storage drivers can size a container's own layer. Where the runtime can, each container's own layer is also capped at the app's limit, so that one workload cannot fill the host's disk between two readings. The runtime reports whether it does, and the console shows it beside the runtime's other details. Every container that runs an app's code, including its trial run (R-097), is also held to a process limit set at the host [P: 1024], cannot gain privileges through a setuid binary, and keeps only the capabilities an ordinary image needs to start (design 03 §2.5). *(Amended after the 2026-10-16 security assessment, findings 8 and 13: a fork bomb in one app could exhaust the process table that every app and Pando share, and the disk limit was read as accounting only.)*
 
 **R-403 [D]** **An app is held to its disk limit.** What its containers and volumes hold is measured on a schedule against its disk limit (R-240). Its owner is told when it reaches 90% [P], and again when it goes over; if the next reading is still over, Pando stops it, recording that it did, and the console, API and visitor page say why. Its data is kept, and starting it clears the stop. An app whose runtime cannot report disk use is never stopped for it. Each warning and stop is an audit event. *(Added by issue #130: until then the limit was counted against capacity, R-242, and nothing stopped an app writing past it.)*
 
