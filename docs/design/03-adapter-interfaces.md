@@ -501,9 +501,11 @@ bomb, and an app kept every capability the engine grants by default.
   and then writes past it (checked: a 10 MB cap let a 50 MB file through), so acceptance proves
   nothing. Podman is not claimed either. XFS without `pquota` cannot be told apart from XFS with it,
   so a refusal at create is remembered for the life of the process and the create is made again
-  without a size. `Capacity.Details.disk_quota` says which happened. Each workload is capped at
-  the whole app's limit, which is a ceiling and never stricter than R-403's measurement of the app's
-  total. Kubernetes could use an `ephemeral-storage` limit, but setting it also sets a request of the
+  without a size. `Capacity.Details.disk_quota` says which happened. The cap applies to each
+  workload separately, at the whole app's limit. It is a ceiling per container, not a quota for the
+  app: an app with several workloads can write past its limit in total, as can one that writes to
+  its volumes, until R-403's next reading. It bounds how far any single container can go, which is
+  never stricter than R-403's measurement of the app's total. Kubernetes could use an `ephemeral-storage` limit, but setting it also sets a request of the
   same size, which would keep pods unscheduled on nodes with little ephemeral storage. So it is not
   set, and R-403's measurement is the limit there.
 

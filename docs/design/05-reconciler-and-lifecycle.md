@@ -592,7 +592,8 @@ filling stops every app and Pando with it.
 
 That still leaves 10–20 minutes in which an app can write as fast as the disk allows. Where the
 storage driver can size a container's own layer, the runtime caps each workload's layer at the app's
-limit (design 03 §2.5), which closes that window for everything except volumes. Pando therefore holds
+limit (design 03 §2.5). That bounds each container, not the app: several workloads together, or
+writes to volumes, can still pass the limit before the next reading. Pando therefore holds
 the host's disk with three mechanisms. Disk is never committed past what the host has (R-242). What
 apps write is measured and an app that stays over is stopped (this section). Where possible the
 runtime caps a container's layer as well. Logs and backups are bounded by size (R-222, R-224).

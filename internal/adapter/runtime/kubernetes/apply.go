@@ -888,6 +888,13 @@ func intOrPort(port int) intstr.IntOrString { return intstr.FromInt32(int32(port
 // the capability set the Docker adapter gives an app (docker/hardening.go) —
 // containerd's default without NET_RAW, MKNOD and AUDIT_WRITE. A process limit
 // is the kubelet's podPidsLimit, set per node, not per pod.
+//
+// workloadSecurityLevel is part of a pod's digest (planDigest), so a pod
+// created before this policy, or under an older one, is replaced rather than
+// left running without it. Bump it whenever workloadSecurity changes. A
+// variable only so a test can stand in for an older policy.
+var workloadSecurityLevel = "1"
+
 func workloadSecurity() *corev1.SecurityContext {
 	caps := []corev1.Capability{
 		"CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "KILL", "NET_BIND_SERVICE",
@@ -1000,6 +1007,7 @@ func planDigest(w api.WorkloadPlan, env map[string]string, envKey []byte, runtim
 		write("health", strings.Join(w.Health.Command, "\x01"), w.Health.Path, w.Health.Port, w.Health.IntervalSeconds, w.Health.TimeoutSeconds, w.Health.Retries)
 	}
 	write("res", w.Resources.CPUMillis, w.Resources.MemoryBytes, "rc", runtimeClass, "sel", nodeSelector, "pull", w.PullAuth != nil)
+	write("sec", workloadSecurityLevel)
 	return hex.EncodeToString(h.Sum(nil))[:32]
 }
 

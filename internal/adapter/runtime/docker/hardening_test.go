@@ -227,6 +227,9 @@ func TestStorageOptUnsupportedReadsTheEnginesRefusal(t *testing.T) {
 	for _, msg := range []string{
 		"Error response from daemon: No such image: nginx:1",
 		"Conflict. The container name \"/web\" is already in use",
+		// About a size or a quota, and not this.
+		"write /var/lib/docker/tmp: disk quota exceeded; size of layer unknown",
+		"shm size exceeds the memory quota",
 	} {
 		require.False(t, storageOptUnsupported(errors.New(msg)), msg)
 	}

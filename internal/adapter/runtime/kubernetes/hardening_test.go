@@ -34,3 +34,18 @@ func TestR240_AnAppsPodsCannotGainPrivilegesAndKeepOnlyTheCapabilitiesTheyNeed(t
 		}
 	}
 }
+
+// TestR240_APodFromBeforeTheSecurityPolicyIsReplaced asserts that the policy is
+// part of a pod's digest, so a pod created without it does not count as
+// current and is replaced on the next apply.
+func TestR240_APodFromBeforeTheSecurityPolicyIsReplaced(t *testing.T) {
+	w := webPlan().Workloads[0]
+	now := planDigest(w, nil, []byte("k"), "", "")
+	require.Equal(t, now, planDigest(w, nil, []byte("k"), "", ""), "stable")
+
+	was := workloadSecurityLevel
+	t.Cleanup(func() { workloadSecurityLevel = was })
+	workloadSecurityLevel = "0"
+	require.NotEqual(t, now, planDigest(w, nil, []byte("k"), "", ""),
+		"a pod made under another policy does not match its plan")
+}

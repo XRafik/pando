@@ -193,10 +193,14 @@ func storageOptUnsupported(err error) bool {
 	if err == nil {
 		return false
 	}
+	// Only the engines' own phrases: a create can fail for many reasons that
+	// mention a size or a quota, and taking one of those for this would stop
+	// asking for a layer cap for the life of the process.
 	msg := strings.ToLower(err.Error())
-	if strings.Contains(msg, "storage-opt") || strings.Contains(msg, "storage opt") || strings.Contains(msg, "storageopt") {
-		return true
+	for _, phrase := range []string{"storage-opt", "storage opt", "storageopt", "pquota", "backingfs"} {
+		if strings.Contains(msg, phrase) {
+			return true
+		}
 	}
-	return strings.Contains(msg, "size") &&
-		(strings.Contains(msg, "quota") || strings.Contains(msg, "xfs") || strings.Contains(msg, "backingfs"))
+	return false
 }
