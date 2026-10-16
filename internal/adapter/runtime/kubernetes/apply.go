@@ -647,13 +647,8 @@ func (a *Adapter) applyWorkload(ctx context.Context, ns string, p api.BundlePlan
 	if current != nil && current.Annotations[annoDigest] == digest && finished(current) {
 		keep = current.Name
 	}
-	for _, old := range pods {
-		if old.Name == keep || old.DeletionTimestamp != nil {
-			continue
-		}
-		if err := a.deletePod(ctx, ns, old.Name); err != nil {
-			return err
-		}
+	if err := a.deletePodsExcept(ctx, ns, pods, keep); err != nil {
+		return err
 	}
 
 	pod := a.podFor(ns, p, w, digest)
@@ -662,6 +657,20 @@ func (a *Adapter) applyWorkload(ctx context.Context, ns string, p api.BundlePlan
 		return errs.Wrap(errs.AdapterFailed, fmt.Sprintf("Could not create %q.", w.Name), err)
 	}
 	return a.waitScheduled(ctx, ns, created.Name, w)
+}
+
+// deletePodsExcept deletes every pod of a workload but keep, skipping those
+// already on their way out.
+func (a *Adapter) deletePodsExcept(ctx context.Context, ns string, pods []corev1.Pod, keep string) error {
+	for _, old := range pods {
+		if old.Name == keep || old.DeletionTimestamp != nil {
+			continue
+		}
+		if err := a.deletePod(ctx, ns, old.Name); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // live reports a pod that is running or will be.
