@@ -174,6 +174,77 @@ func TestR092_ASourceOutsideTheAllowlistIsRefusedAtCreation(t *testing.T) {
 	require.Equal(t, http.StatusAccepted, allowed.Code, allowed.String())
 }
 
+// TestR092_AnAddressPandoWillNotFetchIsRefusedAtCreation asserts R-092's
+// schemes and R-190's rule on credentials where a person gives the address:
+// a path on Pando's disk, git://, and an address with a token in it are
+// refused before an app exists, rather than created and left to fail at
+// detection (2026-10-16 assessment, finding 3). Where an address resolves to
+// is the fetch's to refuse (source.TestR092_AFetchOfAMetadataAddressIsRefusedInWords).
+func TestR092_AnAddressPandoWillNotFetchIsRefusedAtCreation(t *testing.T) {
+	t.Parallel()
+	i := newInstall(t)
+	admin := i.admin()
+
+	for _, addr := range []string{
+		"file:///etc/hostname",
+		"/etc/hostname",
+		"git://github.com/acme/notes.git",
+		"https://ghp_abc123@github.com/acme/notes",
+	} {
+		got := i.do(admin, http.MethodPost, "/apps", map[string]any{
+			"name":   "refused",
+			"source": map[string]string{"type": "git", "url": addr},
+		})
+		require.Equal(t, string(errs.ValidInvalid), got.ErrorCode(), "%s: %s", addr, got.String())
+	}
+}
+
+// TestR092_ASpecCannotMoveAnAppToAnAddressPandoWillNotFetch asserts the same
+// rule for a spec written whole: POST /specs that changes the repository to a
+// path on Pando's disk is refused, as creating an app with it would be.
+func TestR092_ASpecCannotMoveAnAppToAnAddressPandoWillNotFetch(t *testing.T) {
+	t.Parallel()
+	i := newInstall(t)
+	admin := i.admin()
+	appID := i.createApp(admin, "moved")
+
+	body := minimalSpec()
+	body["source"] = map[string]any{"type": "git", "url": "file:///etc"}
+	got := i.do(admin, http.MethodPost, "/apps/"+appID+"/specs", body)
+	require.Equal(t, string(errs.ValidInvalid), got.ErrorCode(), got.String())
+	require.Contains(t, got.String(), "https, http or ssh")
+}
+
+// TestR092_ASpecCannotTurnAnAddressIntoARepositorysByChangingItsType asserts
+// that the check follows the source's type as well as its address: an app
+// whose stored address is a local path, kept as it is while the source
+// becomes a repository, is refused.
+func TestR092_ASpecCannotTurnAnAddressIntoARepositorysByChangingItsType(t *testing.T) {
+	t.Parallel()
+	i := newInstall(t)
+	admin := i.admin()
+
+	created := i.do(admin, http.MethodPost, "/apps", map[string]any{
+		"name":   "retyped",
+		"source": map[string]string{"type": "image", "image": "nginx:alpine", "url": "file:///etc"},
+	})
+	require.Contains(t, []int{http.StatusCreated, http.StatusAccepted}, created.Code, created.String())
+	var app struct {
+		ID     string `json:"id"`
+		Source struct {
+			URL string `json:"url"`
+		} `json:"source"`
+	}
+	created.JSON(t, &app)
+	require.Equal(t, "file:///etc", app.Source.URL, "the stored address the spec keeps")
+
+	body := minimalSpec()
+	body["source"] = map[string]any{"type": "git", "url": "file:///etc"}
+	got := i.do(admin, http.MethodPost, "/apps/"+app.ID+"/specs", body)
+	require.Equal(t, string(errs.ValidInvalid), got.ErrorCode(), got.String())
+	require.Contains(t, got.String(), "https, http or ssh")
+}
+
 // Replaces rather than merges: a merge would make it impossible to remove a rule.
 func TestSavingPolicyReplacesTheDocument(t *testing.T) {
 	t.Parallel()

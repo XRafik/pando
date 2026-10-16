@@ -137,6 +137,27 @@ reduced to the same host and path, with Docker Hub's three hostnames read as `do
 been handed `URL`, which an image does not have, and admitted it. **[P]** An upload has no host, so a
 non-empty allowlist admits one only when it contains the entry `upload` (O-29).
 
+**[D] What a git source may be, and reach (R-092).** `spec.CheckSourceURL` refuses, when an app is created
+and when a spec changes its address, any scheme but https, http and ssh (the `git@host:path` shorthand
+included), a local path, and an address with userinfo — any for http(s), a password for ssh, whose
+`git@` names an account. It is not part of `Validate`, which re-runs on every stored spec at plan
+time; the fetch refuses the same addresses itself, so an older revision fails there, in words.
+go-git's `git` protocol is removed and its `file` protocol refuses unless a test calls
+`source.AllowLocalRepositories`. Every connection a fetch dials, HTTP redirects included, passes a
+dialer `Control` hook (`source/guard.go`) that refuses link-local, unspecified and multicast
+addresses, Pando's listening port on loopback or any local interface, and each host and port of the
+database connection string. go-git's SSH transport takes no dialer, but dials through an endpoint's
+proxy URL with `golang.org/x/net/proxy`; Pando registers a `pando-guarded` scheme there whose dialer is
+the same guarded one and points every SSH endpoint at it, so SSH is checked on the socket too — an
+ssh_config `Hostname` alias included. Behind an HTTP(S) proxy from `HTTPS_PROXY`/`HTTP_PROXY`, the
+dial is to the proxy, which is the host operator's choice and inside what Pando trusts its operator
+with (R-087), so proxies are kept: the transport's `Proxy` func resolves the repository's host itself
+before every request it hands to one, a redirect's included, and refuses it the same way, an IP
+literal too. That is best effort — the proxy resolves the name again for itself and may get another
+answer. Private and loopback addresses are otherwise allowed, and
+a probe still tells "not found" from "not reachable", which is what a person adding a repository on
+their own network needs.
+
 **[D] Registry credentials are the app's (O-30).** `CredentialRef` records that an image pull is
 authenticated, never with what. The credential is a username and token, or AWS access keys from which an
 ECR registry password is minted before every read and pull (ECR's own expire after twelve hours). It is

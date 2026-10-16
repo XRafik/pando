@@ -159,6 +159,10 @@ func (s *Server) handleCreateApp(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, err)
 		return
 	}
+	if err := spec.CheckSourceURL(src); err != nil {
+		Error(w, r, err)
+		return
+	}
 
 	// A credential is checked before the app exists, so a bad one is a
 	// refused request rather than an app created without it.
@@ -676,6 +680,16 @@ func (s *Server) handleCreateSpec(w http.ResponseWriter, r *http.Request) {
 	if err := spec.Validate(&body); err != nil {
 		Error(w, r, err)
 		return
+	}
+	// A new repository address is held to what creating an app with it is —
+	// including one the app already has that becomes a repository's only now,
+	// with the source's type. An address it already fetches from is left to
+	// the fetch, which refuses it too.
+	if body.Source.URL != app.Source.URL || body.Source.Type != app.Source.Type {
+		if err := spec.CheckSourceURL(body.Source); err != nil {
+			Error(w, r, err)
+			return
+		}
 	}
 
 	// Egress (R-182 – R-184) and auto-deploy under approval (R-158), judged

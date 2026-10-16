@@ -398,6 +398,7 @@ func serve(ctx context.Context, configPath string) error {
 	if err != nil {
 		return err
 	}
+	guardOwnAddresses(cfg, registry, apps)
 
 	// Secrets go through the configured secrets adapter. Core never encrypts —
 	// it stores what the adapter hands back (R-190, R-191).
