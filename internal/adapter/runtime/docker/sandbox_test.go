@@ -215,7 +215,7 @@ func TestR255_ChangingTheRuntimeMovesAppsOnTheirNextDeploy(t *testing.T) {
 		f.on("GET /containers/c1/json", respond(http.StatusOK, map[string]any{
 			"Id":         "c1",
 			"Config":     map[string]any{"Image": "nginx:1", "Labels": map[string]string{labelHardening: hardeningLevel}},
-			"HostConfig": map[string]any{"Runtime": running},
+			"HostConfig": map[string]any{"Runtime": running, "PidsLimit": DefaultPidsLimit},
 		}))
 		ok, err := a.matchesPlan(context.Background(), "c1", w, "pando-app", nil)
 		require.NoError(t, err)

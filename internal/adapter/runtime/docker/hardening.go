@@ -72,6 +72,16 @@ func (a *Adapter) pidsLimit() int64 {
 	}
 }
 
+// matchesPidsLimit reports whether a container runs under the process limit
+// now configured. Docker reports no limit as nil, 0 or -1; all are none.
+func (a *Adapter) matchesPidsLimit(hostCfg *container.HostConfig) bool {
+	var have int64
+	if hostCfg != nil && hostCfg.PidsLimit != nil && *hostCfg.PidsLimit > 0 {
+		have = *hostCfg.PidsLimit
+	}
+	return have == a.pidsLimit()
+}
+
 // hardened reports whether a container was created with harden's current
 // limits.
 func hardened(labels map[string]string) bool {

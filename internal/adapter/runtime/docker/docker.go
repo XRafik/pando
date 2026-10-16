@@ -1955,6 +1955,11 @@ func (a *Adapter) matchesPlan(ctx context.Context, containerID string, w api.Wor
 	if !a.matchesLayerSize(ctx, inspect.Container.HostConfig, w.Resources.DiskBytes) {
 		return false, nil
 	}
+	// The process limit is the operator's to change (pids_limit); the rest of
+	// harden is fixed by the label above.
+	if !a.matchesPidsLimit(inspect.Container.HostConfig) {
+		return false, nil
+	}
 
 	if inspect.Container.NetworkSettings != nil && inspect.Container.NetworkSettings.Networks != nil {
 		ep, ok := inspect.Container.NetworkSettings.Networks[networkName]

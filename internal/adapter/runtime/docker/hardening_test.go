@@ -191,7 +191,7 @@ func TestR240_AContainerFromBeforeTheLimitsIsRecreated(t *testing.T) {
 		t.Helper()
 		f, a := newFakeDaemon(t, nil)
 		f.on("GET /containers/c1/json", respond(http.StatusOK, map[string]any{
-			"Id": "c1", "Config": map[string]any{"Image": "nginx:1", "Labels": labels}, "HostConfig": map[string]any{},
+			"Id": "c1", "Config": map[string]any{"Image": "nginx:1", "Labels": labels}, "HostConfig": map[string]any{"PidsLimit": DefaultPidsLimit},
 		}))
 		ok, err := a.matchesPlan(context.Background(), "c1", w, "pando-app", nil)
 		require.NoError(t, err)
@@ -214,7 +214,7 @@ func TestR403_AChangedDiskLimitRecreatesASizedContainer(t *testing.T) {
 		f, a := newFakeDaemon(t, nil)
 		f.on("GET /version", respond(http.StatusOK, map[string]any{"Version": "27.3.1"}))
 		f.on("GET /info", respond(http.StatusOK, info))
-		hostCfg := map[string]any{}
+		hostCfg := map[string]any{"PidsLimit": DefaultPidsLimit}
 		if size != "" {
 			hostCfg["StorageOpt"] = map[string]string{"size": size}
 		}
@@ -238,6 +238,37 @@ func TestR403_AChangedDiskLimitRecreatesASizedContainer(t *testing.T) {
 
 	require.True(t, matches(snapshotter, "", limit), "a driver that cannot size a layer asks nothing")
 	require.True(t, matches(map[string]any{"Driver": "vfs"}, "", limit))
+}
+
+// TestR240_AChangedProcessLimitRecreatesTheContainer asserts that pids_limit
+// reaches containers already running: a container under another limit than
+// the one configured, including none against one, does not match its plan.
+func TestR240_AChangedProcessLimitRecreatesTheContainer(t *testing.T) {
+	matches := func(config map[string]any, pids any) bool {
+		t.Helper()
+		f, a := newFakeDaemon(t, config)
+		hostCfg := map[string]any{}
+		if pids != nil {
+			hostCfg["PidsLimit"] = pids
+		}
+		f.on("GET /containers/c1/json", respond(http.StatusOK, map[string]any{
+			"Id": "c1", "HostConfig": hostCfg,
+			"Config": map[string]any{"Image": "nginx:1", "Labels": map[string]string{labelHardening: hardeningLevel}},
+		}))
+		ok, err := a.matchesPlan(context.Background(), "c1", api.WorkloadPlan{Name: "web", Image: "nginx:1"}, "pando-app", nil)
+		require.NoError(t, err)
+		return ok
+	}
+	unlimited := map[string]any{"pids_limit": -1}
+
+	require.True(t, matches(nil, DefaultPidsLimit), "the default, unchanged")
+	require.False(t, matches(nil, nil), "created with no limit, now the default")
+	require.False(t, matches(nil, -1), "created unlimited, now the default")
+	require.False(t, matches(map[string]any{"pids_limit": 4096}, DefaultPidsLimit), "the limit raised")
+	require.False(t, matches(unlimited, DefaultPidsLimit), "the limit removed")
+	for _, none := range []any{nil, 0, -1} {
+		require.True(t, matches(unlimited, none), "no limit either way, however Docker says so: %v", none)
+	}
 }
 
 func TestSizesLayersOnlyWhereTheDriverAppliesIt(t *testing.T) {
