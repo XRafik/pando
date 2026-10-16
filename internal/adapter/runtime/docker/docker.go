@@ -1950,6 +1950,11 @@ func (a *Adapter) matchesPlan(ctx context.Context, containerID string, w api.Wor
 	if !hardened(inspect.Container.Config.Labels) {
 		return false, nil
 	}
+	// And under the disk limit the plan now has, where the driver sizes layers:
+	// a change to the limit alone would otherwise keep the old cap.
+	if !a.matchesLayerSize(ctx, inspect.Container.HostConfig, w.Resources.DiskBytes) {
+		return false, nil
+	}
 
 	if inspect.Container.NetworkSettings != nil && inspect.Container.NetworkSettings.Networks != nil {
 		ep, ok := inspect.Container.NetworkSettings.Networks[networkName]

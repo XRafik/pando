@@ -172,6 +172,28 @@ func (a *Adapter) createSizedWith(
 	return create(ctx, opts)
 }
 
+// matchesLayerSize reports whether a container's layer cap is the one the plan
+// asks for. Only where the driver sizes layers: elsewhere no container has a
+// cap and none is asked for, so there is nothing to compare.
+func (a *Adapter) matchesLayerSize(ctx context.Context, hostCfg *container.HostConfig, diskBytes int64) bool {
+	have := ""
+	if hostCfg != nil {
+		have = hostCfg.StorageOpt["size"]
+	}
+	want := ""
+	if diskBytes > 0 {
+		want = strconv.FormatInt(diskBytes, 10)
+	}
+	if have == want {
+		return true
+	}
+	if a.layerQuota.Load() == layerQuotaUnknown {
+		a.decideLayerSizing(ctx)
+	}
+	state := a.layerQuota.Load()
+	return state != layerQuotaLikely && state != layerQuotaEnforced
+}
+
 // layerQuotaDetail is what Capacity says about it, for the operator.
 func (a *Adapter) layerQuotaDetail() string {
 	switch a.layerQuota.Load() {

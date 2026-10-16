@@ -202,6 +202,44 @@ func TestR240_AContainerFromBeforeTheLimitsIsRecreated(t *testing.T) {
 	require.False(t, matches(map[string]string{labelHardening: "0"}), "created under an older set")
 }
 
+// TestR403_AChangedDiskLimitRecreatesASizedContainer asserts that where the
+// driver sizes layers, a container under another cap than the plan's (or a
+// cap where the plan has none, or none where it has one) does not match its
+// plan, so a change to the disk limit alone reaches the container. Where the
+// driver cannot size a layer, the size asks nothing of a container.
+func TestR403_AChangedDiskLimitRecreatesASizedContainer(t *testing.T) {
+	const limit = 5 << 30
+	matches := func(info map[string]any, size string, diskBytes int64) bool {
+		t.Helper()
+		f, a := newFakeDaemon(t, nil)
+		f.on("GET /version", respond(http.StatusOK, map[string]any{"Version": "27.3.1"}))
+		f.on("GET /info", respond(http.StatusOK, info))
+		hostCfg := map[string]any{}
+		if size != "" {
+			hostCfg["StorageOpt"] = map[string]string{"size": size}
+		}
+		f.on("GET /containers/c1/json", respond(http.StatusOK, map[string]any{
+			"Id": "c1", "HostConfig": hostCfg,
+			"Config": map[string]any{"Image": "nginx:1", "Labels": map[string]string{labelHardening: hardeningLevel}},
+		}))
+		w := api.WorkloadPlan{Name: "web", Image: "nginx:1", Resources: api.ResourcePlan{DiskBytes: diskBytes}}
+		ok, err := a.matchesPlan(context.Background(), "c1", w, "pando-app", nil)
+		require.NoError(t, err)
+		return ok
+	}
+	xfs := map[string]any{"Driver": "overlay2", "DriverStatus": [][2]string{{"Backing Filesystem", "xfs"}}}
+	snapshotter := map[string]any{"Driver": "overlayfs", "DriverStatus": [][2]string{{"driver-type", "io.containerd.snapshotter.v1"}}}
+
+	require.True(t, matches(xfs, "5368709120", limit), "the same cap")
+	require.False(t, matches(xfs, "1073741824", limit), "another cap")
+	require.False(t, matches(xfs, "", limit), "a cap the container does not have")
+	require.False(t, matches(xfs, "5368709120", 0), "a cap the plan no longer asks for")
+	require.True(t, matches(xfs, "", 0), "no cap either way")
+
+	require.True(t, matches(snapshotter, "", limit), "a driver that cannot size a layer asks nothing")
+	require.True(t, matches(map[string]any{"Driver": "vfs"}, "", limit))
+}
+
 func TestSizesLayersOnlyWhereTheDriverAppliesIt(t *testing.T) {
 	xfs := [][2]string{{"Backing Filesystem", "xfs"}}
 	require.True(t, sizesLayers("overlay2", xfs, false))
