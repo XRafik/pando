@@ -25,9 +25,16 @@ https://github.com/user-attachments/assets/9c2cc4df-e2c5-4ff7-bc26-a8f08a4b6061
 
 ## What is Pando?
 
-Pando is a self-hosted platform for running web apps on infrastructure you control. It builds an app
-from a git repository or an image, runs it in containers, and puts sign-in in front of it, so you
-choose who can open it. See [trypando.ai](https://trypando.ai) for what it does and who it's for.
+Pando is an open-source, self-hosted platform for running the apps your team builds, including ones
+written with AI. Point it at a git repo or image and it builds the app, scans it for
+vulnerabilities, runs it on its own isolated network, and puts it behind your company's SSO, shared
+only with the people who need it.
+
+Built for IT and platform teams who want employees to deploy internal tools without those tools
+living on laptops or personal cloud accounts. Also works on a home server.
+
+**Status: alpha.** Expect breaking changes; see the [CHANGELOG](CHANGELOG.md) before upgrading.
+Needs Docker and Docker Compose. [Quickstart →](https://trypando.ai/quickstart)
 
 ## Get started
 
