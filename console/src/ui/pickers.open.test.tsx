@@ -295,6 +295,19 @@ describe('Menu, open', () => {
 
 describe('TipButton', () => {
   // The bubble is rendered into the page's body, where no cell clips it.
+  it('keeps its click from the row around it when told to', () => {
+    const row = vi.fn();
+    render(
+      <div onClick={row}>
+        <TipButton tip="Anyone on the internet can open it." label="Public" onClick={(e) => e.stopPropagation()}>
+          Public
+        </TipButton>
+      </div>,
+    );
+    act(() => container.querySelector('button')!.click());
+    expect(row).not.toHaveBeenCalled();
+  });
+
   it('shows its tooltip on focus as well as hover, and says all of it in its label', () => {
     render(
       <TipButton tip="Set by PANDO_PORT." label="Environment: PANDO_PORT">

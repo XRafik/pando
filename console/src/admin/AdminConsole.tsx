@@ -594,11 +594,13 @@ function AppsList({
               filter: 'values',
               filterValue: (row: App) => accessLabel(row.access),
               // A button, so the keyboard reaches the meaning as the pointer
-              // does, and a screen reader is told all of it (R-077).
+              // does, and a screen reader is told all of it (R-077). Its click
+              // stops there: asking what a label means is not opening the app.
               render: (row: App) => (
                 <TipButton
                   tip={accessMeaning(row.access)}
                   label={`${accessLabel(row.access)}: ${accessMeaning(row.access)}`}
+                  onClick={(e) => e.stopPropagation()}
                 >
                   {accessLabel(row.access)}
                 </TipButton>
