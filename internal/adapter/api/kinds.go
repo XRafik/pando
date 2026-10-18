@@ -40,6 +40,10 @@ type Step struct {
 	// ID names the step for a form's progress and its "change" links.
 	ID string `json:"id"`
 
+	// Label is the step's name in a form's list of steps, a word or two:
+	// "API token", "Domain".
+	Label string `json:"label"`
+
 	// Title is an instruction or a question, in sentence case: "Create an
 	// API token", "Which domain should apps use?".
 	Title string `json:"title"`
@@ -213,6 +217,8 @@ func (k KindInfo) validateSteps() error {
 			return fmt.Errorf("%s step %d has no ID", where, i+1)
 		case stepIDs[st.ID]:
 			return fmt.Errorf("%s has two steps named %q", where, st.ID)
+		case st.Label == "":
+			return fmt.Errorf("%s step %q has no label: name it in a word or two for the list of steps", where, st.ID)
 		case st.Title == "":
 			return fmt.Errorf("%s step %q has no title: say what to do, or ask a question", where, st.ID)
 		case len(st.Fields) == 0:

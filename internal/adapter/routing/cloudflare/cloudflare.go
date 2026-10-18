@@ -646,7 +646,7 @@ func Info() api.KindInfo {
 				Help: "Set to run a different cloudflared release than this Pando ships with.", Advanced: true},
 		},
 		Steps: []api.Step{
-			{ID: "token", Title: "Create an API token",
+			{ID: "token", Label: "API token", Title: "Create an API token",
 				Lede: "Pando uses it to create the tunnel and to point each app's hostname at it.",
 				Do: []api.Action{
 					{Text: "In Cloudflare, open **My Profile** → **API Tokens**."},
@@ -664,14 +664,14 @@ func Info() api.KindInfo {
 				},
 				Link:   &api.Link{Label: "Open API Tokens in Cloudflare", URL: "https://dash.cloudflare.com/profile/api-tokens"},
 				Fields: []string{"api_token"}},
-			{ID: "account", Title: "Find your account ID",
+			{ID: "account", Label: "Account", Title: "Find your account ID",
 				Do: []api.Action{
 					{Text: "In Cloudflare, open your account's **Overview** page."},
 					{Text: "Copy **Account ID** from the **API** section."},
 				},
 				Link:   &api.Link{Label: "Open the Cloudflare dashboard", URL: "https://dash.cloudflare.com/"},
 				Fields: []string{"account_id"}},
-			{ID: "domain", Title: "Which domain should apps use?",
+			{ID: "domain", Label: "Domain", Title: "Which domain should apps use?",
 				Lede:   "A domain you've added to Cloudflare. New apps are served at `<app>.<domain>`.",
 				Fields: []string{"zone", "other_zones", "console_hostname"}},
 		},

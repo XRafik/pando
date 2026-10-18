@@ -7,7 +7,7 @@
 // walk-through without this file learning about it (R-261).
 
 import { useState } from 'react';
-import { Banner, Button, Checkbox, Dialog, Icon, Input, Radio, Select } from '@design';
+import { Banner, Button, Checkbox, Dialog, Icon, Input, Select } from '@design';
 
 import { refusal } from './Accounts';
 import { Disclosure } from '../ui/Disclosure';
@@ -20,6 +20,7 @@ import {
   isShown,
   kindKey,
   kindSteps,
+  matchKinds,
   reviewText,
   runs,
   stepFields,
@@ -54,7 +55,6 @@ export function AdapterGuide({
   renderField,
   showDefault,
   isAI,
-  takesEffect,
   saving,
   saveError,
   onSave,
@@ -78,7 +78,6 @@ export function AdapterGuide({
   renderField: (f: KindField, error?: string, instructed?: boolean) => React.ReactNode;
   showDefault: boolean;
   isAI: boolean;
-  takesEffect: string;
   saving: boolean;
   saveError: unknown;
   onSave: () => void;
@@ -140,16 +139,18 @@ export function AdapterGuide({
     go(index + 1);
   };
 
+  const categoryWord = category === 'ai' ? 'AI' : categoryLabel(category).toLowerCase();
+  // The kind is named once it is chosen and the walk-through has moved past
+  // choosing it: on the first screen, a pick can still change.
   let title = 'Add adapter';
-  if (kind) title = `Add ${kind.name}`;
-  else if (category) title = `Add ${category === 'ai' ? 'AI' : categoryLabel(category).toLowerCase()} adapter`;
+  if (kind && screen.kind !== 'choose') title = `Add ${kind.name}`;
+  else if (category) title = `Add ${categoryWord} adapter`;
 
   return (
     <Dialog
       open
-      width={560}
+      width={760}
       title={title}
-      description={takesEffect}
       onClose={onClose}
       footer={
         <>
@@ -169,141 +170,272 @@ export function AdapterGuide({
         </>
       }
     >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-        <Progress
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'calc(var(--space-9) + var(--space-7)) minmax(0, 1fr)',
+          gap: 'var(--space-6)',
+          alignItems: 'start',
+        }}
+      >
+        <StepRail
+          screens={screens}
           index={index}
-          total={kind ? screens.length : undefined}
-          onShowAll={kind && screen.kind !== 'review' ? onShowAll : undefined}
+          pending={!kind}
+          onGo={go}
+          onShowAll={kind ? onShowAll : undefined}
         />
 
-        {screen.kind === 'choose' && (
-          <>
-            <h4 style={{ font: 'var(--type-h4)', margin: 0 }}>
-              {askCategory && !category ? 'What do you want to add?' : 'Choose an adapter'}
-            </h4>
-            {askCategory && (
-              <div>
-                <Select
-                  label="Category"
-                  value={category}
-                  options={[
-                    ...(category ? [] : [{ value: '', label: 'Choose a category' }]),
-                    ...categories.map((c) => ({ value: c, label: categoryLabel(c) })),
-                  ]}
-                  onChange={(e) => {
-                    setErrors({});
-                    onCategory(e.target.value);
-                  }}
-                />
-                {category && categoryNote(category) && (
-                  <p style={{ ...caption, marginTop: 'var(--space-1)' }}>{categoryNote(category)}</p>
-                )}
-              </div>
-            )}
-            {category && (
-              <fieldset style={{ border: 0, margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-                <legend style={{ font: 'var(--type-label)', marginBottom: 'var(--space-2)' }}>Adapter</legend>
-                {inCategory.map((k) => (
-                  <Radio
-                    key={kindKey(k)}
-                    name="adapter-kind"
-                    value={kindKey(k)}
-                    label={k.name}
-                    description={k.description}
-                    checked={chosen === kindKey(k)}
-                    onChange={() => {
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)', minWidth: 0 }}>
+          {screen.kind === 'choose' && (
+            <>
+              <h4 style={{ font: 'var(--type-h4)', margin: 0 }}>
+                {askCategory && !category ? 'What do you want to add?' : 'Choose an adapter'}
+              </h4>
+              {askCategory && (
+                <div>
+                  <Select
+                    label="Category"
+                    value={category}
+                    options={[
+                      ...(category ? [] : [{ value: '', label: 'Choose a category' }]),
+                      ...categories.map((c) => ({ value: c, label: categoryLabel(c) })),
+                    ]}
+                    onChange={(e) => {
                       setErrors({});
-                      onPick(kindKey(k));
+                      onCategory(e.target.value);
                     }}
                   />
-                ))}
-              </fieldset>
-            )}
-            {errors.choose && <p style={{ ...caption, color: 'var(--marker-deep)' }}>{errors.choose}</p>}
-          </>
-        )}
+                  {category && categoryNote(category) && (
+                    <p style={{ ...caption, marginTop: 'var(--space-1)' }}>{categoryNote(category)}</p>
+                  )}
+                </div>
+              )}
+              {category && (
+                <KindPicker
+                  kinds={inCategory}
+                  chosen={chosen}
+                  onPick={(key) => {
+                    setErrors({});
+                    onPick(key);
+                  }}
+                />
+              )}
+              {errors.choose && <p style={{ ...caption, color: 'var(--marker-deep)' }}>{errors.choose}</p>}
+            </>
+          )}
 
-        {screen.kind === 'step' && kind && form && (
-          <StepBody step={screen.step}>
-            {stepFields(kind, screen.step, form.values).map((f) => (
-              <div key={f.key}>{renderField(f, errors[f.key], (screen.step.do?.length ?? 0) > 0)}</div>
-            ))}
-          </StepBody>
-        )}
+          {screen.kind === 'step' && kind && form && (
+            <StepBody step={screen.step}>
+              {stepFields(kind, screen.step, form.values).map((f) => (
+                <div key={f.key}>{renderField(f, errors[f.key], (screen.step.do?.length ?? 0) > 0)}</div>
+              ))}
+            </StepBody>
+          )}
 
-        {screen.kind === 'name' && kind && form && (
-          <>
-            <h4 style={{ font: 'var(--type-h4)', margin: 0 }}>Name this adapter</h4>
-            <NameFields form={form} edit={edit} error={errors.id} />
-            {showDefault && (
-              <Checkbox
-                label={`Default ${category === 'ai' ? 'AI' : categoryLabel(category).toLowerCase()} adapter`}
-                description="Used wherever no adapter is named."
-                checked={form.isDefault}
-                onChange={(e) => edit({ isDefault: e.target.checked })}
-              />
-            )}
-            {isAI && <p style={caption}>After Pando restarts, open this adapter again to choose its functions.</p>}
-          </>
-        )}
+          {screen.kind === 'name' && kind && form && (
+            <>
+              <h4 style={{ font: 'var(--type-h4)', margin: 0 }}>Name this adapter</h4>
+              <NameFields form={form} edit={edit} error={errors.id} />
+              {showDefault && (
+                <Checkbox
+                  label={`Default ${categoryWord} adapter`}
+                  description="Used wherever no adapter is named."
+                  checked={form.isDefault}
+                  onChange={(e) => edit({ isDefault: e.target.checked })}
+                />
+              )}
+              {isAI && <p style={caption}>After Pando restarts, open this adapter again to choose its functions.</p>}
+            </>
+          )}
 
-        {screen.kind === 'review' && kind && form && (
-          <Review
-            kind={kind}
-            form={form}
-            steps={steps}
-            showDefault={showDefault}
-            renderField={renderField}
-            onChange={goTo}
-          >
-            {saveError ? <Banner tone="failed">{refusal(saveError)}</Banner> : null}
-          </Review>
-        )}
+          {screen.kind === 'review' && kind && form && (
+            <Review
+              kind={kind}
+              form={form}
+              steps={steps}
+              showDefault={showDefault}
+              renderField={renderField}
+              onChange={goTo}
+            >
+              {saveError ? <Banner tone="failed">{refusal(saveError)}</Banner> : null}
+            </Review>
+          )}
+        </div>
       </div>
     </Dialog>
   );
 }
 
-/** Where the walk-through is: a bar per screen, and the way to every field at once. */
-function Progress({ index, total, onShowAll }: { index: number; total?: number; onShowAll?: () => void }) {
+/** A screen's name in the list of steps. */
+function screenLabel(s: Screen): string {
+  if (s.kind === 'choose') return 'Adapter';
+  if (s.kind === 'step') return s.step.label;
+  if (s.kind === 'name') return 'Name';
+  return 'Review';
+}
+
+const quietLink = {
+  ...caption,
+  border: 0,
+  background: 'transparent',
+  padding: 0,
+  cursor: 'pointer',
+  textAlign: 'left',
+  textDecoration: 'underline',
+  textDecorationColor: 'var(--rule-strong)',
+  textUnderlineOffset: 'var(--space-1)',
+} as const;
+
+/**
+ * Every step by name, so what is still to come is in view: finished ones
+ * marked and a click from going back to, the current one set off. Before a
+ * kind is chosen its own steps are not known yet, and the list says so.
+ */
+function StepRail({
+  screens,
+  index,
+  pending,
+  onGo,
+  onShowAll,
+}: {
+  screens: Screen[];
+  index: number;
+  /** No kind is chosen, so only Pando's own steps are known. */
+  pending: boolean;
+  onGo: (i: number) => void;
+  onShowAll?: () => void;
+}) {
+  const items: { label: string; state: 'done' | 'current' | 'next'; at?: number }[] = screens.map((s, i) => ({
+    label: screenLabel(s),
+    state: i < index ? 'done' : i === index ? 'current' : 'next',
+    at: i,
+  }));
+  if (pending) items.push({ label: 'Its own steps', state: 'next' }, { label: 'Name', state: 'next' }, { label: 'Review', state: 'next' });
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-      {total !== undefined && (
-        <div style={{ display: 'flex', gap: 'var(--space-1)' }} aria-hidden="true">
-          {Array.from({ length: total }, (_, i) => (
+    <nav aria-label="Steps" style={{ position: 'sticky', top: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+      <ol style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
+        {items.map((it, i) => {
+          const row = {
+            display: 'flex',
+            alignItems: 'center',
+            gap: 'var(--space-2)',
+            width: '100%',
+            padding: 'var(--space-1) var(--space-2)',
+            borderRadius: 'var(--radius-sm)',
+            font: it.state === 'current' ? 'var(--type-label)' : 'var(--type-body-ui)',
+            color: it.state === 'next' ? 'var(--ink-muted)' : 'var(--ink)',
+            background: it.state === 'current' ? 'var(--paper-sunken)' : 'transparent',
+            border: 0,
+            textAlign: 'left',
+          } as const;
+          const marker = (
             <span
-              key={i}
+              aria-hidden="true"
               style={{
-                flex: 1,
-                height: 'var(--space-1)',
-                borderRadius: 'var(--radius-xs)',
-                background: i < index ? 'var(--ink-secondary)' : i === index ? 'var(--ink)' : 'var(--rule)',
+                flex: 'none',
+                width: 'var(--space-4)',
+                display: 'inline-flex',
+                justifyContent: 'center',
+                font: 'var(--type-code-sm)',
+                color: 'var(--ink-secondary)',
               }}
-            />
-          ))}
-        </div>
+            >
+              {it.state === 'done' ? <Icon name="check" size={14} /> : it.at === undefined ? '' : it.at + 1}
+            </span>
+          );
+          return (
+            <li key={`${it.label}-${i}`} aria-current={it.state === 'current' ? 'step' : undefined}>
+              {it.state === 'done' && it.at !== undefined ? (
+                <button type="button" onClick={() => onGo(it.at!)} style={{ ...row, cursor: 'pointer' }}>
+                  {marker}
+                  {it.label}
+                </button>
+              ) : (
+                <span style={row}>
+                  {marker}
+                  {it.label}
+                </span>
+              )}
+            </li>
+          );
+        })}
+      </ol>
+      {onShowAll && (
+        <button type="button" onClick={onShowAll} style={{ ...quietLink, paddingLeft: 'var(--space-2)' }}>
+          Show all settings
+        </button>
       )}
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--space-3)' }}>
-        <span style={caption}>{total === undefined ? `Step ${index + 1}` : `Step ${index + 1} of ${total}`}</span>
-        {onShowAll && (
-          <button
-            type="button"
-            onClick={onShowAll}
-            style={{
-              ...caption,
-              border: 0,
-              background: 'transparent',
-              padding: 0,
-              cursor: 'pointer',
-              textDecoration: 'underline',
-              textDecorationColor: 'var(--rule-strong)',
-              textUnderlineOffset: 'var(--space-1)',
-            }}
-          >
-            Show all settings
-          </button>
-        )}
+    </nav>
+  );
+}
+
+/** More than this many kinds in a category, and the picker can be searched. */
+const SEARCH_FROM = 6;
+
+/**
+ * The kinds of a category as tiles, two to a row, so a category with many
+ * stays a short page; past a handful, a search narrows them. A radio group:
+ * one is chosen, marked by a check as well as its border.
+ */
+function KindPicker({ kinds, chosen, onPick }: { kinds: AdapterKind[]; chosen: string; onPick: (key: string) => void }) {
+  const [query, setQuery] = useState('');
+  const shown = matchKinds(kinds, query);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+      {kinds.length > SEARCH_FROM && (
+        <Input label="Search adapters" value={query} onChange={(e) => setQuery(e.target.value)} />
+      )}
+      <div
+        role="radiogroup"
+        aria-label="Adapter"
+        style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 'var(--space-3)' }}
+      >
+        {shown.map((k) => {
+          const key = kindKey(k);
+          const on = chosen === key;
+          return (
+            <button
+              key={key}
+              type="button"
+              role="radio"
+              aria-checked={on}
+              title={k.description}
+              onClick={() => onPick(key)}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 'var(--space-1)',
+                padding: 'var(--space-3) var(--space-4)',
+                textAlign: 'left',
+                cursor: 'pointer',
+                background: 'var(--paper-raised)',
+                border: `var(--border-width) solid ${on ? 'var(--ink)' : 'var(--rule)'}`,
+                borderRadius: 'var(--radius-md)',
+                color: 'var(--ink)',
+              }}
+            >
+              <span style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--space-2)', font: 'var(--type-label)' }}>
+                {k.name}
+                {on && <Icon name="check" size={16} />}
+              </span>
+              <span
+                style={{
+                  ...caption,
+                  display: '-webkit-box',
+                  WebkitLineClamp: 2,
+                  WebkitBoxOrient: 'vertical',
+                  overflow: 'hidden',
+                }}
+              >
+                {k.description}
+              </span>
+            </button>
+          );
+        })}
       </div>
+      {shown.length === 0 && <p style={caption}>No {kinds[0] ? categoryLabel(kinds[0].category).toLowerCase() : ''} adapter matches “{query.trim()}”.</p>}
     </div>
   );
 }

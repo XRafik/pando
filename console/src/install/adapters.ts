@@ -96,6 +96,8 @@ export interface AdapterKind {
 /** One step of a kind's guided setup, as GET /adapters/kinds describes it. */
 export interface KindStep {
   id: string;
+  /** Its name in the list of steps, a word or two. */
+  label: string;
   /** An instruction or a question. */
   title: string;
   lede?: string;
@@ -139,7 +141,7 @@ export function kindSteps(kind: AdapterKind, values: Record<string, string | boo
   const declared = kind.steps ?? [];
   if (declared.length === 0) {
     const basic = (kind.fields ?? []).filter((f) => !f.advanced).map((f) => f.key);
-    return basic.length === 0 ? [] : [{ id: 'settings', title: `Enter the ${kind.name} settings`, fields: basic }];
+    return basic.length === 0 ? [] : [{ id: 'settings', label: 'Settings', title: `Enter the ${kind.name} settings`, fields: basic }];
   }
   return declared.filter((st) => {
     if (!st.shown_when) return true;
@@ -154,6 +156,13 @@ export function stepFields(kind: AdapterKind, step: KindStep, values: Record<str
   return step.fields
     .map((k) => byKey.get(k))
     .filter((f): f is KindField => f !== undefined && isShown(kind, f, values));
+}
+
+/** The kinds a search matches, by name or description. */
+export function matchKinds(kinds: AdapterKind[], query: string): AdapterKind[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return kinds;
+  return kinds.filter((k) => k.name.toLowerCase().includes(q) || k.description.toLowerCase().includes(q));
 }
 
 /** The problems with a step's own settings — what Continue checks. */

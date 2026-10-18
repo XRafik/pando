@@ -249,7 +249,6 @@ export function AdapterDialog({
         )}
         showDefault={Boolean(kind) && !isSource && kind?.category !== 'ai'}
         isAI={kind?.category === 'ai'}
-        takesEffect={takesEffect}
         saving={save.isPending}
         saveError={save.isError ? save.error : undefined}
         onSave={submit}
