@@ -1001,6 +1001,12 @@
                     "can_manage": {
                       "type": "boolean"
                     },
+                    "owner_name": {
+                      "type": "string"
+                    },
+                    "access": {
+                      "type": "string"
+                    },
                     "detection": {
                       "$ref": "#/components/schemas/DetectionSummary"
                     },
@@ -11803,6 +11809,12 @@
           },
           "can_manage": {
             "type": "boolean"
+          },
+          "owner_name": {
+            "type": "string"
+          },
+          "access": {
+            "type": "string"
           },
           "detection": {
             "$ref": "#/components/schemas/DetectionSummary"

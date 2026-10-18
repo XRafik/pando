@@ -11,7 +11,9 @@ import (
 
 	"github.com/trypando/pando/internal/core/authz"
 	"github.com/trypando/pando/internal/core/state"
+	"github.com/trypando/pando/internal/hash"
 	"github.com/trypando/pando/internal/id"
+	"github.com/trypando/pando/internal/secret"
 )
 
 // Keyset pagination of the lists that grow with the organization (issue #72),
@@ -234,4 +236,44 @@ func TestTheAppsListPagesOncePerAppAndNarrowsToIDs(t *testing.T) {
 	require.Equal(t, 1, total, "narrowing never shows an app the grants do not")
 	require.Len(t, narrowed, 1)
 	require.Equal(t, all[0], narrowed[0].ID)
+}
+
+// TestR075a_TheAppsListSaysWhoCanOpenEachApp asserts that the admin list
+// carries, from its own query, whether each app is shared with everyone and
+// whether that takes a passcode (R-075, R-075a), and who owns it — the
+// Access and Owner columns (discussion #262). An owner with no display name
+// is named by the username they sign in with, as the sharing list does.
+func TestR075a_TheAppsListSaysWhoCanOpenEachApp(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db := connected(t)
+	users := state.NewUsers(db)
+	alice := seedUser(t, db, "alice")
+	digest, err := hash.New(secret.New("correct-password"))
+	require.NoError(t, err)
+	nameless, err := users.Create(ctx, state.LocalAdapterID, "bob", "bob@corp.com", "", digest, false)
+	require.NoError(t, err)
+
+	private := seedApp(t, db, alice.ID)
+	public := seedApp(t, db, alice.ID)
+	grant(t, db, public, "data", "anonymous", nil, nil)
+	passcode := seedApp(t, db, nameless.ID)
+	_, err = db.Exec(ctx, `
+		INSERT INTO grants (id, app_id, plane, principal_kind, passcode_hash, created_by)
+		VALUES ($1, $2, 'data', 'anonymous', 'digest', 'test')`, id.New(id.Grant), passcode)
+	require.NoError(t, err)
+	// A grant to a person by name is not a grant to everyone.
+	grant(t, db, private, "data", "user", nameless.ID, nil)
+
+	list, _, _, err := state.NewApps(db).ListAllPage(ctx, state.Page{IDs: []string{private, public, passcode}})
+	require.NoError(t, err)
+	got := map[string][2]string{}
+	for _, a := range list {
+		got[a.ID] = [2]string{a.Access, a.OwnerName}
+	}
+	require.Equal(t, map[string][2]string{
+		private:  {"private", "alice"},
+		public:   {"public", "alice"},
+		passcode: {"passcode", "bob"},
+	}, got)
 }

@@ -31,6 +31,8 @@ export interface App {
   favorite?: boolean;
   section_id?: string;
   can_manage?: boolean;
+  owner_name?: string;
+  access?: string;
   detection?: DetectionSummary;
 }
 

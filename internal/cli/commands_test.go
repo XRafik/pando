@@ -186,8 +186,10 @@ func TestEachFlagIsOnTheSubcommandThatReadsIt(t *testing.T) {
 func TestAppList(t *testing.T) {
 	api := newAPI(t).reply("GET /apps", map[string]any{
 		"apps": []map[string]string{
-			{"id": "app_01HQ8", "name": "notes", "state": "running"},
-			{"id": "app_01HQ9", "name": "wiki", "state": "failed"},
+			{"id": "app_01HQ8", "name": "notes", "state": "running", "access": "passcode",
+				"owner_name": "Ada", "address": "https://notes.example.com"},
+			{"id": "app_01HQ9", "name": "wiki", "state": "failed", "access": "public"},
+			{"id": "app_01HQA", "name": "crm", "state": "running", "access": "private"},
 		},
 	})
 
@@ -197,6 +199,14 @@ func TestAppList(t *testing.T) {
 	require.Contains(t, got.out, "notes")
 	require.Contains(t, got.out, "running")
 	require.Contains(t, got.out, "app_01HQ9")
+	// Who can open each app, never as the bare word "public" (R-077), and
+	// who owns it and where it is (discussion #262).
+	require.Contains(t, got.out, "anyone with the passcode")
+	require.Contains(t, got.out, "anyone on the internet")
+	require.Contains(t, got.out, "people given access")
+	require.Contains(t, got.out, "Ada")
+	require.Contains(t, got.out, "https://notes.example.com")
+	require.NotContains(t, got.out, " public ")
 }
 
 func TestAppAddNamesTheAppAfterTheRepositoryUnlessTold(t *testing.T) {

@@ -30,9 +30,9 @@ interface RoutingView {
   options: RoutingOption[] | null;
 }
 
-/** An address as it reads, without the scheme. */
-function shown(address: string): string {
-  return address.replace(/^(https?:)?\/\//, '');
+/** An address as it reads, without the scheme or a closing slash. */
+export function shown(address: string): string {
+  return address.replace(/^(https?:)?\/\//, '').replace(/(.)\/$/, '$1');
 }
 
 export function AppAddress({ app }: { app: App }) {

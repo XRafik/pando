@@ -251,6 +251,9 @@ func appCmd(client func() (*Client, error)) *cobra.Command {
 				Name      string `json:"name"`
 				Slug      string `json:"slug"`
 				State     string `json:"state"`
+				Address   string `json:"address"`
+				Access    string `json:"access"`
+				OwnerName string `json:"owner_name"`
 				Detection *struct {
 					Status string `json:"status"`
 					Stage  string `json:"stage"`
@@ -272,7 +275,7 @@ func appCmd(client func() (*Client, error)) *cobra.Command {
 				return err
 			}
 
-			t := table(cmd.OutOrStdout(), "NAME", "STATE", "ID")
+			t := table(cmd.OutOrStdout(), "NAME", "STATE", "ACCESS", "OWNER", "ADDRESS", "ID")
 			for _, a := range out.Apps {
 				state := a.State
 				// A draft says why it is still one (issue #80).
@@ -283,7 +286,8 @@ func appCmd(client func() (*Client, error)) *cobra.Command {
 					}
 					state += " (detection " + why + ")"
 				}
-				fmt.Fprintf(t, "%s\t%s\t%s\n", a.Name, state, a.ID)
+				fmt.Fprintf(t, "%s\t%s\t%s\t%s\t%s\t%s\n", a.Name, state, accessPhrase(a.Access),
+					dash(a.OwnerName), dash(a.Address), a.ID)
 			}
 			return t.Flush()
 		},
@@ -1868,4 +1872,18 @@ func nameFromURL(raw string) string {
 		return "app"
 	}
 	return trimmed
+}
+
+// accessPhrase is who can open an app, in the words the console's Access
+// column uses: never the bare word "public" (R-077).
+func accessPhrase(access string) string {
+	switch access {
+	case "public":
+		return "anyone on the internet"
+	case "passcode":
+		return "anyone with the passcode"
+	case "private":
+		return "people given access"
+	}
+	return "-"
 }

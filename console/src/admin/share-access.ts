@@ -64,6 +64,24 @@ export function everyone(grants: Grant[]): Everyone {
   return anonymous.passcode ? 'passcode' : 'public';
 }
 
+/**
+ * Who can open an app, for the apps list's Access column (discussion #262):
+ * the list's `access`, which is `everyone()` worked out by the server. Never
+ * the bare word "public" (R-077) — the label is the consequence itself.
+ */
+export function accessLabel(access: string | undefined): string {
+  switch (access) {
+    case 'public':
+      return 'Anyone on the internet';
+    case 'passcode':
+      return 'Anyone with the passcode';
+    case 'private':
+      return 'People given access';
+    default:
+      return '';
+  }
+}
+
 /** The server's floor for a passcode, checked here only to keep the button
  *  disabled until it could succeed. The server enforces it. */
 export const PASSCODE_MIN = 6;
