@@ -75,6 +75,7 @@ import { NameCell } from './NameCell';
 import { accessLabel, accessMeaning } from './share-access';
 import { useNarrow } from '../ui/narrow';
 import { Table } from '../ui/Table';
+import { TipButton } from '../ui/TipButton';
 import { FieldSkeleton, HeadingSkeleton, LineSkeleton, Loading } from '../ui/Loading';
 import { WithCode } from '../ui/ErrorCode';
 
@@ -592,10 +593,15 @@ function AppsList({
               width: '21ch',
               filter: 'values',
               filterValue: (row: App) => accessLabel(row.access),
+              // A button, so the keyboard reaches the meaning as the pointer
+              // does, and a screen reader is told all of it (R-077).
               render: (row: App) => (
-                <Tooltip content={accessMeaning(row.access)}>
-                  <span>{accessLabel(row.access)}</span>
-                </Tooltip>
+                <TipButton
+                  tip={accessMeaning(row.access)}
+                  label={`${accessLabel(row.access)}: ${accessMeaning(row.access)}`}
+                >
+                  {accessLabel(row.access)}
+                </TipButton>
               ),
             },
             { key: 'owner_name', header: 'Owner', width: 'minmax(12ch,18ch)', filter: 'values' },
