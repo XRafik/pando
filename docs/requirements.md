@@ -217,6 +217,9 @@ exactly this.
 **R-077 [P]** The console must never present this as the bare word "public" **alone**. Naming the
 action *Make it public* is fine and is what people look for; what may not happen is the word standing
 by itself. The consequence is always stated with it: *anyone on the internet, without signing in.*
+A list or table may label an app's access in one or two words — *Private*, *Private – shared*,
+*Public*, *Public with passcode* — where the label carries that consequence on hover; the place an
+app is made public states it in full. *(Amended for discussion #262: the apps list's Access column.)*
 
 ### 6.3 Groups
 

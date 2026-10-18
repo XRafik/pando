@@ -819,7 +819,7 @@
     },
     {
       "name": "pando_list_apps",
-      "description": "List the apps you can manage, with their current state, newest first, a page at a time. Each app has its `address`, its owner's name (`owner_name`), and `access`, who can open it without being given access by name: `private` (nobody), `passcode` (anyone with the passcode) or `public` (anyone on the internet, without signing in). `total` is how many match; pass `next_cursor` back as `cursor` for the next page.",
+      "description": "List the apps you can manage, with their current state, newest first, a page at a time. Each app has its `address`, its owner's name (`owner_name`), and `access`, who can open it: `private` (its owner alone), `shared` (its owner and the people or groups it is shared with), `public` (anyone on the internet, without signing in) or `passcode` (anyone on the internet who has the passcode). `total` is how many match; pass `next_cursor` back as `cursor` for the next page.",
       "input_schema": {
         "properties": {
           "cursor": {

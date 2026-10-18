@@ -30,13 +30,13 @@ Unreleased above it. -->
   `pando admin reset-two-factor` does it from the host. Accounts from an identity provider are
   unchanged. Suggested by [@realPhrojoe](https://github.com/realPhrojoe) in
   [discussion #263](https://github.com/trypando/pando/discussions/263).
-- **Who can open each app, and who owns it, on the apps list** (#265). The admin console's apps list has
-  an **Access** column — people given access, anyone with the passcode, or anyone on the internet —
-  with a filter, so the apps open to everyone are one click away. It also has an **Owner** column,
-  and each app's address under its name, opening the app in a new tab. `GET /apps` returns `access`
-  and `owner_name` for each app, and `pando app list` and the `pando_list_apps` MCP tool show them.
-  Suggested by [@realPhrojoe](https://github.com/realPhrojoe) in
-  [discussion #262](https://github.com/trypando/pando/discussions/262).
+- **Who can open each app, and who owns it, on the apps list** (#265). The admin console's apps
+  list has an **Access** column — Private, Private – shared, Public, or Public with passcode — with
+  a filter, so the apps open to everyone are one click away; hovering a label says what it means. It
+  also has an **Owner** column, and each app's address under its name, opening the app in a new
+  tab. `GET /apps` returns `access` and `owner_name` for each app, and `pando app list` and the
+  `pando_list_apps` MCP tool show them. Suggested by [@realPhrojoe](https://github.com/realPhrojoe)
+  in [discussion #262](https://github.com/trypando/pando/discussions/262).
 
 ## [0.8.0] - 2026-10-16
 

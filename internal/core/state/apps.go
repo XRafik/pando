@@ -126,12 +126,14 @@ type App struct {
 	// admin list (GET /apps) fills it in (discussion #262).
 	OwnerName string `json:"owner_name,omitempty"`
 
-	// Access is who can open the app without being given access to it by
-	// name: "private" for nobody, "passcode" for anyone with the passcode,
-	// "public" for anyone on the internet — whether the app has a grant to
-	// anonymous, and whether that grant carries a passcode (R-077). Only the
-	// admin list (GET /apps) fills it in, from the same query as the rows
-	// (discussion #262); one app's grants are at GET /apps/{id}/grants.
+	// Access is who can open the app: "private" for its owner alone,
+	// "shared" for its owner and people or groups it is shared with by name,
+	// "public" for anyone on the internet, "passcode" for anyone with the
+	// passcode — whether the app has a grant to anonymous (R-075, R-075a),
+	// and failing that whether it has a data grant to anyone but its owner.
+	// Only the admin list (GET /apps) fills it in, from the same query as
+	// the rows (discussion #262); one app's grants are at GET
+	// /apps/{id}/grants.
 	Access string `json:"access,omitempty"`
 
 	// Detection is where the app's detection has got to — running and at
@@ -432,8 +434,18 @@ func (a *Apps) listControl(ctx context.Context, page Page, where string, args ..
 		       a.pinned_spec_id, a.created_at, a.updated_at, r.body->'routing', s.score, s.score_fixable,
 		       coalesce(s.awaiting, false), i.updated_at, a.stopped_for_idle, a.stopped_for_disk,
 		       coalesce(nullif(u.display_name, ''), u.external_id, ''),
-		       CASE WHEN anon.passcode IS NULL THEN 'private'
-		            WHEN anon.passcode THEN 'passcode' ELSE 'public' END
+		       CASE WHEN anon.passcode THEN 'passcode'
+		            WHEN NOT anon.passcode THEN 'public'
+		            WHEN EXISTS (
+		                -- Opened by someone besides its owner, who always can
+		                -- (R-073). Managing an app is not opening it (R-087),
+		                -- so control grants do not count.
+		                SELECT 1 FROM grants g
+		                WHERE g.app_id = a.id AND g.plane = 'data'
+		                  AND g.principal_kind IN ('user', 'group', 'token')
+		                  AND (g.principal_kind <> 'user' OR g.principal_id IS DISTINCT FROM a.owner_user_id)
+		            ) THEN 'shared'
+		            ELSE 'private' END
 		FROM apps a
 		LEFT JOIN spec_revisions r ON r.id = a.pinned_spec_id
 		LEFT JOIN app_icons i ON i.app_id = a.id

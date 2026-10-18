@@ -72,7 +72,7 @@ import { ShowMore, totalLabel, usePaged, useSettled, type PageOf } from '../ui/p
 import { APP_LIST_KEY, useWatchedRows } from './appList';
 import { AWAITING_IMAGE } from './scanScope';
 import { NameCell } from './NameCell';
-import { accessLabel } from './share-access';
+import { accessLabel, accessMeaning } from './share-access';
 import { useNarrow } from '../ui/narrow';
 import { Table } from '../ui/Table';
 import { FieldSkeleton, HeadingSkeleton, LineSkeleton, Loading } from '../ui/Loading';
@@ -589,10 +589,14 @@ function AppsList({
               // question an admin scans the list to answer (discussion #262).
               key: 'access',
               header: 'Access',
-              width: '23ch',
+              width: '21ch',
               filter: 'values',
               filterValue: (row: App) => accessLabel(row.access),
-              render: (row: App) => accessLabel(row.access),
+              render: (row: App) => (
+                <Tooltip content={accessMeaning(row.access)}>
+                  <span>{accessLabel(row.access)}</span>
+                </Tooltip>
+              ),
             },
             { key: 'owner_name', header: 'Owner', width: 'minmax(12ch,18ch)', filter: 'values' },
             {

@@ -276,6 +276,7 @@ func appCmd(client func() (*Client, error)) *cobra.Command {
 			}
 
 			t := table(cmd.OutOrStdout(), "NAME", "STATE", "ACCESS", "OWNER", "ADDRESS", "ID")
+			public := false
 			for _, a := range out.Apps {
 				state := a.State
 				// A draft says why it is still one (issue #80).
@@ -288,8 +289,16 @@ func appCmd(client func() (*Client, error)) *cobra.Command {
 				}
 				fmt.Fprintf(t, "%s\t%s\t%s\t%s\t%s\t%s\n", a.Name, state, accessPhrase(a.Access),
 					dash(a.OwnerName), dash(a.Address), a.ID)
+				public = public || a.Access == "public" || a.Access == "passcode"
 			}
-			return t.Flush()
+			if err := t.Flush(); err != nil {
+				return err
+			}
+			if public {
+				fmt.Fprintln(cmd.OutOrStdout(),
+					"\nAnyone on the internet can open a public app without signing in, with the passcode where it has one.")
+			}
+			return nil
 		},
 	})
 
@@ -1874,16 +1883,19 @@ func nameFromURL(raw string) string {
 	return trimmed
 }
 
-// accessPhrase is who can open an app, in the words the console's Access
-// column uses: never the bare word "public" (R-077).
+// accessPhrase is who can open an app, in the console's Access words
+// (discussion #262). A list label may be the word "public" so long as what it
+// means is said with it (R-077 as amended); `app list` says it under the table.
 func accessPhrase(access string) string {
 	switch access {
-	case "public":
-		return "anyone on the internet"
-	case "passcode":
-		return "anyone with the passcode"
 	case "private":
-		return "people given access"
+		return "private"
+	case "shared":
+		return "private – shared"
+	case "public":
+		return "public"
+	case "passcode":
+		return "public with passcode"
 	}
 	return "-"
 }

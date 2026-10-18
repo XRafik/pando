@@ -239,10 +239,12 @@ func TestTheAppsListPagesOncePerAppAndNarrowsToIDs(t *testing.T) {
 }
 
 // TestR075a_TheAppsListSaysWhoCanOpenEachApp asserts that the admin list
-// carries, from its own query, whether each app is shared with everyone and
-// whether that takes a passcode (R-075, R-075a), and who owns it — the
-// Access and Owner columns (discussion #262). An owner with no display name
-// is named by the username they sign in with, as the sharing list does.
+// carries, from its own query, who can open each app (discussion #262): its
+// owner alone, people it is shared with by name, anyone with the passcode
+// (R-075a) or anyone at all (R-075) — and who owns it. The owner's own data
+// grant (R-073) and a grant to manage it (R-087) do not make it shared. An
+// owner with no display name is named by the username they sign in with, as
+// the sharing list does.
 func TestR075a_TheAppsListSaysWhoCanOpenEachApp(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -253,27 +255,42 @@ func TestR075a_TheAppsListSaysWhoCanOpenEachApp(t *testing.T) {
 	require.NoError(t, err)
 	nameless, err := users.Create(ctx, state.LocalAdapterID, "bob", "bob@corp.com", "", digest, false)
 	require.NoError(t, err)
+	team, err := state.NewGroups(db).Create(ctx, "team-"+id.New(id.Grant))
+	require.NoError(t, err)
 
 	private := seedApp(t, db, alice.ID)
+	grant(t, db, private, "data", "user", alice.ID, nil)
+	grant(t, db, private, "control", "user", nameless.ID, authz.RoleViewer)
+
+	shared := seedApp(t, db, alice.ID)
+	grant(t, db, shared, "data", "user", alice.ID, nil)
+	grant(t, db, shared, "data", "user", nameless.ID, nil)
+	sharedGroup := seedApp(t, db, alice.ID)
+	grant(t, db, sharedGroup, "data", "group", team.ID, nil)
+
 	public := seedApp(t, db, alice.ID)
 	grant(t, db, public, "data", "anonymous", nil, nil)
+	// Shared by name too: open to everyone is the wider answer.
+	grant(t, db, public, "data", "user", nameless.ID, nil)
+
 	passcode := seedApp(t, db, nameless.ID)
 	_, err = db.Exec(ctx, `
 		INSERT INTO grants (id, app_id, plane, principal_kind, passcode_hash, created_by)
 		VALUES ($1, $2, 'data', 'anonymous', 'digest', 'test')`, id.New(id.Grant), passcode)
 	require.NoError(t, err)
-	// A grant to a person by name is not a grant to everyone.
-	grant(t, db, private, "data", "user", nameless.ID, nil)
 
-	list, _, _, err := state.NewApps(db).ListAllPage(ctx, state.Page{IDs: []string{private, public, passcode}})
+	ids := []string{private, shared, sharedGroup, public, passcode}
+	list, _, _, err := state.NewApps(db).ListAllPage(ctx, state.Page{IDs: ids})
 	require.NoError(t, err)
 	got := map[string][2]string{}
 	for _, a := range list {
 		got[a.ID] = [2]string{a.Access, a.OwnerName}
 	}
 	require.Equal(t, map[string][2]string{
-		private:  {"private", "alice"},
-		public:   {"public", "alice"},
-		passcode: {"passcode", "bob"},
+		private:     {"private", "alice"},
+		shared:      {"shared", "alice"},
+		sharedGroup: {"shared", "alice"},
+		public:      {"public", "alice"},
+		passcode:    {"passcode", "bob"},
 	}, got)
 }

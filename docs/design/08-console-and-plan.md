@@ -370,6 +370,13 @@ consequence, *anyone on the internet can open this, without signing in*, sits di
 heading and again in the confirmation, so the word never does the work alone. The confirmation step
 stays. When host policy forbids it (R-076), the option is visible but disabled with an explanation of who to ask — not hidden, because a hidden option produces a support ticket instead of understanding.
 
+**Apps list, Access column** — R-077 as amended for discussion #262.
+Each app reads *Private*, *Private – shared*, *Public* or *Public with passcode*, from `access` on
+`GET /apps`. A sentence per row does not fit a column, and the four words are what an administrator
+scans for; the consequence is on hover — *anyone on the internet can open it, without signing in* —
+and in full on the app's Sharing tab, where it is made public. *Shared* means a data grant to someone
+besides the owner; a grant to manage the app does not count (R-087).
+
 **Deploy settings** — R-145, R-147.
 Start-then-swap shows its constraint in body text at the point of enabling, not a tooltip: *two copies of your app run at the same time during a deploy. Do not enable this if your app writes to a local file or runs migrations on startup.* Auto-rollback likewise explains why it is off by default.
 

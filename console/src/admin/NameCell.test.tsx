@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // The apps list's Name cell and Access column (discussion #262): where each
-// app is, and who can open it, never as the bare word "public" (R-077).
+// app is, and who can open it, "Public" always with its consequence (R-077).
 
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -10,7 +10,7 @@ import type { App } from '@api/types.gen';
 import { serverRender } from '../ui/testing';
 import { shown } from './AppAddress';
 import { NameCell } from './NameCell';
-import { accessLabel } from './share-access';
+import { accessLabel, accessMeaning } from './share-access';
 
 const app = (a: Partial<App>): App => ({
   id: 'app_1',
@@ -70,11 +70,16 @@ describe('shown', () => {
 });
 
 describe('accessLabel', () => {
-  it('says who can open the app, never the bare word "public"', () => {
-    expect(accessLabel('public')).toBe('Anyone on the internet');
-    expect(accessLabel('passcode')).toBe('Anyone with the passcode');
-    expect(accessLabel('private')).toBe('People given access');
+  it('names each kind of access in a word or two, with what it means beside it', () => {
+    expect(accessLabel('private')).toBe('Private');
+    expect(accessLabel('shared')).toBe('Private – shared');
+    expect(accessLabel('public')).toBe('Public');
+    expect(accessLabel('passcode')).toBe('Public with passcode');
     expect(accessLabel(undefined)).toBe('');
-    for (const a of ['public', 'passcode', 'private']) expect(accessLabel(a).toLowerCase()).not.toBe('public');
+    expect(accessMeaning(undefined)).toBe('');
+  });
+
+  it('never leaves "Public" without its consequence (R-077)', () => {
+    for (const a of ['public', 'passcode']) expect(accessMeaning(a)).toContain('Anyone on the internet');
   });
 });
