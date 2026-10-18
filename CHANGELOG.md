@@ -30,7 +30,7 @@ Unreleased above it. -->
   `pando admin reset-two-factor` does it from the host. Accounts from an identity provider are
   unchanged. Suggested by [@realPhrojoe](https://github.com/realPhrojoe) in
   [discussion #263](https://github.com/trypando/pando/discussions/263).
-- **Who can open each app, and who owns it, on the apps list.** The admin console's apps list has
+- **Who can open each app, and who owns it, on the apps list** (#265). The admin console's apps list has
   an **Access** column — people given access, anyone with the passcode, or anyone on the internet —
   with a filter, so the apps open to everyone are one click away. It also has an **Owner** column,
   and each app's address under its name, opening the app in a new tab. `GET /apps` returns `access`
