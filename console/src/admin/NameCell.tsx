@@ -9,7 +9,7 @@ import { shown } from './AppAddress';
  * The click stops at the link: the row's own click opens the app's admin
  * screen, and both at once would change the console behind the new tab.
  */
-export function NameCell({ row }: { row: App }) {
+export function NameCell({ row }: Readonly<{ row: App }>) {
   const caption = { font: 'var(--type-caption)', color: 'var(--ink-secondary)' };
   return (
     <span style={{ display: 'flex', flexDirection: 'column', padding: 'var(--space-2) 0' }}>
