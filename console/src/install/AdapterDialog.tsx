@@ -32,6 +32,7 @@ import {
 } from './adapters';
 import type { AdapterForm, AdapterKind, KindField } from './adapters';
 import { AdapterFunctions, choiceChanges, currentChoice } from './AdapterFunctions';
+import { AdapterGuide } from './AdapterGuide';
 import type { FunctionChoice } from './AdapterFunctions';
 import type { AIFunction } from './AIFunctions';
 
@@ -102,6 +103,9 @@ export function AdapterDialog({
   const chosen = picked || (only ? kindKey(only) : '');
   const [draft, setDraft] = useState<AdapterForm | null>(null);
   const [tried, setTried] = useState(false);
+  // A new adapter is added one step at a time; every setting at once is a
+  // click away, holding what was already entered. Changing one is the form.
+  const [guided, setGuided] = useState(!existing);
 
   const kind = catalog.find((k) => kindKey(k) === chosen);
   const stored = existing?.credentials_set ?? [];
@@ -205,6 +209,56 @@ export function AdapterDialog({
     );
   }
 
+  const takesEffect = isSource || isRegistry ? 'Takes effect when saved.' : 'Takes effect after Pando restarts.';
+  const chooseCategory = (c: string) => {
+    setCategory(c);
+    setPicked('');
+    setDraft(null);
+    setTried(false);
+  };
+  const chooseKind = (key: string) => {
+    setPicked(key);
+    setDraft(null);
+    setTried(false);
+  };
+
+  if (guided && !existing) {
+    return (
+      <AdapterGuide
+        categories={categories}
+        category={category}
+        askCategory={!startCategory}
+        onCategory={chooseCategory}
+        inCategory={inCategory}
+        chosen={chosen}
+        onPick={chooseKind}
+        skipChoose={Boolean(startCategory) && inCategory.length === 1}
+        kind={kind}
+        form={form}
+        edit={edit}
+        stored={stored}
+        renderField={(f, error, instructed) => (
+          <FieldInput
+            guided
+            instructed={instructed}
+            field={f}
+            value={form?.values[f.key]}
+            error={error}
+            onChange={(v) => setValue(f.key, v)}
+          />
+        )}
+        showDefault={Boolean(kind) && !isSource && kind?.category !== 'ai'}
+        isAI={kind?.category === 'ai'}
+        takesEffect={takesEffect}
+        saving={save.isPending}
+        saveError={save.isError ? save.error : undefined}
+        onSave={submit}
+        onShowAll={() => setGuided(false)}
+        onClose={onClose}
+      />
+    );
+  }
+
   // Saving replaces the stored settings whole. GET /adapters returns them to
   // whoever may change adapters, and the form starts from them; if they did
   // not come back, a change starts from empty fields, and that is said before
@@ -230,9 +284,7 @@ export function AdapterDialog({
     <Dialog
       open
       title={existing ? `Edit ${existing.name || existing.id}` : 'Add adapter'}
-      description={
-        isSource || isRegistry ? 'Takes effect when saved.' : 'Takes effect after Pando restarts.'
-      }
+      description={takesEffect}
       onClose={onClose}
       footer={
         <>
@@ -283,12 +335,7 @@ export function AdapterDialog({
                   ...(category ? [] : [{ value: '', label: 'Choose a category' }]),
                   ...categories.map((c) => ({ value: c, label: categoryLabel(c) })),
                 ]}
-                onChange={(e) => {
-                  setCategory(e.target.value);
-                  setPicked('');
-                  setDraft(null);
-                  setTried(false);
-                }}
+                onChange={(e) => chooseCategory(e.target.value)}
               />
               {category && categoryNote(category) && (
                 <p style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)', margin: 'var(--space-1) 0 0' }}>
@@ -305,11 +352,7 @@ export function AdapterDialog({
                     ...(chosen ? [] : [{ value: '', label: 'Choose an adapter' }]),
                     ...inCategory.map((k) => ({ value: kindKey(k), label: k.name })),
                   ]}
-                  onChange={(e) => {
-                    setPicked(e.target.value);
-                    setDraft(null);
-                    setTried(false);
-                  }}
+                  onChange={(e) => chooseKind(e.target.value)}
                 />
                 {kind && (
                   <p style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)', margin: 'var(--space-1) 0 0' }}>
@@ -323,6 +366,26 @@ export function AdapterDialog({
 
             {kind && form && (
               <>
+                {!existing && (
+                  <button
+                    type="button"
+                    onClick={() => setGuided(true)}
+                    style={{
+                      alignSelf: 'flex-start',
+                      border: 0,
+                      background: 'transparent',
+                      padding: 0,
+                      cursor: 'pointer',
+                      font: 'var(--type-caption)',
+                      color: 'var(--ink-secondary)',
+                      textDecoration: 'underline',
+                      textDecorationColor: 'var(--rule-strong)',
+                      textUnderlineOffset: 'var(--space-1)',
+                    }}
+                  >
+                    Set up step by step
+                  </button>
+                )}
                 {existing && !existing.config && settings.length > 0 && (
                   <Banner tone="info">
                     Pando doesn&rsquo;t show current settings. Saving clears any setting left empty. Stored credentials
@@ -418,6 +481,8 @@ export function FieldInput({
   stored,
   error,
   onChange,
+  guided = false,
+  instructed = false,
 }: {
   field: KindField;
   value: string | boolean | undefined;
@@ -425,6 +490,11 @@ export function FieldInput({
   stored?: boolean;
   error?: string;
   onChange: (v: string | boolean) => void;
+  /** Asked on a guided step: a choice is a list of radio buttons, each with
+   *  what it means. */
+  guided?: boolean;
+  /** The step says how to get this credential, so its caption need not. */
+  instructed?: boolean;
 }) {
   const label = field.required ? `${field.label} (required)` : field.label;
 
@@ -440,14 +510,16 @@ export function FieldInput({
   }
 
   if (field.type === 'select') {
-    return <ChoiceInput field={field} label={label} value={value} error={error} onChange={onChange} />;
+    return <ChoiceInput field={field} label={label} value={value} error={error} onChange={onChange} radios={guided} />;
   }
 
   // A credential's helper says what happens to what is typed. The kind's own
   // help comes first when it has one, since it may say more — such as where
   // the key is read from when none is stored.
   let helper = field.help;
-  if (field.credential) {
+  if (field.credential && instructed) {
+    helper = CREDENTIAL;
+  } else if (field.credential) {
     if (stored === true) helper = 'One is stored. Leave empty to keep the current one.';
     else if (stored === false) helper = `None is stored. ${field.help ?? CREDENTIAL}`;
     else helper = field.help ?? CREDENTIAL;
@@ -503,12 +575,15 @@ function ChoiceInput({
   value,
   error,
   onChange,
+  radios = false,
 }: {
   field: KindField;
   label: string;
   value: string | boolean | undefined;
   error?: string;
   onChange: (v: string) => void;
+  /** Radio buttons whatever the number of choices, as a guided step asks. */
+  radios?: boolean;
 }) {
   const options = field.options ?? [];
   const text = typeof value === 'string' ? value : '';
@@ -519,7 +594,7 @@ function ChoiceInput({
   const [otherPicked, setOtherPicked] = useState(false);
   const typing = Boolean(field.other) && (otherPicked || (current !== '' && !listed));
 
-  if (options.length <= 3 && !field.other) {
+  if ((options.length <= 3 || radios) && !field.other) {
     return (
       <fieldset style={{ border: 0, margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
         <legend style={{ font: 'var(--type-label)', color: 'var(--ink)', marginBottom: 'var(--space-2)' }}>{label}</legend>

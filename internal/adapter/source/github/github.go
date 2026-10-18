@@ -387,6 +387,64 @@ func Info() api.KindInfo {
 			{ID: "ghes", Label: "GitHub Enterprise Server",
 				Help: "Enter the server's host. Its API is at https://<host>/api/v3 unless it was moved."},
 		},
+		Steps: steps(),
+	}
+}
+
+// steps walks through one sign-in method's setup in GitHub, chosen first.
+func steps() []api.Step {
+	when := func(method string) *api.Condition {
+		return &api.Condition{Key: "method", Values: []string{method}}
+	}
+	return []api.Step{
+		{ID: "method", Title: "How should Pando sign in to GitHub?",
+			Lede:   "A GitHub App suits most installations. The host changes only for GitHub Enterprise Server.",
+			Fields: []string{"method", "host"}},
+		{ID: "app", Title: "Create a GitHub App", ShownWhen: when(forgekit.MethodApp),
+			Do: []api.Action{
+				{Text: "In GitHub, open **Settings** → **Developer settings** → **GitHub Apps** and choose **New GitHub App**. For an organization, start from the organization's settings instead."},
+				{Text: "Give it a name and a homepage URL, such as your Pando address. Under **Webhook**, clear **Active**."},
+				{Text: "Under **Repository permissions**, set **Contents** to **Read-only**. Metadata is read-only already."},
+				{Text: "Choose **Create GitHub App**. Copy the **App ID** at the top of its settings page."},
+				{Text: "Under **Private keys**, choose **Generate a private key**. GitHub downloads a `.pem` file."},
+			},
+			Link:   &api.Link{Label: "Open GitHub Apps", URL: "https://github.com/settings/apps"},
+			Fields: []string{"app_id", FieldAppPrivateKey}},
+		{ID: "install", Title: "Install the App", ShownWhen: when(forgekit.MethodApp),
+			Do: []api.Action{
+				{Text: "On the App's settings page, choose **Install App**."},
+				{Text: "Pick the organization or user whose repositories Pando should read."},
+				{Text: "Choose **All repositories**, or only the ones you'll deploy, then **Install**."},
+			},
+			Fields: []string{"installation_id"}},
+		{ID: "oauth", Title: "Register an OAuth application", ShownWhen: when(forgekit.MethodOAuth),
+			Do: []api.Action{
+				{Text: "In GitHub, open **Settings** → **Developer settings** → **OAuth Apps** and choose **New OAuth App**."},
+				{Text: "Set **Authorization callback URL** to your Pando address followed by `/api/v1/sources/callback`."},
+				{Text: "Choose **Register application**, then check **Enable Device Flow** and save."},
+				{Text: "Copy the **Client ID**. For authorizing in the browser, choose **Generate a new client secret** and copy it too."},
+			},
+			Link:   &api.Link{Label: "Open OAuth Apps", URL: "https://github.com/settings/developers"},
+			Fields: []string{"client_id", forgekit.FieldClientSecret}},
+		{ID: "token", Title: "Create a personal access token", ShownWhen: when(forgekit.MethodToken),
+			Do: []api.Action{
+				{Text: "In GitHub, open **Settings** → **Developer settings** → **Personal access tokens** → **Fine-grained tokens** and choose **Generate new token**."},
+				{Text: "Under **Repository access**, choose the repositories Pando should read."},
+				{Text: "Under **Repository permissions**, set **Contents** to **Read-only**."},
+				{Text: "Choose **Generate token** and copy it."},
+			},
+			Link:   &api.Link{Label: "Open fine-grained tokens", URL: "https://github.com/settings/personal-access-tokens"},
+			Fields: []string{forgekit.FieldToken}},
+		{ID: "ssh", Title: "Add a deploy key", ShownWhen: when(forgekit.MethodSSH),
+			Do: []api.Action{
+				{Text: "Make a key pair: `ssh-keygen -t ed25519 -f pando-deploy -N \"\"`"},
+				{Text: "In the repository on GitHub, open **Settings** → **Deploy keys** and choose **Add deploy key**."},
+				{Text: "Paste the contents of `pando-deploy.pub`. Leave **Allow write access** cleared."},
+				{Text: "Paste the contents of `pando-deploy`, the private half, below."},
+			},
+			Fields: []string{forgekit.FieldSSHPrivateKey, forgekit.FieldSSHPassphrase, "known_hosts"}},
+		{ID: "scope", Title: "Whose repositories should Pando list?",
+			Fields: []string{"scope"}},
 	}
 }
 

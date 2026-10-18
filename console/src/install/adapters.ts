@@ -89,6 +89,105 @@ export interface AdapterKind {
   description: string;
   id_prefix: string;
   fields: KindField[] | null;
+  /** Guided setup: one screen per step, each asking for some of `fields`. */
+  steps?: KindStep[] | null;
+}
+
+/** One step of a kind's guided setup, as GET /adapters/kinds describes it. */
+export interface KindStep {
+  id: string;
+  /** An instruction or a question. */
+  title: string;
+  lede?: string;
+  /** What to do outside Pando, in order. */
+  do?: { text: string; table?: { columns: string[]; rows: string[][] } }[];
+  link?: { label: string; url: string };
+  /** The keys of the settings asked on this step. */
+  fields: string[];
+  shown_when?: { key: string; values: string[] };
+}
+
+/** A run of step text: plain, **bold** (a name on the provider's screen) or
+ *  `code` (something typed exactly). */
+export interface Run {
+  kind: 'text' | 'bold' | 'code';
+  text: string;
+}
+
+/** Step text split into runs. Only the two marks are read; anything else,
+ *  including an unclosed mark, is plain text. Never HTML. */
+export function runs(text: string): Run[] {
+  const out: Run[] = [];
+  const mark = /\*\*([^*]+)\*\*|`([^`]+)`/g;
+  let last = 0;
+  for (const m of text.matchAll(mark)) {
+    if (m.index > last) out.push({ kind: 'text', text: text.slice(last, m.index) });
+    out.push(m[1] === undefined ? { kind: 'code', text: m[2] ?? '' } : { kind: 'bold', text: m[1] });
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) out.push({ kind: 'text', text: text.slice(last) });
+  return out;
+}
+
+/**
+ * The kind's steps that apply, given what has been answered so far: a step
+ * shown only for another setting's value is skipped otherwise. A kind that
+ * declares no steps gets one, asking for all its basic settings, so every kind
+ * can be set up the guided way.
+ */
+export function kindSteps(kind: AdapterKind, values: Record<string, string | boolean>): KindStep[] {
+  const declared = kind.steps ?? [];
+  if (declared.length === 0) {
+    const basic = (kind.fields ?? []).filter((f) => !f.advanced).map((f) => f.key);
+    return basic.length === 0 ? [] : [{ id: 'settings', title: `Enter the ${kind.name} settings`, fields: basic }];
+  }
+  return declared.filter((st) => {
+    if (!st.shown_when) return true;
+    const on = (kind.fields ?? []).find((f) => f.key === st.shown_when!.key);
+    return !on || st.shown_when.values.includes(effectiveText(on, values[on.key]));
+  });
+}
+
+/** The settings a step shows, in its order: those it names that apply. */
+export function stepFields(kind: AdapterKind, step: KindStep, values: Record<string, string | boolean>): KindField[] {
+  const byKey = new Map((kind.fields ?? []).map((f) => [f.key, f]));
+  return step.fields
+    .map((k) => byKey.get(k))
+    .filter((f): f is KindField => f !== undefined && isShown(kind, f, values));
+}
+
+/** The problems with a step's own settings — what Continue checks. */
+export function stepProblems(
+  kind: AdapterKind,
+  step: KindStep,
+  form: AdapterForm,
+  credentialsSet: string[] = [],
+): Record<string, string> {
+  const all = formProblems(kind, form, credentialsSet);
+  const out: Record<string, string> = {};
+  for (const f of stepFields(kind, step, form.values)) {
+    const problem = all[f.key];
+    if (problem) out[f.key] = problem;
+  }
+  return out;
+}
+
+/** A setting as the review states it: what the adapter will use. */
+export function reviewText(f: KindField, v: string | boolean | undefined): string {
+  if (f.type === 'bool') return boolValue(f, v) ? 'Yes' : 'No';
+  const text = typeof v === 'string' ? v.trim() : '';
+  if (f.credential) return text ? 'Entered' : 'Not entered';
+  const used = text || f.default || '';
+  if (!used) return 'None';
+  if (f.type === 'select') return f.options?.find((o) => o.value === used)?.label ?? used;
+  return used;
+}
+
+/** How many advanced settings are changed from their defaults. */
+export function advancedCount(kind: AdapterKind, values: Record<string, string | boolean>): { total: number; changed: number } {
+  const adv = (kind.fields ?? []).filter((f) => f.advanced && isShown(kind, f, values));
+  const changed = adv.filter((f) => advancedChanged({ ...kind, fields: [f] }, values)).length;
+  return { total: adv.length, changed };
 }
 
 /** What the form holds: text for every field, whatever its type, and a
@@ -211,7 +310,9 @@ export function formProblems(
     if (f.type === 'bool' || !isShown(kind, f, form.values)) continue;
     const text = typeof v === 'string' ? v.trim() : '';
     if (text === '') {
-      const kept = f.credential && credentialsSet.includes(f.key);
+      // A required setting with a default is answered by it: a select
+      // shows its default chosen, and the adapter uses it.
+      const kept = (f.credential && credentialsSet.includes(f.key)) || Boolean(f.default);
       if (f.required && !kept) problems[f.key] = `${f.label} is required.`;
       continue;
     }

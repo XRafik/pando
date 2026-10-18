@@ -25,6 +25,64 @@ type KindInfo struct {
 	// rather than knowing its quirks. A form offers them; the settings are the
 	// same ones Fields describes.
 	Presets []Preset `json:"presets,omitempty"`
+
+	// Steps walk someone through setting one up, one screen at a time: what to
+	// do in the provider's own console, then the settings that produces. Every
+	// basic setting is asked on exactly one step; advanced ones on none — a
+	// form shows them on its review, closed (Validate). Choosing the kind,
+	// naming the adapter and reviewing it are the form's own steps, the same
+	// for every kind, and are not listed here.
+	Steps []Step `json:"steps,omitempty"`
+}
+
+// Step is one screen of guided setup.
+type Step struct {
+	// ID names the step for a form's progress and its "change" links.
+	ID string `json:"id"`
+
+	// Title is an instruction or a question, in sentence case: "Create an
+	// API token", "Which domain should apps use?".
+	Title string `json:"title"`
+
+	// Lede is one sentence on why the step is asked, shown under the title.
+	Lede string `json:"lede,omitempty"`
+
+	// Do is what to do outside Pando, in order, one action to an item, in the
+	// provider's own words. **Bold** marks the name of something on the
+	// provider's screen and `backticks` a command, path or value typed
+	// exactly; nothing else is markup.
+	Do []Action `json:"do,omitempty"`
+
+	// Link opens the provider's page the step starts on.
+	Link *Link `json:"link,omitempty"`
+
+	// Fields are the keys of the settings asked on this step, in order.
+	Fields []string `json:"fields"`
+
+	// ShownWhen skips the step unless a setting asked on an earlier step has
+	// one of the given values — the GitHub App steps only for a GitHub App.
+	ShownWhen *Condition `json:"shown_when,omitempty"`
+}
+
+// Action is one thing to do in a step.
+type Action struct {
+	Text string `json:"text"`
+
+	// Table is shown under the text, for something with columns, such as an
+	// API token's permissions.
+	Table *Table `json:"table,omitempty"`
+}
+
+// Table is a small grid of plain text.
+type Table struct {
+	Columns []string   `json:"columns"`
+	Rows    [][]string `json:"rows"`
+}
+
+// Link is a page on the provider's site.
+type Link struct {
+	Label string `json:"label"`
+	URL   string `json:"url"`
 }
 
 // Preset is a starting configuration for a known provider.
@@ -130,6 +188,71 @@ func (k KindInfo) Validate() error {
 			return fmt.Errorf("%s/%s setting %q is a credential marked advanced: the CLI asks for credentials only among the basic settings", k.Category, k.Kind, f.Key)
 		case f.Default == "" && f.Type != "bool":
 			return fmt.Errorf("%s/%s setting %q is advanced and states no default: say what leaving it empty does", k.Category, k.Kind, f.Key)
+		}
+	}
+	return k.validateSteps()
+}
+
+// validateSteps checks that guided setup asks for every basic setting once, in
+// an order that works: a setting, or a step, shown only for another setting's
+// value comes after the step that asks for that value.
+func (k KindInfo) validateSteps() error {
+	if len(k.Steps) == 0 {
+		return nil
+	}
+	where := fmt.Sprintf("%s/%s", k.Category, k.Kind)
+	fields := map[string]Field{}
+	for _, f := range k.Fields {
+		fields[f.Key] = f
+	}
+	askedOn := map[string]int{} // field key -> index of the step asking it
+	stepIDs := map[string]bool{}
+	for i, st := range k.Steps {
+		switch {
+		case st.ID == "":
+			return fmt.Errorf("%s step %d has no ID", where, i+1)
+		case stepIDs[st.ID]:
+			return fmt.Errorf("%s has two steps named %q", where, st.ID)
+		case st.Title == "":
+			return fmt.Errorf("%s step %q has no title: say what to do, or ask a question", where, st.ID)
+		case len(st.Fields) == 0:
+			return fmt.Errorf("%s step %q asks for no settings: fold its instructions into the step that uses them", where, st.ID)
+		case st.Link != nil && (st.Link.Label == "" || st.Link.URL == ""):
+			return fmt.Errorf("%s step %q has a link without both a label and an address", where, st.ID)
+		}
+		stepIDs[st.ID] = true
+		if c := st.ShownWhen; c != nil {
+			if j, ok := askedOn[c.Key]; !ok || j >= i {
+				return fmt.Errorf("%s step %q is shown for setting %q, which no earlier step asks for", where, st.ID, c.Key)
+			}
+		}
+		for _, a := range st.Do {
+			if a.Text == "" {
+				return fmt.Errorf("%s step %q has an empty instruction", where, st.ID)
+			}
+		}
+		for _, key := range st.Fields {
+			f, ok := fields[key]
+			switch {
+			case !ok:
+				return fmt.Errorf("%s step %q asks for %q, which is not one of its settings", where, st.ID, key)
+			case f.Advanced:
+				return fmt.Errorf("%s step %q asks for advanced setting %q: advanced settings are shown on the review, not on a step", where, st.ID, key)
+			}
+			if j, dup := askedOn[key]; dup {
+				return fmt.Errorf("%s asks for setting %q on both step %q and step %q", where, key, k.Steps[j].ID, st.ID)
+			}
+			if c := f.ShownWhen; c != nil {
+				if j, ok := askedOn[c.Key]; !ok || j > i {
+					return fmt.Errorf("%s setting %q is shown for setting %q, which is not asked before it", where, key, c.Key)
+				}
+			}
+			askedOn[key] = i
+		}
+	}
+	for _, f := range k.Fields {
+		if _, ok := askedOn[f.Key]; !ok && !f.Advanced {
+			return fmt.Errorf("%s setting %q is on no step: every basic setting is asked on exactly one", where, f.Key)
 		}
 	}
 	return nil
