@@ -64,6 +64,31 @@ export function everyone(grants: Grant[]): Everyone {
   return anonymous.passcode ? 'passcode' : 'public';
 }
 
+/** Who can open an app, as GET /apps reports it (discussion #262). */
+const ACCESS: Record<string, { label: string; meaning: string }> = {
+  private: { label: 'Private', meaning: 'Only its owner can open it.' },
+  shared: { label: 'Private – shared', meaning: 'Its owner and the people it is shared with can open it.' },
+  public: { label: 'Public', meaning: 'Anyone on the internet can open it, without signing in.' },
+  passcode: {
+    label: 'Public with passcode',
+    meaning: 'Anyone on the internet who has the passcode can open it, without signing in.',
+  },
+};
+
+/**
+ * The apps list's Access label. One or two words, which a column needs; the
+ * consequence goes with it on hover (`accessMeaning`), so "Public" never
+ * stands alone (R-077, as amended for #262).
+ */
+export function accessLabel(access: string | undefined): string {
+  return ACCESS[access ?? '']?.label ?? '';
+}
+
+/** What an Access label means, said as its consequence (R-077). */
+export function accessMeaning(access: string | undefined): string {
+  return ACCESS[access ?? '']?.meaning ?? '';
+}
+
 /** The server's floor for a passcode, checked here only to keep the button
  *  disabled until it could succeed. The server enforces it. */
 export const PASSCODE_MIN = 6;

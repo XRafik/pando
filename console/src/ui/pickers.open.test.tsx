@@ -294,6 +294,20 @@ describe('Menu, open', () => {
 });
 
 describe('TipButton', () => {
+  // The bubble is rendered into the page's body, where no cell clips it.
+  it('keeps its click from the row around it when told to', () => {
+    const row = vi.fn();
+    render(
+      <div onClick={row}>
+        <TipButton tip="Anyone on the internet can open it." label="Public" onClick={(e) => e.stopPropagation()}>
+          Public
+        </TipButton>
+      </div>,
+    );
+    act(() => container.querySelector('button')!.click());
+    expect(row).not.toHaveBeenCalled();
+  });
+
   it('shows its tooltip on focus as well as hover, and says all of it in its label', () => {
     render(
       <TipButton tip="Set by PANDO_PORT." label="Environment: PANDO_PORT">
@@ -303,12 +317,14 @@ describe('TipButton', () => {
     const button = container.querySelector<HTMLButtonElement>('button')!;
     expect(button.type).toBe('button');
     expect(button.getAttribute('aria-label')).toBe('Environment: PANDO_PORT');
-    expect(container.querySelector('[role="tooltip"]')).toBeNull();
+    expect(document.querySelector('[role="tooltip"]')).toBeNull();
 
     focus(button);
-    expect(container.querySelector('[role="tooltip"]')?.textContent).toBe('Set by PANDO_PORT.');
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toBe('Set by PANDO_PORT.');
+    // Outside the trigger, so a table cell's hidden overflow cannot clip it.
+    expect(document.querySelector('[role="tooltip"]')?.parentElement).toBe(document.body);
     act(() => button.blur());
-    expect(container.querySelector('[role="tooltip"]')).toBeNull();
+    expect(document.querySelector('[role="tooltip"]')).toBeNull();
   });
 
   it('stays open while either the pointer is over it or its trigger has focus', () => {
@@ -318,7 +334,7 @@ describe('TipButton', () => {
       </TipButton>,
     );
     const button = container.querySelector<HTMLButtonElement>('button')!;
-    const tip = () => container.querySelector('[role="tooltip"]');
+    const tip = () => document.querySelector('[role="tooltip"]');
     const pointer = (type: 'mouseover' | 'mouseout') =>
       act(() => {
         button.dispatchEvent(new MouseEvent(type, { bubbles: true, relatedTarget: type === 'mouseout' ? document.body : null }));

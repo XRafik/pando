@@ -71,8 +71,11 @@ import { SearchField } from '../ui/SearchField';
 import { ShowMore, totalLabel, usePaged, useSettled, type PageOf } from '../ui/paged';
 import { APP_LIST_KEY, useWatchedRows } from './appList';
 import { AWAITING_IMAGE } from './scanScope';
+import { NameCell } from './NameCell';
+import { accessLabel, accessMeaning } from './share-access';
 import { useNarrow } from '../ui/narrow';
 import { Table } from '../ui/Table';
+import { TipButton } from '../ui/TipButton';
 import { FieldSkeleton, HeadingSkeleton, LineSkeleton, Loading } from '../ui/Loading';
 import { WithCode } from '../ui/ErrorCode';
 
@@ -525,7 +528,12 @@ function AppsList({
           </div>
         }
       >
+        {/* Sideways rather than clipped, when the window is narrower than
+            the columns' least widths: the table is as wide as those at the
+            least, and this scrolls it. */}
+        <div style={{ overflowX: 'auto' }}>
         <Table
+          style={{ minWidth: 'min-content' }}
           loading={loading}
           onRowClick={onOpen}
           // A fresh install has no apps, and the list was a set of column
@@ -546,11 +554,20 @@ function AppsList({
             )
           }
           columns={[
-            { key: 'name', header: 'Name', width: 'minmax(0,40ch)', filter: 'text' },
+            {
+              // The address under the name rather than in a column of its own:
+              // an address is as long as a name, and two columns of them do not
+              // fit beside the rest at a laptop's width (discussion #262).
+              key: 'name',
+              header: 'Name',
+              width: 'minmax(24ch,1fr)',
+              filter: 'text',
+              render: (row: App) => <NameCell row={row} />,
+            },
             {
               key: 'state',
               header: 'Status',
-              width: '16ch',
+              width: '15ch',
               filter: 'values',
               filterValue: (row: App) => statusLabel(row.state, row.stopped_for_idle, row.stopped_for_disk),
               render: (row: App) => (
@@ -569,9 +586,31 @@ function AppsList({
               render: (row: App) => <SecurityCell row={row} />,
             },
             {
+              // Who can open it without being given access by name — the
+              // question an admin scans the list to answer (discussion #262).
+              key: 'access',
+              header: 'Access',
+              width: '21ch',
+              filter: 'values',
+              filterValue: (row: App) => accessLabel(row.access),
+              // A button, so the keyboard reaches the meaning as the pointer
+              // does, and a screen reader is told all of it (R-077). Its click
+              // stops there: asking what a label means is not opening the app.
+              render: (row: App) => (
+                <TipButton
+                  tip={accessMeaning(row.access)}
+                  label={`${accessLabel(row.access)}: ${accessMeaning(row.access)}`}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {accessLabel(row.access)}
+                </TipButton>
+              ),
+            },
+            { key: 'owner_name', header: 'Owner', width: 'minmax(12ch,18ch)', filter: 'values' },
+            {
               key: 'updated_at',
               header: 'Updated',
-              width: '14ch',
+              width: '12ch',
               muted: true,
               render: (row: App) => (
                 <Tooltip content={row.updated_at}>
@@ -582,6 +621,7 @@ function AppsList({
           ]}
           rows={shown}
         />
+        </div>
         {more}
       </Sheet>
 

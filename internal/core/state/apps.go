@@ -121,6 +121,21 @@ type App struct {
 	// "Manage" without asking about each tile (R-070, R-071).
 	CanManage bool `json:"can_manage,omitempty"`
 
+	// OwnerName is the owner's display name, falling back to the username
+	// they sign in with, as the app's sharing list names them. Only the
+	// admin list (GET /apps) fills it in (discussion #262).
+	OwnerName string `json:"owner_name,omitempty"`
+
+	// Access is who can open the app: "private" for its owner alone,
+	// "shared" for its owner and people or groups it is shared with by name,
+	// "public" for anyone on the internet, "passcode" for anyone with the
+	// passcode — whether the app has a grant to anonymous (R-075, R-075a),
+	// and failing that whether it has a data grant to anyone but its owner.
+	// Only the admin list (GET /apps) fills it in, from the same query as
+	// the rows (discussion #262); one app's grants are at GET
+	// /apps/{id}/grants.
+	Access string `json:"access,omitempty"`
+
 	// Detection is where the app's detection has got to — running and at
 	// which stage, or how it finished — so a draft says why it is still a
 	// draft (issue #80). Filled in by the API layer on GET /apps and GET
@@ -417,10 +432,32 @@ func (a *Apps) listControl(ctx context.Context, page Page, where string, args ..
 	rows, err := a.db.Query(ctx, `
 		SELECT a.id, a.name, a.slug, a.owner_user_id, a.state, a.desired_state,
 		       a.pinned_spec_id, a.created_at, a.updated_at, r.body->'routing', s.score, s.score_fixable,
-		       coalesce(s.awaiting, false), i.updated_at, a.stopped_for_idle, a.stopped_for_disk
+		       coalesce(s.awaiting, false), i.updated_at, a.stopped_for_idle, a.stopped_for_disk,
+		       coalesce(nullif(u.display_name, ''), u.external_id, ''),
+		       CASE WHEN anon.passcode THEN 'passcode'
+		            WHEN NOT anon.passcode THEN 'public'
+		            WHEN EXISTS (
+		                -- Opened by someone besides its owner, who always can
+		                -- (R-073). Managing an app is not opening it (R-087),
+		                -- so control grants do not count.
+		                SELECT 1 FROM grants g
+		                WHERE g.app_id = a.id AND g.plane = 'data'
+		                  AND g.principal_kind IN ('user', 'group', 'token')
+		                  AND (g.principal_kind <> 'user' OR g.principal_id IS DISTINCT FROM a.owner_user_id)
+		            ) THEN 'shared'
+		            ELSE 'private' END
 		FROM apps a
 		LEFT JOIN spec_revisions r ON r.id = a.pinned_spec_id
 		LEFT JOIN app_icons i ON i.app_id = a.id
+		LEFT JOIN users u ON u.id = a.owner_user_id
+		-- The grant to everyone, if there is one, and whether it asks for a
+		-- passcode: the Access column (discussion #262). The unique index on
+		-- grants allows one per app; grants_data_anonymous_idx finds it.
+		LEFT JOIN LATERAL (
+		    SELECT g.passcode_hash IS NOT NULL AS passcode
+		    FROM grants g
+		    WHERE g.app_id = a.id AND g.plane = 'data' AND g.principal_kind = 'anonymous'
+		) anon ON true
 		-- The newest scan of the revision this app is running, and failing that
 		-- the newest that belongs to no revision — which is what detection
 		-- produces, from the source, before a revision exists. Never another
@@ -449,7 +486,8 @@ func (a *Apps) listControl(ctx context.Context, page Page, where string, args ..
 		var routing []byte
 		if err := rows.Scan(&app.ID, &app.Name, &app.Slug, &owner, &app.State, &app.DesiredState,
 			&pinned, &app.CreatedAt, &app.UpdatedAt, &routing,
-			&app.SecurityScore, &app.SecurityScoreFixable, &app.SecurityAwaitingImage, &app.IconUpdatedAt, &app.StoppedForIdle, &app.StoppedForDisk); err != nil {
+			&app.SecurityScore, &app.SecurityScoreFixable, &app.SecurityAwaitingImage, &app.IconUpdatedAt, &app.StoppedForIdle, &app.StoppedForDisk,
+			&app.OwnerName, &app.Access); err != nil {
 			return nil, "", 0, errs.Wrap(errs.Internal, "Could not list apps.", err)
 		}
 		if len(routing) > 0 {

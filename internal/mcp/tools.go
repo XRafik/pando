@@ -209,6 +209,10 @@ var toolList = []tool{
 	{
 		Name: "pando_list_apps",
 		Description: "List the apps you can manage, with their current state, newest first, a page at a time. " +
+			"Each app has its `address`, its owner's name (`owner_name`), and `access`, who can open it: " +
+			"`private` (its owner alone), `shared` (its owner and the people or groups it is shared " +
+			"with), `public` (anyone on the internet, without signing in) or `passcode` (anyone on " +
+			"the internet who has the passcode). " +
 			"`total` is how many match; pass `next_cursor` back as `cursor` for the next page.",
 		Schema: schema(map[string]any{
 			"q":      str("Only apps whose name or slug contains this."),

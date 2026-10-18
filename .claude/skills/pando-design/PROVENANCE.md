@@ -51,7 +51,11 @@ A re-sync will revert them, so push them first.
 - `components/feedback/Tooltip.jsx` — it opened on hover only, so a keyboard
   user who tabbed to its trigger never saw it. It now opens on focus as well, and
   stays open while either the pointer is over it or its trigger has focus; React's focus events bubble, so the trigger inside it can be
-  any focusable element, such as a button.
+  any focusable element, such as a button. Its bubble is also rendered into the
+  page's body at the trigger's place on screen (`createPortal`, `position: fixed`)
+  rather than inside the trigger, where any ancestor hiding its overflow clipped
+  it: every table cell does, so a tooltip in a table showed only a sliver of its
+  shadow (found with the apps list's Access column, discussion #262).
 
 The `Dialog` and `Tooltip` changes are correctness bugs rather than changes to the
 visual language, which is why they were fixed here rather than waiting — but all
