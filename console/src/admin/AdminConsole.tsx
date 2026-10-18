@@ -564,17 +564,6 @@ function AppsList({
               render: (row: App) => <NameCell row={row} />,
             },
             {
-              // Who can open it without being given access by name — the
-              // question an admin scans the list to answer (discussion #262).
-              key: 'access',
-              header: 'Access',
-              width: '23ch',
-              filter: 'values',
-              filterValue: (row: App) => accessLabel(row.access),
-              render: (row: App) => accessLabel(row.access),
-            },
-            { key: 'owner_name', header: 'Owner', width: 'minmax(12ch,18ch)', filter: 'values' },
-            {
               key: 'state',
               header: 'Status',
               width: '15ch',
@@ -595,6 +584,17 @@ function AppsList({
               filterValue: securityFilterValue,
               render: (row: App) => <SecurityCell row={row} />,
             },
+            {
+              // Who can open it without being given access by name — the
+              // question an admin scans the list to answer (discussion #262).
+              key: 'access',
+              header: 'Access',
+              width: '23ch',
+              filter: 'values',
+              filterValue: (row: App) => accessLabel(row.access),
+              render: (row: App) => accessLabel(row.access),
+            },
+            { key: 'owner_name', header: 'Owner', width: 'minmax(12ch,18ch)', filter: 'values' },
             {
               key: 'updated_at',
               header: 'Updated',
