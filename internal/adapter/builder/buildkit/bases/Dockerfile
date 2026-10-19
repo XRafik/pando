@@ -27,7 +27,7 @@
 # replaced every few weeks and is no longer rebuilt once it is.
 # TestBaseImagesStayOnMaintainedLines refuses an odd minor, so a
 # Dependabot pull request proposing one cannot merge.
-FROM nginx:1.30-alpine@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94 AS static-server
+FROM nginx:1.30-alpine@sha256:970364228b1e4f932abc22d321932816782cca8a20b85a77552a7cfe9acfb3b5 AS static-server
 USER 65534
 
 # program-runtime runs a Go program Pando compiled, or a program committed in
