@@ -529,6 +529,7 @@ func steps() []api.Step {
 				{Text: "Create one of these in GitLab:", Table: &api.Table{
 					Columns: []string{"Token", "Where", "Settings"},
 					Rows: [][]string{
+						{"Fine-grained personal access token (GitLab 19.2 or later)", "Avatar → Edit profile → Access → Personal access tokens → Generate token → Fine-grained token", "Code: Download, Project: Read and Branch: Read; boundary User to list every project, or the group"},
 						{"Personal access token", "Avatar → Edit profile → Access → Personal access tokens → Generate token → Legacy token", "Scopes read_repository, read_api"},
 						{"Project access token", "Project → Settings → Access tokens → Add new token", "Role Reporter; scopes read_repository, read_api"},
 						{"Group access token", "Group → Settings → Access tokens → Add new token", "Role Reporter; scopes read_repository, read_api"},

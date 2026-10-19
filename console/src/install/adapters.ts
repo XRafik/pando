@@ -96,7 +96,23 @@ export interface AdapterKind {
   fields: KindField[] | null;
   /** Guided setup: one screen per step, each asking for some of `fields`. */
   steps?: KindStep[] | null;
+  /** Known providers of this kind, each a starting set of values. */
+  presets?: KindPreset[] | null;
+  /** The choice of a provider no preset names, such as "Another SIEM".
+   *  Absent when the presets cover every case. */
+  other_preset?: string;
 }
+
+/** A known provider of a kind, with the settings it needs filled in. */
+export interface KindPreset {
+  id: string;
+  label: string;
+  help?: string;
+  values?: Record<string, string>;
+}
+
+/** The provider choice that names no preset, in a step's `presets`. */
+export const PRESET_OTHER = 'other';
 
 /** One step of a kind's guided setup, as GET /adapters/kinds describes it. */
 export interface KindStep {
@@ -113,6 +129,8 @@ export interface KindStep {
   /** The keys of the settings asked on this step. */
   fields: string[];
   shown_when?: { key: string; values: string[] };
+  /** The providers the step is for, by preset ID; absent is every one. */
+  presets?: string[];
 }
 
 /** A run of step text: plain, **bold** (a name on the provider's screen) or
@@ -143,8 +161,12 @@ export function runs(text: string): Run[] {
  * declares no steps gets one, asking for all its basic settings, so every kind
  * can be set up the guided way.
  */
-export function kindSteps(kind: AdapterKind, values: Record<string, string | boolean>): KindStep[] {
-  const declared = kind.steps ?? [];
+export function kindSteps(
+  kind: AdapterKind,
+  values: Record<string, string | boolean>,
+  preset?: string,
+): KindStep[] {
+  const declared = (kind.steps ?? []).filter((st) => !preset || !st.presets?.length || st.presets.includes(preset));
   if (declared.length === 0) {
     const basic = (kind.fields ?? []).filter((f) => !f.advanced).map((f) => f.key);
     return basic.length === 0 ? [] : [{ id: 'settings', label: 'Settings', title: `Enter the ${kind.name} settings`, fields: basic }];
@@ -207,11 +229,18 @@ export function joinList(items: string[]): string {
   return items.map((v) => v.trim()).filter((v) => v !== '').join(', ');
 }
 
-/** The kinds a search matches, by name or description. */
-export function matchKinds(kinds: AdapterKind[], query: string): AdapterKind[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return kinds;
-  return kinds.filter((k) => k.name.toLowerCase().includes(q) || k.description.toLowerCase().includes(q));
+/**
+ * The values after choosing a provider: the previous provider's own values
+ * taken back, unless they were changed since, and the new one's filled in.
+ */
+export function withPreset(
+  values: Record<string, string | boolean>,
+  previous: KindPreset | undefined,
+  next: KindPreset | undefined,
+): Record<string, string | boolean> {
+  const out = { ...values };
+  for (const [key, v] of Object.entries(previous?.values ?? {})) if (out[key] === v) delete out[key];
+  return { ...out, ...(next?.values ?? {}) };
 }
 
 /** The problems with a step's own settings — what Continue checks. */

@@ -48,7 +48,7 @@ func TestR261_TheCLIWalksAKindsSteps(t *testing.T) {
 	values := map[string]string{"account": "given"}
 	credentials := map[string]string{}
 
-	asked, err := walkSteps(cmd, &info, values, credentials)
+	asked, err := walkSteps(cmd, &info, "", values, credentials)
 	require.NoError(t, err)
 
 	require.Equal(t, map[string]string{"account": "given", "zone": "example.com", "console": "pando.example.com"}, values)
@@ -64,4 +64,52 @@ func TestR261_TheCLIWalksAKindsSteps(t *testing.T) {
 	require.Contains(t, out, "Console [pando.example.com]: ")
 	// The link names a setting not yet answered when it is shown.
 	require.NotContains(t, out, "Open tokens:")
+}
+
+// TestR261_TheCLIAsksWhichProviderFirst asserts R-261 for a kind with
+// presets: the CLI asks which provider before its steps, fills in that
+// provider's values, and shows only its steps; --preset answers it.
+func TestR261_TheCLIAsksWhichProviderFirst(t *testing.T) {
+	var info kindInfo
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"category": "audit_sink", "kind": "example", "name": "Example",
+		"fields": [
+			{"key": "url", "label": "URL", "type": "string"},
+			{"key": "token", "label": "Token", "type": "string", "credential": true},
+			{"key": "body", "label": "Body", "type": "string", "default": "ndjson"}
+		],
+		"presets": [{"id": "splunk", "label": "Splunk", "values": {"body": "splunk_hec"}}],
+		"other_preset": "Another SIEM",
+		"steps": [
+			{"id": "splunk_token", "label": "Token", "title": "Create an HEC token", "fields": ["token"], "presets": ["splunk"]},
+			{"id": "token", "label": "Token", "title": "Enter the token", "fields": ["token", "body"], "presets": ["other"]},
+			{"id": "url", "label": "URL", "title": "Enter the endpoint", "fields": ["url"]}
+		]}`), &info))
+
+	run := func(preset, input string) (map[string]string, string) {
+		cmd := &cobra.Command{}
+		var stderr bytes.Buffer
+		cmd.SetErr(&stderr)
+		cmd.SetIn(strings.NewReader(input))
+		values := map[string]string{}
+		if preset != "" {
+			require.NoError(t, applyPreset(&info, preset, values))
+		}
+		_, err := walkSteps(cmd, &info, preset, values, map[string]string{})
+		require.NoError(t, err)
+		return values, stderr.String()
+	}
+
+	values, out := run("", "1\ntok\nhttps://splunk.example.com\n")
+	require.Contains(t, out, "1) Splunk")
+	require.Contains(t, out, "2) Another SIEM")
+	require.Contains(t, out, "Create an HEC token (step 1 of 2)")
+	require.NotContains(t, out, "Enter the token")
+	require.Equal(t, map[string]string{"body": "splunk_hec", "url": "https://splunk.example.com"}, values)
+
+	_, out = run("other", "tok\n\nhttps://siem.example.com\n")
+	require.NotContains(t, out, "Choose a provider")
+	require.Contains(t, out, "Enter the token (step 1 of 2)")
+
+	require.ErrorContains(t, applyPreset(&info, "nope", map[string]string{}), "its providers are splunk, other")
 }

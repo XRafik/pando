@@ -20,7 +20,8 @@ import {
   isShown,
   kindKey,
   kindSteps,
-  matchKinds,
+  PRESET_OTHER,
+  withPreset,
   reviewText,
   runs,
   stepFields,
@@ -31,6 +32,7 @@ import type { AdapterForm, AdapterKind, KindField, KindStep } from './adapters';
 /** One screen of the walk-through. */
 type Screen =
   | { kind: 'choose' }
+  | { kind: 'provider' }
   | { kind: 'step'; step: KindStep }
   | { kind: 'name' }
   | { kind: 'review' };
@@ -86,14 +88,23 @@ export function AdapterGuide({
 }) {
   const [at, setAt] = useState(0);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  // The provider chosen, for the kind it was chosen for: choosing another
+  // kind starts the choice again.
+  const [provider, setProvider] = useState<{ kind: string; id: string } | null>(null);
 
-  const steps = kind && form ? kindSteps(kind, form.values) : [];
+  // A kind with presets asks which provider first, and its steps are the
+  // chosen provider's; until one is chosen there are none to show.
+  const presets = kind?.presets ?? [];
+  const preset = provider && provider.kind === chosen ? provider.id : undefined;
+  const ready = Boolean(kind) && (presets.length === 0 || preset !== undefined);
+  const steps = kind && form && ready ? kindSteps(kind, form.values, preset) : [];
   const screens: Screen[] = [];
   if (!skipChoose) screens.push({ kind: 'choose' });
+  if (kind && presets.length > 0) screens.push({ kind: 'provider' });
   for (const step of steps) screens.push({ kind: 'step', step });
-  if (kind) screens.push({ kind: 'name' }, { kind: 'review' });
+  if (ready) screens.push({ kind: 'name' }, { kind: 'review' });
   const index = Math.min(at, screens.length - 1);
-  // Never empty: there is a choice to make, or a kind and its last two screens.
+  // Never empty: there is a choice to make, or a kind and its screens.
   const screen: Screen = screens[index] ?? { kind: 'choose' };
   const last = index === screens.length - 1 && screen.kind === 'review';
 
@@ -107,6 +118,11 @@ export function AdapterGuide({
     if (screen.kind === 'choose') {
       if (!kind) {
         setErrors({ choose: category ? 'Choose an adapter to continue.' : 'Choose a category to continue.' });
+        return;
+      }
+    } else if (screen.kind === 'provider') {
+      if (preset === undefined) {
+        setErrors({ choose: 'Choose a provider to continue.' });
         return;
       }
     } else if (screen.kind === 'step' && kind && form) {
@@ -140,6 +156,16 @@ export function AdapterGuide({
   };
 
   const choosing = screen.kind === 'choose';
+  // Picking the adapter or its provider has the dialog to itself: until then
+  // there are no steps of its own to list.
+  const picking = choosing || screen.kind === 'provider';
+  const pickProvider = (id: string) => {
+    if (!kind || !form) return;
+    const was = presets.find((p) => p.id === preset);
+    edit({ values: withPreset(form.values, was, presets.find((p) => p.id === id)) });
+    setProvider({ kind: chosen, id });
+    setErrors({});
+  };
   const categoryWord = category === 'ai' ? 'AI' : categoryLabel(category).toLowerCase();
   // The kind is named once it is chosen and the walk-through has moved past
   // choosing it: on the first screen, a pick can still change.
@@ -177,12 +203,12 @@ export function AdapterGuide({
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: choosing ? 'minmax(0, 1fr)' : 'calc(var(--space-9) + var(--space-7)) minmax(0, 1fr)',
+          gridTemplateColumns: picking ? 'minmax(0, 1fr)' : 'calc(var(--space-9) + var(--space-7)) minmax(0, 1fr)',
           gap: 'var(--space-6)',
           alignItems: 'start',
         }}
       >
-        {!choosing && <StepRail screens={screens} index={index} onGo={go} onShowAll={onShowAll} />}
+        {!picking && <StepRail screens={screens} index={index} onGo={go} onShowAll={onShowAll} />}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)', minWidth: 0 }}>
           {screen.kind === 'choose' && (
@@ -204,8 +230,9 @@ export function AdapterGuide({
                 </div>
               )}
               {category && (
-                <KindPicker
-                  kinds={inCategory}
+                <TilePicker
+                  label="Adapter"
+                  items={inCategory.map((k) => ({ key: kindKey(k), name: k.name, description: k.description }))}
                   chosen={chosen}
                   onPick={(key) => {
                     setErrors({});
@@ -213,6 +240,22 @@ export function AdapterGuide({
                   }}
                 />
               )}
+              {errors.choose && <p style={{ ...caption, color: 'var(--marker-deep)' }}>{errors.choose}</p>}
+            </>
+          )}
+
+          {screen.kind === 'provider' && kind && (
+            <>
+              <h4 style={{ font: 'var(--type-h4)', margin: 0 }}>Choose a provider</h4>
+              <TilePicker
+                label="Provider"
+                items={[
+                  ...presets.map((p) => ({ key: p.id, name: p.label })),
+                  ...(kind.other_preset ? [{ key: PRESET_OTHER, name: kind.other_preset }] : []),
+                ]}
+                chosen={preset ?? ''}
+                onPick={pickProvider}
+              />
               {errors.choose && <p style={{ ...caption, color: 'var(--marker-deep)' }}>{errors.choose}</p>}
             </>
           )}
@@ -251,6 +294,9 @@ export function AdapterGuide({
               kind={kind}
               form={form}
               steps={steps}
+              provider={
+                preset === PRESET_OTHER ? kind.other_preset : presets.find((p) => p.id === preset)?.label
+              }
               showDefault={showDefault}
               renderField={renderField}
               onChange={goTo}
@@ -267,6 +313,7 @@ export function AdapterGuide({
 /** A screen's name in the list of steps. */
 function screenLabel(s: Screen): string {
   if (s.kind === 'choose') return 'Adapter';
+  if (s.kind === 'provider') return 'Provider';
   if (s.kind === 'step') return s.step.label;
   if (s.kind === 'name') return 'Name';
   return 'Review';
@@ -365,25 +412,38 @@ function StepRail({
 const SEARCH_FROM = 6;
 
 /**
- * The kinds of a category as tiles, two to a row, so a category with many
- * stays a short page; past a handful, a search narrows them. A radio group:
- * one is chosen, marked by a check as well as its border.
+ * Choices as tiles, two to a row, so a long list stays a short page; past a
+ * handful, a search narrows them. A radio group: one is chosen, marked by a
+ * check as well as its border. Adapters of a category, and a kind's providers.
  */
-function KindPicker({ kinds, chosen, onPick }: { kinds: AdapterKind[]; chosen: string; onPick: (key: string) => void }) {
+function TilePicker({
+  label,
+  items,
+  chosen,
+  onPick,
+}: {
+  label: string;
+  items: { key: string; name: string; description?: string }[];
+  chosen: string;
+  onPick: (key: string) => void;
+}) {
   const [query, setQuery] = useState('');
-  const shown = matchKinds(kinds, query);
+  const q = query.trim().toLowerCase();
+  const shown = q
+    ? items.filter((k) => k.name.toLowerCase().includes(q) || (k.description ?? '').toLowerCase().includes(q))
+    : items;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-      {kinds.length > SEARCH_FROM && (
-        <Input label="Search adapters" value={query} onChange={(e) => setQuery(e.target.value)} />
+      {items.length > SEARCH_FROM && (
+        <Input label={`Search ${label.toLowerCase()}s`} value={query} onChange={(e) => setQuery(e.target.value)} />
       )}
       <div
         role="radiogroup"
-        aria-label="Adapter"
+        aria-label={label}
         style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 'var(--space-3)' }}
       >
         {shown.map((k) => {
-          const key = kindKey(k);
+          const key = k.key;
           const on = chosen === key;
           return (
             <button
@@ -410,22 +470,24 @@ function KindPicker({ kinds, chosen, onPick }: { kinds: AdapterKind[]; chosen: s
                 {k.name}
                 {on && <Icon name="check" size={16} />}
               </span>
-              <span
-                style={{
-                  ...caption,
-                  display: '-webkit-box',
-                  WebkitLineClamp: 2,
-                  WebkitBoxOrient: 'vertical',
-                  overflow: 'hidden',
-                }}
-              >
-                {k.description}
-              </span>
+              {k.description && (
+                <span
+                  style={{
+                    ...caption,
+                    display: '-webkit-box',
+                    WebkitLineClamp: 2,
+                    WebkitBoxOrient: 'vertical',
+                    overflow: 'hidden',
+                  }}
+                >
+                  {k.description}
+                </span>
+              )}
             </button>
           );
         })}
       </div>
-      {shown.length === 0 && <p style={caption}>No {kinds[0] ? categoryLabel(kinds[0].category).toLowerCase() : ''} adapter matches “{query.trim()}”.</p>}
+      {shown.length === 0 && <p style={caption}>Nothing matches “{query.trim()}”.</p>}
     </div>
   );
 }
@@ -587,6 +649,7 @@ function Review({
   kind,
   form,
   steps,
+  provider,
   showDefault,
   renderField,
   onChange,
@@ -595,12 +658,15 @@ function Review({
   kind: AdapterKind;
   form: AdapterForm;
   steps: KindStep[];
+  /** The provider chosen, for a kind with presets. */
+  provider?: string;
   showDefault: boolean;
   renderField: (f: KindField, error?: string, instructed?: boolean) => React.ReactNode;
   onChange: (screenID: string) => void;
   children: React.ReactNode;
 }) {
   const rows: { label: string; value: string; mono: boolean; to: string }[] = [];
+  if (provider) rows.push({ label: 'Provider', value: provider, mono: false, to: 'provider' });
   for (const st of steps) {
     for (const f of stepFields(kind, st, form.values)) {
       const value = reviewText(f, form.values[f.key]);

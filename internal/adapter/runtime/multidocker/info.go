@@ -53,6 +53,7 @@ func Info() api.KindInfo {
 				Do: []api.Action{
 					{Text: "Install Docker Engine on each host. Use hosts of one CPU architecture."},
 					{Text: "For a `tcp://` host, follow **Use TLS (HTTPS) to protect the Docker daemon socket** to run `dockerd --tlsverify` on port `2376`, and paste `ca.pem`, `cert.pem` and `key.pem` below."},
+					{Text: "For an `ssh://` host, use rootful Docker: over SSH, Pando reaches only `/var/run/docker.sock`, not a rootless daemon's socket."},
 					{Text: "For an `ssh://` host, run `ssh-keygen -t ed25519 -f pando-docker -N \"\"`."},
 					{Text: "On each `ssh://` host, add a user to the `docker` group with `sudo usermod -aG docker <user>` and add `pando-docker.pub` to its `~/.ssh/authorized_keys`."},
 					{Text: "Paste `pando-docker` below."},

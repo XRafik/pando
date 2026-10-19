@@ -1121,6 +1121,9 @@
                   "text": "For a `tcp://` host, follow **Use TLS (HTTPS) to protect the Docker daemon socket** to run `dockerd --tlsverify` on port `2376`, and paste `ca.pem`, `cert.pem` and `key.pem` below."
                 },
                 {
+                  "text": "For an `ssh://` host, use rootful Docker: over SSH, Pando reaches only `/var/run/docker.sock`, not a rootless daemon's socket."
+                },
+                {
                   "text": "For an `ssh://` host, run `ssh-keygen -t ed25519 -f pando-docker -N \"\"`."
                 },
                 {
@@ -4430,6 +4433,11 @@
                     ],
                     "rows": [
                       [
+                        "Fine-grained personal access token (GitLab 19.2 or later)",
+                        "Avatar → Edit profile → Access → Personal access tokens → Generate token → Fine-grained token",
+                        "Code: Download, Project: Read and Branch: Read; boundary User to list every project, or the group"
+                      ],
+                      [
                         "Personal access token",
                         "Avatar → Edit profile → Access → Personal access tokens → Generate token → Legacy token",
                         "Scopes read_repository, read_api"
@@ -5061,152 +5069,244 @@
                 "body": "json_array",
                 "url": "https://my-dce.eastus-1.ingest.monitor.azure.com/dataCollectionRules/dcr-00000000000000000000000000000000/streams/Custom-PandoAudit_CL?api-version=2023-01-01"
               }
-            },
-            {
-              "id": "generic",
-              "label": "Generic NDJSON (Google SecOps and others)",
-              "help": "Any endpoint that takes newline-delimited JSON with a token in a header. Set the URL, the header and scheme it expects, and the token.",
-              "values": {
-                "body": "ndjson"
-              }
             }
           ],
+          "other_preset": "Another SIEM",
           "steps": [
             {
-              "id": "endpoint",
-              "label": "Endpoint",
-              "title": "Choose the ingest endpoint",
+              "id": "splunk_token",
+              "label": "Token",
+              "title": "Create an HEC token",
               "do": [
                 {
-                  "text": "Find your SIEM's ingest URL and body:",
-                  "table": {
-                    "columns": [
-                      "SIEM",
-                      "URL",
-                      "Body"
-                    ],
-                    "rows": [
-                      [
-                        "Splunk",
-                        "https://<host>:8088/services/collector/event",
-                        "Splunk HEC"
-                      ],
-                      [
-                        "Splunk Cloud",
-                        "https://http-inputs-<stack>.splunkcloud.com/services/collector/event",
-                        "Splunk HEC"
-                      ],
-                      [
-                        "Datadog",
-                        "https://http-intake.logs.<site>/api/v2/logs",
-                        "JSON array"
-                      ],
-                      [
-                        "Elastic",
-                        "https://<elasticsearch>/logs-pando.audit-default/_bulk",
-                        "Elastic bulk"
-                      ],
-                      [
-                        "Sumo Logic",
-                        "The source's HTTP Source Address, as Secret URL",
-                        "NDJSON"
-                      ],
-                      [
-                        "Microsoft Sentinel",
-                        "https://<ingestion endpoint>/dataCollectionRules/<immutable ID>/streams/Custom-PandoAudit_CL?api-version=2023-01-01",
-                        "JSON array"
-                      ]
-                    ]
-                  }
+                  "text": "In Splunk, open **Settings** → **Data inputs** → **HTTP Event Collector**."
+                },
+                {
+                  "text": "Under **Global Settings**, set **All Tokens** to **Enabled**."
+                },
+                {
+                  "text": "Choose **New Token**, finish it, and copy its value."
                 }
               ],
               "links": [
                 {
                   "label": "Splunk HEC",
                   "url": "https://help.splunk.com/en/splunk-enterprise/get-started/get-data-in/9.4/get-data-with-http-event-collector/set-up-and-use-http-event-collector-in-splunk-web"
-                },
-                {
-                  "label": "Datadog intake sites",
-                  "url": "https://docs.datadoghq.com/api/latest/logs/"
-                },
-                {
-                  "label": "Sumo Logic HTTP source",
-                  "url": "https://www.sumologic.com/help/docs/send-data/hosted-collectors/http-source/logs-metrics/"
-                },
-                {
-                  "label": "Azure Logs Ingestion API",
-                  "url": "https://learn.microsoft.com/en-us/azure/azure-monitor/logs/logs-ingestion-api-overview"
                 }
               ],
               "fields": [
-                "body",
-                "url",
-                "secret_url"
+                "token"
+              ],
+              "presets": [
+                "splunk_hec"
               ]
             },
             {
-              "id": "token",
-              "label": "Token",
-              "title": "Create a token",
+              "id": "splunk_url",
+              "label": "Endpoint",
+              "title": "Enter the HEC endpoint",
               "do": [
                 {
-                  "text": "Create the token in your SIEM, and set the header and scheme it expects:",
-                  "table": {
-                    "columns": [
-                      "SIEM",
-                      "Where",
-                      "Header",
-                      "Scheme"
-                    ],
-                    "rows": [
-                      [
-                        "Splunk",
-                        "Settings → Data inputs → HTTP Event Collector → New Token",
-                        "Authorization",
-                        "Splunk"
-                      ],
-                      [
-                        "Datadog",
-                        "Organization Settings → API Keys → New Key",
-                        "DD-API-KEY",
-                        "None"
-                      ],
-                      [
-                        "Elastic",
-                        "API keys → Create API key, copied as Encoded",
-                        "Authorization",
-                        "ApiKey"
-                      ],
-                      [
-                        "Sumo Logic",
-                        "None: the Secret URL carries it",
-                        "",
-                        ""
-                      ],
-                      [
-                        "Microsoft Sentinel",
-                        "A Microsoft Entra ID access token for https://monitor.azure.com",
-                        "Authorization",
-                        "Bearer"
-                      ]
-                    ]
-                  }
+                  "text": "Use your Splunk host on the HEC port, usually `8088`, ending `/services/collector/event`."
+                },
+                {
+                  "text": "On Splunk Cloud, use `https://http-inputs-<stack>.splunkcloud.com/services/collector/event`."
+                }
+              ],
+              "fields": [
+                "url"
+              ],
+              "presets": [
+                "splunk_hec"
+              ]
+            },
+            {
+              "id": "datadog_key",
+              "label": "API key",
+              "title": "Create an API key",
+              "do": [
+                {
+                  "text": "In Datadog, open **Organization Settings** → **API Keys** and choose **New Key**."
                 }
               ],
               "links": [
                 {
                   "label": "Open Datadog API keys",
                   "url": "https://app.datadoghq.com/organization-settings/api-keys"
+                }
+              ],
+              "fields": [
+                "token"
+              ],
+              "presets": [
+                "datadog"
+              ]
+            },
+            {
+              "id": "datadog_site",
+              "label": "Site",
+              "title": "Choose your Datadog site",
+              "do": [
+                {
+                  "text": "Outside US1, change the host to your site's intake host, such as `http-intake.logs.datadoghq.eu`."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Datadog sites",
+                  "url": "https://docs.datadoghq.com/getting_started/site/"
+                }
+              ],
+              "fields": [
+                "url"
+              ],
+              "presets": [
+                "datadog"
+              ]
+            },
+            {
+              "id": "elastic_key",
+              "label": "API key",
+              "title": "Create an API key",
+              "do": [
+                {
+                  "text": "In Kibana, open **API keys** and choose **Create API key**."
                 },
+                {
+                  "text": "Grant `create_doc` and `auto_configure` on the data stream."
+                },
+                {
+                  "text": "Copy the **Encoded** value."
+                }
+              ],
+              "links": [
                 {
                   "label": "Elastic API keys",
                   "url": "https://www.elastic.co/docs/deploy-manage/api-keys/elasticsearch-api-keys"
                 }
               ],
               "fields": [
+                "token"
+              ],
+              "presets": [
+                "elastic"
+              ]
+            },
+            {
+              "id": "elastic_url",
+              "label": "Endpoint",
+              "title": "Enter the bulk endpoint",
+              "do": [
+                {
+                  "text": "Use your Elasticsearch endpoint, then a data stream such as `logs-pando.audit-default`, then `/_bulk`."
+                }
+              ],
+              "fields": [
+                "url"
+              ],
+              "presets": [
+                "elastic"
+              ]
+            },
+            {
+              "id": "sumo_source",
+              "label": "HTTP source",
+              "title": "Add an HTTP source",
+              "do": [
+                {
+                  "text": "In Sumo Logic, open **Data Management** → **Data Collection** → **Collection**."
+                },
+                {
+                  "text": "Choose **Add Source** beside a hosted collector, then **HTTP Logs & Metrics**."
+                },
+                {
+                  "text": "Copy its **HTTP Source Address**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Sumo Logic HTTP source",
+                  "url": "https://www.sumologic.com/help/docs/send-data/hosted-collectors/http-source/logs-metrics/"
+                }
+              ],
+              "fields": [
+                "secret_url"
+              ],
+              "presets": [
+                "sumo_logic"
+              ]
+            },
+            {
+              "id": "azure_rule",
+              "label": "Collection rule",
+              "title": "Create a data collection rule",
+              "do": [
+                {
+                  "text": "In Azure, create a data collection rule with a stream named `Custom-PandoAudit_CL`."
+                },
+                {
+                  "text": "Give the app that mints the token the **Monitoring Metrics Publisher** role on it."
+                },
+                {
+                  "text": "Use the rule's logs ingestion endpoint and immutable ID in the URL."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Azure Logs Ingestion API",
+                  "url": "https://learn.microsoft.com/en-us/azure/azure-monitor/logs/logs-ingestion-api-overview"
+                }
+              ],
+              "fields": [
+                "url"
+              ],
+              "presets": [
+                "azure_monitor"
+              ]
+            },
+            {
+              "id": "azure_token",
+              "label": "Token",
+              "title": "Get an access token",
+              "do": [
+                {
+                  "text": "Get a Microsoft Entra ID access token for `https://monitor.azure.com`."
+                },
+                {
+                  "text": "Replace it before it expires: Pando does not refresh it."
+                }
+              ],
+              "fields": [
+                "token"
+              ],
+              "presets": [
+                "azure_monitor"
+              ]
+            },
+            {
+              "id": "endpoint",
+              "label": "Endpoint",
+              "title": "Enter the ingest endpoint",
+              "fields": [
+                "body",
+                "url",
+                "secret_url"
+              ],
+              "presets": [
+                "other"
+              ]
+            },
+            {
+              "id": "token",
+              "label": "Token",
+              "title": "Enter the token",
+              "fields": [
                 "token",
                 "auth_header",
                 "auth_scheme"
+              ],
+              "presets": [
+                "other"
               ]
             },
             {

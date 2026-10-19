@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
+	"strconv"
 )
 
 // KindInfo describes a kind of adapter this build of Pando can run: what it is
@@ -29,6 +31,13 @@ type KindInfo struct {
 	// rather than knowing its quirks. A form offers them; the settings are the
 	// same ones Fields describes.
 	Presets []Preset `json:"presets,omitempty"`
+
+	// OtherPreset names the choice, beside the presets, of a provider none of
+	// them is — "Another provider", "Another SIEM". Guided setup asks which
+	// provider first when a kind has presets; empty means the presets cover
+	// every case, as github.com and GitHub Enterprise Server do. A step for
+	// that choice lists PresetOther in its Presets.
+	OtherPreset string `json:"other_preset,omitempty"`
 
 	// Steps walk someone through setting one up, one screen at a time: what to
 	// do in the provider's own console, then the settings that produces. Every
@@ -79,7 +88,16 @@ type Step struct {
 	// ShownWhen skips the step unless a setting asked on an earlier step has
 	// one of the given values — the GitHub App steps only for a GitHub App.
 	ShownWhen *Condition `json:"shown_when,omitempty"`
+
+	// Presets are the providers the step is for, by preset ID, and
+	// PresetOther for the choice of one no preset names: Splunk's token
+	// instructions for Splunk only. Empty is every provider.
+	Presets []string `json:"presets,omitempty"`
 }
+
+// PresetOther stands, in a step's Presets, for a provider none of the kind's
+// presets names.
+const PresetOther = "other"
 
 // Action is one thing to do in a step.
 type Action struct {
@@ -246,17 +264,18 @@ func (k KindInfo) hasField(key string) bool {
 
 // validateSteps checks that guided setup asks for every basic setting once, in
 // an order that works: a setting, or a step, shown only for another setting's
-// value comes after the step that asks for that value.
+// value comes after the step that asks for that value. A kind with presets is
+// checked once for each provider a person can choose, since each sees only
+// the steps for it.
 func (k KindInfo) validateSteps() error {
 	if len(k.Steps) == 0 {
 		return nil
 	}
 	where := fmt.Sprintf("%s/%s", k.Category, k.Kind)
-	fields := map[string]Field{}
-	for _, f := range k.Fields {
-		fields[f.Key] = f
+	presets := map[string]bool{}
+	for _, p := range k.Presets {
+		presets[p.ID] = true
 	}
-	askedOn := map[string]int{} // field key -> index of the step asking it
 	stepIDs := map[string]bool{}
 	for i, st := range k.Steps {
 		switch {
@@ -271,27 +290,75 @@ func (k KindInfo) validateSteps() error {
 		case len(st.Fields) == 0:
 			return fmt.Errorf("%s step %q asks for no settings: fold its instructions into the step that uses them", where, st.ID)
 		}
+		stepIDs[st.ID] = true
 		for _, l := range st.Links {
 			if l.Label == "" || l.URL == "" {
 				return fmt.Errorf("%s step %q has a link without both a label and an address", where, st.ID)
 			}
-		}
-		stepIDs[st.ID] = true
-		for _, l := range st.Links {
 			for _, m := range suggestRef.FindAllStringSubmatch(l.URL, -1) {
 				if !k.hasField(m[1]) {
 					return fmt.Errorf("%s step %q links with {%s}, which is not one of its settings", where, st.ID, m[1])
 				}
 			}
 		}
-		if c := st.ShownWhen; c != nil {
-			if j, ok := askedOn[c.Key]; !ok || j >= i {
-				return fmt.Errorf("%s step %q is shown for setting %q, which no earlier step asks for", where, st.ID, c.Key)
-			}
-		}
 		for _, a := range st.Do {
 			if a.Text == "" {
 				return fmt.Errorf("%s step %q has an empty instruction", where, st.ID)
+			}
+		}
+		for _, id := range st.Presets {
+			if !presets[id] && !(id == PresetOther && k.OtherPreset != "") {
+				return fmt.Errorf("%s step %q is for provider %q, which is not one of its presets", where, st.ID, id)
+			}
+		}
+	}
+
+	// Each provider a person can pick sees the steps for it; with no presets,
+	// there is one way through.
+	paths := []string{""}
+	if len(k.Presets) > 0 {
+		paths = paths[:0]
+		for _, p := range k.Presets {
+			paths = append(paths, p.ID)
+		}
+		if k.OtherPreset != "" {
+			paths = append(paths, PresetOther)
+		}
+	}
+	for _, path := range paths {
+		var steps []Step
+		for _, st := range k.Steps {
+			if st.forPreset(path) {
+				steps = append(steps, st)
+			}
+		}
+		if err := k.validatePath(where, path, steps); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// forPreset reports whether a step is shown to someone who chose the preset;
+// a step that names none is for everyone.
+func (st Step) forPreset(id string) bool {
+	return id == "" || len(st.Presets) == 0 || slices.Contains(st.Presets, id)
+}
+
+// validatePath checks one way through the steps.
+func (k KindInfo) validatePath(where, path string, steps []Step) error {
+	if path != "" {
+		where += " for provider " + strconv.Quote(path)
+	}
+	fields := map[string]Field{}
+	for _, f := range k.Fields {
+		fields[f.Key] = f
+	}
+	askedOn := map[string]int{} // field key -> index of the step asking it
+	for i, st := range steps {
+		if c := st.ShownWhen; c != nil {
+			if j, ok := askedOn[c.Key]; !ok || j >= i {
+				return fmt.Errorf("%s step %q is shown for setting %q, which no earlier step asks for", where, st.ID, c.Key)
 			}
 		}
 		for _, key := range st.Fields {
@@ -303,7 +370,7 @@ func (k KindInfo) validateSteps() error {
 				return fmt.Errorf("%s step %q asks for advanced setting %q: advanced settings are shown on the review, not on a step", where, st.ID, key)
 			}
 			if j, dup := askedOn[key]; dup {
-				return fmt.Errorf("%s asks for setting %q on both step %q and step %q", where, key, k.Steps[j].ID, st.ID)
+				return fmt.Errorf("%s asks for setting %q on both step %q and step %q", where, key, steps[j].ID, st.ID)
 			}
 			if c := f.ShownWhen; c != nil {
 				if j, ok := askedOn[c.Key]; !ok || j > i {
@@ -313,10 +380,24 @@ func (k KindInfo) validateSteps() error {
 			askedOn[key] = i
 		}
 	}
-	for _, f := range k.Fields {
-		if _, ok := askedOn[f.Key]; !ok && !f.Advanced {
-			return fmt.Errorf("%s setting %q is on no step: every basic setting is asked on exactly one", where, f.Key)
+	// A named provider's steps may leave out a setting that is not required:
+	// its preset settles it, or it does not apply. Review shows it with the
+	// advanced ones. Anyone else is asked every setting.
+	named := path != "" && path != PresetOther
+	var values map[string]string
+	for _, p := range k.Presets {
+		if p.ID == path {
+			values = p.Values
 		}
+	}
+	for _, f := range k.Fields {
+		if _, ok := askedOn[f.Key]; ok || f.Advanced {
+			continue
+		}
+		if _, given := values[f.Key]; named && (!f.Required || given) {
+			continue
+		}
+		return fmt.Errorf("%s setting %q is on no step: every basic setting is asked on exactly one", where, f.Key)
 	}
 	return nil
 }

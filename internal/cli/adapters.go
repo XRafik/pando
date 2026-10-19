@@ -76,7 +76,7 @@ func adapterCmd(client func() (*Client, error)) *cobra.Command {
 		},
 	})
 
-	var id, name string
+	var id, name, preset string
 	var set []string
 	var isDefault, disabled bool
 	add := &cobra.Command{
@@ -115,6 +115,12 @@ func adapterCmd(client func() (*Client, error)) *cobra.Command {
 			}
 
 			values := map[string]string{}
+			// A known provider's values first, so --set can change any of them.
+			if preset != "" {
+				if err := applyPreset(info, preset, values); err != nil {
+					return err
+				}
+			}
 			for _, kv := range set {
 				key, value, found := strings.Cut(kv, "=")
 				if !found || key == "" {
@@ -134,7 +140,7 @@ func adapterCmd(client func() (*Client, error)) *cobra.Command {
 			// out: the same steps, in the same order, as the console's.
 			asked := map[string]bool{}
 			if interactive(cmd) && len(info.Steps) > 0 {
-				if asked, err = walkSteps(cmd, info, values, credentials); err != nil {
+				if asked, err = walkSteps(cmd, info, preset, values, credentials); err != nil {
 					return err
 				}
 			}
@@ -237,6 +243,7 @@ func adapterCmd(client func() (*Client, error)) *cobra.Command {
 			return nil
 		},
 	}
+	add.Flags().StringVar(&preset, "preset", "", "a known provider's settings to start from, by ID, as `pando adapter kinds` lists them; at a terminal, asked when not given")
 	add.Flags().StringVar(&id, "id", "", "the adapter's ID (default: the kind's usual prefix and name, e.g. ai_anthropic)")
 	add.Flags().StringVar(&name, "name", "", "what the console calls it (default: the kind's name)")
 	add.Flags().StringArrayVar(&set, "set", nil, "a setting, KEY=VALUE; repeat for more")
@@ -328,6 +335,12 @@ type kindInfo struct {
 	IDPrefix    string      `json:"id_prefix"`
 	Fields      []kindField `json:"fields"`
 	Steps       []kindStep  `json:"steps"`
+	Presets     []struct {
+		ID     string            `json:"id"`
+		Label  string            `json:"label"`
+		Values map[string]string `json:"values"`
+	} `json:"presets"`
+	OtherPreset string `json:"other_preset"`
 }
 
 // kindField is one setting a kind takes, as GET /adapters/kinds says.
@@ -367,6 +380,7 @@ type kindStep struct {
 	} `json:"links"`
 	Fields    []string   `json:"fields"`
 	ShownWhen *condition `json:"shown_when"`
+	Presets   []string   `json:"presets"`
 }
 
 type condition struct {

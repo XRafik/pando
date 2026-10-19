@@ -14561,6 +14561,9 @@
               "$ref": "#/components/schemas/Preset"
             }
           },
+          "other_preset": {
+            "type": "string"
+          },
           "steps": {
             "type": "array",
             "items": {
@@ -16774,6 +16777,12 @@
           },
           "shown_when": {
             "$ref": "#/components/schemas/Condition"
+          },
+          "presets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": [
