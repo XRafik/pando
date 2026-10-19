@@ -139,11 +139,12 @@ export function AdapterGuide({
     go(index + 1);
   };
 
+  const choosing = screen.kind === 'choose';
   const categoryWord = category === 'ai' ? 'AI' : categoryLabel(category).toLowerCase();
   // The kind is named once it is chosen and the walk-through has moved past
   // choosing it: on the first screen, a pick can still change.
   let title = 'Add adapter';
-  if (kind && screen.kind !== 'choose') title = `Add ${kind.name}`;
+  if (kind && !choosing) title = `Add ${kind.name}`;
   else if (category) title = `Add ${categoryWord} adapter`;
 
   return (
@@ -170,21 +171,18 @@ export function AdapterGuide({
         </>
       }
     >
+      {/* Choosing the adapter has the dialog to itself: until one is chosen
+          there are no steps to list. From its first step on, every step is
+          named beside the one being answered. */}
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'calc(var(--space-9) + var(--space-7)) minmax(0, 1fr)',
+          gridTemplateColumns: choosing ? 'minmax(0, 1fr)' : 'calc(var(--space-9) + var(--space-7)) minmax(0, 1fr)',
           gap: 'var(--space-6)',
           alignItems: 'start',
         }}
       >
-        <StepRail
-          screens={screens}
-          index={index}
-          pending={!kind}
-          onGo={go}
-          onShowAll={kind ? onShowAll : undefined}
-        />
+        {!choosing && <StepRail screens={screens} index={index} onGo={go} onShowAll={onShowAll} />}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)', minWidth: 0 }}>
           {screen.kind === 'choose' && (
@@ -289,29 +287,24 @@ const quietLink = {
 
 /**
  * Every step by name, so what is still to come is in view: finished ones
- * marked and a click from going back to, the current one set off. Before a
- * kind is chosen its own steps are not known yet, and the list says so.
+ * marked and a click from going back to, the current one set off.
  */
 function StepRail({
   screens,
   index,
-  pending,
   onGo,
   onShowAll,
 }: {
   screens: Screen[];
   index: number;
-  /** No kind is chosen, so only Pando's own steps are known. */
-  pending: boolean;
   onGo: (i: number) => void;
-  onShowAll?: () => void;
+  onShowAll: () => void;
 }) {
-  const items: { label: string; state: 'done' | 'current' | 'next'; at?: number }[] = screens.map((s, i) => ({
+  const items: { label: string; state: 'done' | 'current' | 'next'; at: number }[] = screens.map((s, i) => ({
     label: screenLabel(s),
     state: i < index ? 'done' : i === index ? 'current' : 'next',
     at: i,
   }));
-  if (pending) items.push({ label: 'Its own steps', state: 'next' }, { label: 'Name', state: 'next' }, { label: 'Review', state: 'next' });
 
   return (
     <nav aria-label="Steps" style={{ position: 'sticky', top: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
@@ -342,13 +335,13 @@ function StepRail({
                 color: 'var(--ink-secondary)',
               }}
             >
-              {it.state === 'done' ? <Icon name="check" size={14} /> : it.at === undefined ? '' : it.at + 1}
+              {it.state === 'done' ? <Icon name="check" size={14} /> : it.at + 1}
             </span>
           );
           return (
             <li key={`${it.label}-${i}`} aria-current={it.state === 'current' ? 'step' : undefined}>
-              {it.state === 'done' && it.at !== undefined ? (
-                <button type="button" onClick={() => onGo(it.at!)} style={{ ...row, cursor: 'pointer' }}>
+              {it.state === 'done' ? (
+                <button type="button" onClick={() => onGo(it.at)} style={{ ...row, cursor: 'pointer' }}>
                   {marker}
                   {it.label}
                 </button>
@@ -362,11 +355,9 @@ function StepRail({
           );
         })}
       </ol>
-      {onShowAll && (
-        <button type="button" onClick={onShowAll} style={{ ...quietLink, paddingLeft: 'var(--space-2)' }}>
-          Show all settings
-        </button>
-      )}
+      <button type="button" onClick={onShowAll} style={{ ...quietLink, paddingLeft: 'var(--space-2)' }}>
+        Show all settings
+      </button>
     </nav>
   );
 }
