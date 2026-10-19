@@ -19,6 +19,33 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+### Added
+
+- **Guided setup for adapters and sign-in providers** (#268, R-261). Adding one now walks through
+  it a step at a time: choose the kind, then the provider when there are several (an audit sink's
+  SIEM, an identity provider such as Okta or Microsoft Entra ID), then that provider's own steps,
+  each saying what to do in its console with a link to the page, then a name and a review. A new
+  identity provider's redirect URI, ACS URL and entity ID are shown on the step that registers
+  them, before it is saved. **Show all settings** keeps the full form. `pando adapter add` walks
+  the same steps at a terminal for whatever `--set` leaves out, and takes `--preset`.
+- Saving an adapter can return **warnings** about something that saved but may not work as wanted;
+  the console shows them and `pando adapter add` prints them. Cloudflare Tunnel warns of a console
+  hostname more than one level below its zone, which its included certificate does not cover.
+
+### Changed
+
+- Cloudflare Tunnel's settings are a **primary zone** and **secondary zones**, typed into one field,
+  and a new adapter's console hostname starts at `pando.<primary zone>`.
+
+### Fixed
+
+- Browser sign-in to a Gitea source asked for too little scope to list repositories; it now asks
+  for `read:user` as well (#268).
+- Several adapters' setup help, stated defaults and error remedies sent people to pages or values
+  that had changed, among them Cloudflare's account ID, the GitHub App private key, the Incus server
+  certificate and BuildKit's default address (#268).
+- An Authentik SAML provider read the person's full name as their username (#268).
+
 ## [0.9.0] - 2026-10-18
 
 ### Security
