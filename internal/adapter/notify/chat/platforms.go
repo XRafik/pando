@@ -15,6 +15,7 @@ var Slack = Platform{
 	Placeholder: "https://hooks.slack.com/services/…",
 	Help:        "The incoming webhook URL Slack gives you for the channel.",
 	Hosts:       []string{"hooks.slack.com", "hooks.slack-gov.com"},
+	Steps:       slackSteps(),
 	Format:      slackMessage,
 }
 
@@ -24,8 +25,9 @@ var Teams = Platform{
 	Name:        "Microsoft Teams",
 	Description: "Posts the events a subscription chooses to a Microsoft Teams channel, as an adaptive card, through a Workflows webhook.",
 	IDPrefix:    "ntf_",
-	Placeholder: "https://….logic.azure.com/workflows/…",
-	Help:        "The URL of a Teams workflow that posts a webhook's adaptive card to the channel.",
+	Placeholder: "https://….environment.api.powerplatform.com/powerautomate/automations/direct/workflows/…",
+	Help:        "The webhook URL of a Send webhook alerts to a channel workflow.",
+	Steps:       teamsSteps(),
 	Format:      teamsMessage,
 }
 
@@ -36,8 +38,9 @@ var Discord = Platform{
 	Description: "Posts the events a subscription chooses to a Discord channel, through a channel webhook.",
 	IDPrefix:    "ntf_",
 	Placeholder: "https://discord.com/api/webhooks/…",
-	Help:        "The webhook URL from the Discord channel's Integrations settings.",
+	Help:        "The webhook URL from the server's Integrations settings.",
 	Hosts:       []string{"discord.com", "discordapp.com"},
+	Steps:       discordSteps(),
 	Format:      discordMessage,
 }
 

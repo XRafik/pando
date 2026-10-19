@@ -43,6 +43,9 @@ type Platform struct {
 	// Empty accepts any host.
 	Hosts []string
 
+	// Steps walk someone through making the webhook (api.KindInfo.Steps).
+	Steps []api.Step
+
 	Format func(n api.Notification) any
 }
 
@@ -169,5 +172,6 @@ func (p Platform) Info() api.KindInfo {
 				Credential: true, Required: true, Placeholder: p.Placeholder},
 			{Key: "timeout_seconds", Label: "Timeout", Type: "int", Help: "Seconds to wait for " + p.Name + " to answer.", Default: "10", Advanced: true},
 		},
+		Steps: p.Steps,
 	}
 }
