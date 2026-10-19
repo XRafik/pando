@@ -357,7 +357,8 @@
               "label": "Console hostname",
               "help": "Where the console is served. Empty is the primary zone.",
               "type": "string",
-              "placeholder": "pando.example.com"
+              "placeholder": "pando.example.com",
+              "suggest": "pando.{zone}"
             },
             {
               "key": "tunnel_id",

@@ -638,7 +638,7 @@ func Info() api.KindInfo {
 				Help:        "More zones apps can be named in.",
 				Placeholder: "example.org"},
 			{Key: "console_hostname", Label: "Console hostname", Type: "string",
-				Help: "Where the console is served. Empty is the primary zone.", Placeholder: "pando.example.com"},
+				Help: "Where the console is served. Empty is the primary zone.", Placeholder: "pando.example.com", Suggest: "pando.{zone}"},
 			{Key: "tunnel_id", Label: "Existing tunnel", Type: "string",
 				Help:    "Leave empty and Pando creates a tunnel of its own. Or give a tunnel's ID to use that one: Pando adds its rules and leaves the rest alone.",
 				Default: "A tunnel of Pando's own", Placeholder: "6ff42ae2-765d-4adf-8112-31c55c1551ef", Advanced: true},

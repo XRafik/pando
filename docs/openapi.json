@@ -11742,6 +11742,9 @@
           },
           "placeholder": {
             "type": "string"
+          },
+          "suggest": {
+            "type": "string"
           }
         },
         "required": [

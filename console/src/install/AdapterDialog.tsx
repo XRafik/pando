@@ -29,6 +29,7 @@ import {
   joinList,
   kindKey,
   listItems,
+  withSuggestions,
   orderCategories,
   sortKinds,
 } from './adapters';
@@ -128,7 +129,14 @@ export function AdapterDialog({
   const setValue = (key: string, value: string | boolean) =>
     form && setDraft({ ...form, values: { ...form.values, [key]: value } });
 
-  const problems = kind && form ? formProblems(kind, form, stored) : {};
+  // What the form shows and sends: a new adapter's suggested settings filled
+  // in. Edits go to `form`, so a suggestion keeps following the setting it is
+  // made from until it is edited itself. A stored adapter's settings are its
+  // own, and get none.
+  const view: AdapterForm | null =
+    form && kind && !existing ? { ...form, values: withSuggestions(kind, form.values) } : form;
+
+  const problems = kind && view ? formProblems(kind, view, stored) : {};
   const shown = (key: string) => (tried ? problems[key] : undefined);
 
   // An AI adapter's functions are chosen here, on the adapter (R-259). Only a
@@ -150,7 +158,7 @@ export function AdapterDialog({
       // what needs a restart, and choosing functions does not.
       const settingsChanged = draft !== null || !existing;
       if (settingsChanged) {
-        await api.post<{ id: string; note?: string }>('/adapters', adapterRequest(kind!, form!, isRegistry ? enabled : existing?.enabled));
+        await api.post<{ id: string; note?: string }>('/adapters', adapterRequest(kind!, view!, isRegistry ? enabled : existing?.enabled));
       }
       if (existing && choice) {
         for (const c of choiceChanges(existing.id, had, choice)) {
@@ -236,7 +244,7 @@ export function AdapterDialog({
         onPick={chooseKind}
         skipChoose={Boolean(startCategory) && inCategory.length === 1}
         kind={kind}
-        form={form}
+        form={view}
         edit={edit}
         stored={stored}
         renderField={(f, error, instructed) => (
@@ -244,7 +252,7 @@ export function AdapterDialog({
             guided
             instructed={instructed}
             field={f}
-            value={form?.values[f.key]}
+            value={view?.values[f.key]}
             error={error}
             onChange={(v) => setValue(f.key, v)}
           />
@@ -267,14 +275,14 @@ export function AdapterDialog({
   const settings = (kind?.fields ?? []).filter((f) => !f.credential);
   const missingKind = existing && kinds.isSuccess && !kind;
 
-  const visible = kind && form ? (kind.fields ?? []).filter((f) => isShown(kind, f, form.values)) : [];
+  const visible = kind && view ? (kind.fields ?? []).filter((f) => isShown(kind, f, view.values)) : [];
   const basic = visible.filter((f) => !f.advanced);
   const advanced = visible.filter((f) => f.advanced);
   const fieldInput = (f: KindField) => (
     <FieldInput
       key={f.key}
       field={f}
-      value={form?.values[f.key]}
+      value={view?.values[f.key]}
       stored={existing ? stored.includes(f.key) : undefined}
       error={shown(f.key)}
       onChange={(v) => setValue(f.key, v)}

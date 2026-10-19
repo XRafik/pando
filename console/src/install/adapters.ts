@@ -29,6 +29,9 @@ export interface KindField {
   default?: string;
   /** An example, for a setting with no default. */
   placeholder?: string;
+  /** Where a new adapter's setting starts, with {key} for another setting's
+   *  value, such as pando.{zone}. Sent as if typed. */
+  suggest?: string;
   /** What a `select` offers. */
   options?: KindOption[];
   /** A `select` that also takes a value it does not list, typed in. */
@@ -158,6 +161,28 @@ export function stepFields(kind: AdapterKind, step: KindStep, values: Record<str
   return step.fields
     .map((k) => byKey.get(k))
     .filter((f): f is KindField => f !== undefined && isShown(kind, f, values));
+}
+
+/**
+ * The values with each untouched setting that suggests one filled in from
+ * the settings it names: pando.{zone} reads pando.example.com while the zone
+ * is example.com, and follows it until the setting itself is edited. One
+ * naming a setting still empty is left empty.
+ */
+export function withSuggestions(kind: AdapterKind, values: Record<string, string | boolean>): Record<string, string | boolean> {
+  const out = { ...values };
+  for (const f of kind.fields ?? []) {
+    if (!f.suggest || f.key in values) continue;
+    let missing = false;
+    const text = f.suggest.replace(/\{([a-z0-9_]+)\}/g, (_, key: string) => {
+      const on = (kind.fields ?? []).find((x) => x.key === key);
+      const v = on ? effectiveText(on, values[key]) : '';
+      if (!v) missing = true;
+      return v;
+    });
+    if (!missing) out[f.key] = text;
+  }
+  return out;
 }
 
 /** A list setting's values, as typed: split on commas, spaces and new lines,

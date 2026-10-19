@@ -1,6 +1,9 @@
 package api
 
-import "fmt"
+import (
+	"fmt"
+	"regexp"
+)
 
 // KindInfo describes a kind of adapter this build of Pando can run: what it is
 // called, what it is for, and the settings configuring one takes.
@@ -156,6 +159,12 @@ type Field struct {
 
 	// Placeholder is an example value, for a setting with no default.
 	Placeholder string `json:"placeholder,omitempty"`
+
+	// Suggest is the value a form starts a new adapter's setting at, with
+	// {key} standing for another setting's value: "pando.{zone}". It follows
+	// that setting until the setting is edited, and is then the person's own.
+	// Unlike Default it is sent as if typed; the adapter never applies it.
+	Suggest string `json:"suggest,omitempty"`
 }
 
 // Option is one choice a "select" offers.
@@ -191,6 +200,11 @@ func (k KindInfo) Validate() error {
 		if f.List && (f.Type != "string" || f.Credential || f.Multiline) {
 			return fmt.Errorf("%s/%s setting %q is a list: a list is a plain string setting, neither a credential nor multiline", k.Category, k.Kind, f.Key)
 		}
+		for _, m := range suggestRef.FindAllStringSubmatch(f.Suggest, -1) {
+			if !k.hasField(m[1]) || m[1] == f.Key {
+				return fmt.Errorf("%s/%s setting %q suggests from {%s}, which is not another of its settings", k.Category, k.Kind, f.Key, m[1])
+			}
+		}
 		if !f.Advanced {
 			continue
 		}
@@ -204,6 +218,18 @@ func (k KindInfo) Validate() error {
 		}
 	}
 	return k.validateSteps()
+}
+
+// suggestRef is a {key} in a Suggest.
+var suggestRef = regexp.MustCompile(`\{([a-z0-9_]+)\}`)
+
+func (k KindInfo) hasField(key string) bool {
+	for _, f := range k.Fields {
+		if f.Key == key {
+			return true
+		}
+	}
+	return false
 }
 
 // validateSteps checks that guided setup asks for every basic setting once, in
