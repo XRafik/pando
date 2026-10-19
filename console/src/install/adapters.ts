@@ -201,7 +201,7 @@ export function fillRefs(
   supplied: Record<string, string> = {},
 ): string | undefined {
   let missing = false;
-  const text = template.replace(/\{([a-z0-9_]+)\}/g, (_, key: string) => {
+  const text = template.replaceAll(/\{([a-z0-9_]+)\}/g, (_, key: string) => {
     if (supplied[key]) return supplied[key];
     const on = (kind.fields ?? []).find((x) => x.key === key);
     const v = on ? effectiveText(on, values[key]) : '';
@@ -219,7 +219,7 @@ export function fillText(
   text: string,
   supplied: Record<string, string> = {},
 ): string {
-  return text.replace(/\{[a-z0-9_]+\}/g, (whole) => fillRefs(kind, values, whole, supplied) ?? whole);
+  return text.replaceAll(/\{[a-z0-9_]+\}/g, (whole) => fillRefs(kind, values, whole, supplied) ?? whole);
 }
 
 /** The settings a person on this way through is not asked on any step: a

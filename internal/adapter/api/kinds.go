@@ -331,7 +331,7 @@ func (k KindInfo) validateSteps() error {
 			}
 		}
 		for _, id := range st.Presets {
-			if !presets[id] && !(id == PresetOther && k.OtherPreset != "") {
+			if !presets[id] && (id != PresetOther || k.OtherPreset == "") {
 				return fmt.Errorf("%s step %q is for provider %q, which is not one of its presets", where, st.ID, id)
 			}
 		}

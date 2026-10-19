@@ -600,13 +600,13 @@ function ListInput({
   value,
   error,
   onChange,
-}: {
+}: Readonly<{
   field: KindField;
   label: string;
   value: string;
   error?: string;
   onChange: (v: string) => void;
-}) {
+}>) {
   const items = listItems(value);
   const [typing, setTyping] = useState('');
   // The field inside draws no outline of its own; the box it sits in does,

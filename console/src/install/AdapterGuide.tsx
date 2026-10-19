@@ -71,7 +71,7 @@ export function AdapterGuide({
   nameStep,
   onProvider,
   reviewNote,
-}: {
+}: Readonly<{
   categories: string[];
   category: string;
   /** Whether the category is asked, or was given by where the dialog opened. */
@@ -117,7 +117,7 @@ export function AdapterGuide({
   onProvider?: (preset: KindPreset | undefined) => void;
   /** One line on the review, above the button that saves. */
   reviewNote?: string;
-}) {
+}>) {
   const [at, setAt] = useState(0);
   const [errors, setErrors] = useState<Record<string, string>>({});
   // The provider chosen, for the kind it was chosen for: choosing another
@@ -127,7 +127,7 @@ export function AdapterGuide({
   // A kind with presets asks which provider first, and its steps are the
   // chosen provider's; until one is chosen there are none to show.
   const presets = kind?.presets ?? [];
-  const preset = provider && provider.kind === chosen ? provider.id : undefined;
+  const preset = provider?.kind === chosen ? provider.id : undefined;
   const ready = Boolean(kind) && (presets.length === 0 || preset !== undefined);
   const steps = kind && form && ready ? kindSteps(kind, form.values, preset) : [];
   const screens: Screen[] = [];
@@ -400,13 +400,13 @@ function StepRail({
   pickLabel,
   onGo,
   onShowAll,
-}: {
+}: Readonly<{
   screens: Screen[];
   index: number;
   pickLabel: string;
   onGo: (i: number) => void;
   onShowAll: () => void;
-}) {
+}>) {
   const items: { label: string; state: 'done' | 'current' | 'next'; at: number }[] = screens.map((s, i) => ({
     label: screenLabel(s, pickLabel),
     state: i < index ? 'done' : i === index ? 'current' : 'next',
@@ -482,12 +482,12 @@ function TilePicker({
   items,
   chosen,
   onPick,
-}: {
+}: Readonly<{
   label: string;
   items: { key: string; name: string; description?: string }[];
   chosen: string;
   onPick: (key: string) => void;
-}) {
+}>) {
   const [query, setQuery] = useState('');
   const q = query.trim().toLowerCase();
   const shown = q
@@ -555,7 +555,7 @@ function TilePicker({
 
 /** Step text, with its two marks: bold for a name on the provider's screen,
  *  code for something typed exactly. */
-export function Marked({ text }: { text: string }) {
+function Marked({ text }: Readonly<{ text: string }>) {
   return (
     <>
       {runs(text).map((r, i) => {
@@ -587,13 +587,13 @@ function StepBody({
   fill,
   links,
   children,
-}: {
+}: Readonly<{
   step: KindStep;
   /** Step text with its {key}s filled in. */
   fill: (text: string) => string;
   links: { label: string; url: string }[];
   children: React.ReactNode;
-}) {
+}>) {
   return (
     <>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
@@ -604,7 +604,7 @@ function StepBody({
           </p>
         )}
       </div>
-      {step.do && step.do.length > 0 && (
+      {(step.do?.length ?? 0) > 0 && (
         <ol
           style={{
             margin: 0,
@@ -615,7 +615,7 @@ function StepBody({
             gap: 'var(--space-2)',
           }}
         >
-          {step.do.map((a, i) => (
+          {step.do!.map((a, i) => (
             <li key={i}>
               <Marked text={fill(a.text)} />
               {a.table && <StepTable table={a.table} />}
@@ -656,7 +656,7 @@ function StepBody({
   );
 }
 
-function StepTable({ table }: { table: NonNullable<NonNullable<KindStep['do']>[number]['table']> }) {
+function StepTable({ table }: Readonly<{ table: NonNullable<NonNullable<KindStep['do']>[number]['table']> }>) {
   return (
     <table
       style={{
@@ -692,7 +692,7 @@ function StepTable({ table }: { table: NonNullable<NonNullable<KindStep['do']>[n
   );
 }
 
-function NameFields({ form, edit, error }: { form: AdapterForm; edit: (p: Partial<AdapterForm>) => void; error?: string }) {
+function NameFields({ form, edit, error }: Readonly<{ form: AdapterForm; edit: (p: Partial<AdapterForm>) => void; error?: string }>) {
   return (
     <>
       <Input label="Name" value={form.name} onChange={(e) => edit({ name: e.target.value })} />
@@ -720,7 +720,7 @@ function Review({
   renderField,
   onChange,
   children,
-}: {
+}: Readonly<{
   kind: AdapterKind;
   form: AdapterForm;
   steps: KindStep[];
@@ -733,7 +733,7 @@ function Review({
   renderField: (f: KindField, error?: string, instructed?: boolean) => React.ReactNode;
   onChange: (screenID: string) => void;
   children: React.ReactNode;
-}) {
+}>) {
   const rows: { label: string; value: string; mono: boolean; to: string }[] = [];
   if (provider) rows.push({ label: 'Provider', value: provider, mono: false, to: 'provider' });
   for (const st of steps) {

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -115,7 +116,7 @@ func askProvider(cmd *cobra.Command, info *kindInfo, values map[string]string) (
 		fmt.Fprintf(cmd.ErrOrStderr(), "  %d) %s\n", n+1, c.label)
 	}
 	v, err := prompt(cmd, "Provider [1]: ")
-	if err != nil && err != io.EOF {
+	if err != nil && !errors.Is(err, io.EOF) {
 		return "", err
 	}
 	n := 1
@@ -226,7 +227,7 @@ func ask(cmd *cobra.Command, info *kindInfo, values, credentials map[string]stri
 		label += " [" + start + "]"
 	}
 	v, err := prompt(cmd, label+": ")
-	if err != nil && err != io.EOF {
+	if err != nil && !errors.Is(err, io.EOF) {
 		return err
 	}
 	if len(f.Options) > 0 && v != "" {
