@@ -1479,6 +1479,7 @@ var toolList = []tool{
 			"app_id":           str("The app. Omit for install-wide."),
 			"url":              str("The webhook URL to post to. Give this or adapter_id."),
 			"adapter_id":       str("A notification adapter's ID. Give this or url."),
+			"channel":          str("The channel it posts to, for an adapter whose destination says channels, such as Slack; pando_list_notify_channels lists them."),
 			"description":      str("What the subscription is for. Optional."),
 			"method":           str("A webhook's HTTP method: POST, PUT or PATCH. Optional."),
 			"content_type":     str("A webhook's content type. Optional; application/json by default."),
@@ -1502,6 +1503,9 @@ var toolList = []tool{
 				body["destination"], body["url"] = "webhook", hook
 			} else {
 				body["destination"], body["adapter_id"] = "notify", adapter
+				if channel, _ := stringArg(args, "channel", false); channel != "" {
+					body["channel"] = channel
+				}
 			}
 			if err := requestOptions(args, body); err != nil {
 				return "", "", nil, err
@@ -1511,12 +1515,13 @@ var toolList = []tool{
 	},
 	{
 		Name:        "pando_update_subscription",
-		Description: "Change a subscription's events, url, adapter_id or description, or turn it on or off with enabled (true or false).",
+		Description: "Change a subscription's events, url, adapter_id, channel or description, or turn it on or off with enabled (true or false).",
 		Schema: schema(map[string]any{
 			"subscription_id":  str("The subscription's ID, sub_…."),
 			"events":           str("Comma-separated event names or patterns. Optional."),
 			"url":              str("A new webhook URL. Optional."),
 			"adapter_id":       str("A new notification adapter. Optional."),
+			"channel":          str("A new channel, for an adapter such as Slack. Optional."),
 			"description":      str("A new description. Optional."),
 			"enabled":          str("true or false. Optional."),
 			"method":           str("A webhook's HTTP method: POST, PUT or PATCH. Optional."),
@@ -1530,7 +1535,7 @@ var toolList = []tool{
 				return "", "", nil, err
 			}
 			body := map[string]any{}
-			for _, k := range []string{"url", "adapter_id", "description"} {
+			for _, k := range []string{"url", "adapter_id", "channel", "description"} {
 				if v, _ := stringArg(args, k, false); v != "" {
 					body[k] = v
 				}
@@ -1551,6 +1556,64 @@ var toolList = []tool{
 				return "", "", nil, err
 			}
 			return "PATCH", "/subscriptions/" + url.PathEscape(id), body, nil
+		},
+	},
+	{
+		Name: "pando_list_notify_adapters",
+		Description: "List the notification adapters, each with whether it can send: capabilities.authorized, and problem saying why one cannot. " +
+			"One with web_authorization or manual_authorization that is not authorized, such as Slack, needs pando_connect_notify first.",
+		Schema: schema(map[string]any{}),
+		request: func(map[string]any) (string, string, any, error) {
+			return "GET", "/notify", nil, nil
+		},
+	},
+	{
+		Name: "pando_connect_notify",
+		Description: "Connect a notification adapter such as Slack to its provider. mode web takes token, a Slack configuration token " +
+			"(Slack's app settings, Your App Configuration Tokens, Generate Token) used once and never stored; Pando creates its app " +
+			"and returns authorize_url for the person to open in a browser signed in to Pando and choose Allow. Slack returns only to " +
+			"an https address. mode manual without token returns authorize_url, which creates the app in Slack by hand; with token, " +
+			"the bot token it shows once installed, it finishes. Check pando_list_notify_adapters afterwards.",
+		Schema: schema(map[string]any{
+			"adapter_id": str("The adapter's ID, from pando_list_notify_adapters."),
+			"mode":       str("web (the default) or manual."),
+			"token":      str("For web, a Slack configuration token; for manual, the app's bot token, or omit for the link."),
+		}, "adapter_id"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, err := stringArg(args, "adapter_id", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			mode, _ := stringArg(args, "mode", false)
+			token, _ := stringArg(args, "token", false)
+			if mode == "" {
+				mode = "web"
+			}
+			body := map[string]string{"mode": mode}
+			if token != "" {
+				body["token"] = token
+			}
+			return "POST", "/notify/" + url.PathEscape(id) + "/authorize", body, nil
+		},
+	},
+	{
+		Name: "pando_list_notify_channels",
+		Description: "List the channels a subscription to a notification adapter such as Slack can post to: id, name, private. " +
+			"A private Slack channel is listed once Pando is invited to it with /invite @Pando.",
+		Schema: schema(map[string]any{
+			"adapter_id": str("The adapter's ID."),
+			"q":          str("Only channels whose names contain this. Optional."),
+		}, "adapter_id"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, err := stringArg(args, "adapter_id", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			path := "/notify/" + url.PathEscape(id) + "/channels"
+			if q, _ := stringArg(args, "q", false); q != "" {
+				path += "?q=" + url.QueryEscape(q)
+			}
+			return "GET", path, nil, nil
 		},
 	},
 	{

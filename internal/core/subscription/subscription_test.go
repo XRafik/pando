@@ -7,12 +7,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/trypando/pando/internal/adapter/api"
+	"github.com/trypando/pando/internal/core/notifyconn"
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/secret"
@@ -138,6 +140,14 @@ func (r *recorder) HealthCheck(context.Context) error                { return ni
 func (r *recorder) Capabilities() api.NotifyCapabilities {
 	return api.NotifyCapabilities{Audience: r.audience}
 }
+
+func (*recorder) Channels(context.Context, string) ([]api.NotifyChannel, error) { return nil, nil }
+func (*recorder) BeginAuthorization(context.Context, api.AuthorizationRequest) (api.Authorization, error) {
+	return api.Authorization{}, nil
+}
+func (*recorder) CompleteAuthorization(context.Context, api.AuthorizationCompletion) (api.AuthorizationResult, error) {
+	return api.AuthorizationResult{}, nil
+}
 func (r *recorder) Notify(_ context.Context, n api.Notification) error {
 	r.got = append(r.got, n)
 	return nil
@@ -192,4 +202,91 @@ func TestDescribeNamesTheAppAndWhatHappened(t *testing.T) {
 	require.Equal(t, "The build exited with status 1.", n.Body)
 	require.Equal(t, "evt_1", n.EventID)
 	require.Contains(t, n.Fields, api.NotificationField{Label: "Error code", Value: "BUILD_FAILED"})
+}
+
+// channels is Notifiers over a fixed set of adapters, each usable.
+type channels map[string]api.NotifyAdapter
+
+func (c channels) Notify(_ context.Context, id string) (api.NotifyAdapter, bool) {
+	a, ok := c[id]
+	return a, ok
+}
+
+func (c channels) Usable(context.Context) ([]notifyconn.Adapter, error) {
+	var out []notifyconn.Adapter
+	for id, a := range c {
+		out = append(out, notifyconn.Adapter{ID: id, Name: id, Kind: a.Kind(), Capabilities: a.Capabilities()})
+	}
+	return out, nil
+}
+
+// slackish is a channel adapter whose subscriptions each choose a channel.
+type slackish struct{ recorder }
+
+func (s *slackish) Capabilities() api.NotifyCapabilities {
+	return api.NotifyCapabilities{Audience: api.AudienceChannel, Channels: true, Authorized: true}
+}
+
+// TestR367_ASubscriptionToSlackNamesItsChannel asserts the channel rule: an
+// adapter that posts where each subscription chooses needs a channel, and one
+// that posts to one place refuses any.
+func TestR367_ASubscriptionToSlackNamesItsChannel(t *testing.T) {
+	takes := api.NotifyCapabilities{Audience: api.AudienceChannel, Channels: true}
+	fixed := api.NotifyCapabilities{Audience: api.AudienceChannel}
+
+	got, err := checkChannel("ntf_slack", " C1 ", takes)
+	require.NoError(t, err)
+	require.Equal(t, "C1", got)
+	_, err = checkChannel("ntf_slack", "", takes)
+	require.ErrorContains(t, err, "chooses none")
+	_, err = checkChannel("ntf_teams", "C1", fixed)
+	require.ErrorContains(t, err, "cannot choose a channel")
+	_, err = checkChannel("ntf_slack", strings.Repeat("c", 201), takes)
+	require.Equal(t, errs.ValidInvalid, errs.CodeOf(err))
+	got, err = checkChannel("ntf_teams", "", fixed)
+	require.NoError(t, err)
+	require.Empty(t, got)
+}
+
+// TestR374_AnEventIsPostedToTheSubscriptionsChannel asserts the dispatcher
+// hands the adapter the channel the subscription chose, built through
+// Notifiers rather than the startup registry, and says plainly when the
+// adapter cannot send.
+func TestR374_AnEventIsPostedToTheSubscriptionsChannel(t *testing.T) {
+	slack := &slackish{recorder{kind: "slack", audience: api.AudienceChannel}}
+	d := &Dispatcher{Notifiers: channels{"ntf_slack": slack}}
+	sub := state.Subscription{ID: "sub_1", Destination: state.DestinationNotify, AdapterID: "ntf_slack", Channel: "C1"}
+	res := d.notify(context.Background(), sub, state.Event{ID: "evt_1", Name: "deploy.finished"}, nil)
+	require.NoError(t, res.Err)
+	require.Len(t, slack.got, 1)
+	require.Equal(t, "C1", slack.got[0].Channel)
+
+	sub.AdapterID = "ntf_gone"
+	res = d.notify(context.Background(), sub, state.Event{ID: "evt_2", Name: "deploy.finished"}, nil)
+	require.ErrorContains(t, res.Err, "cannot send")
+
+	res = (&Dispatcher{}).notify(context.Background(), sub, state.Event{ID: "evt_3"}, nil)
+	require.ErrorContains(t, res.Err, "no notification adapters")
+}
+
+// TestR373_PandosOwnNotificationsNeverReachAChannelThroughNotifiers asserts
+// the router reads the live adapters and still sends only to those that
+// reach people.
+func TestR373_PandosOwnNotificationsNeverReachAChannelThroughNotifiers(t *testing.T) {
+	console := &recorder{kind: "console", audience: api.AudiencePeople}
+	slack := &slackish{recorder{kind: "slack", audience: api.AudienceChannel}}
+	router := Router{Notifiers: channels{"ntf_console": console, "ntf_slack": slack}, Preferences: prefs{}}
+	require.NoError(t, router.Notify(context.Background(), api.Notification{
+		Kind: api.NotifyAppFailed, Subject: "notes failed", Recipients: []api.Recipient{{UserID: "usr_1"}},
+	}))
+	require.Len(t, console.got, 1)
+	require.Empty(t, slack.got)
+
+	s := &Service{Notifiers: channels{"ntf_console": console, "ntf_slack": slack}}
+	dests := s.Destinations(context.Background())
+	require.Len(t, dests, 2)
+	for _, d := range dests {
+		require.Equal(t, d.ID == "ntf_slack", d.Channels, d.ID)
+	}
+	require.Equal(t, []Channel{{ID: "ntf_console", Kind: "console"}}, s.channels(context.Background()))
 }

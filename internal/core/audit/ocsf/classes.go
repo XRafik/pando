@@ -199,6 +199,8 @@ var classes = map[string]Mapping{
 	"launcher.section.place":             apiUpdate,
 	"launcher.section.rename":            apiUpdate,
 	"launcher.section.unplace":           apiUpdate,
+	"notify.connection.authorize":        apiCreate,
+	"notify.connection.authorized":       apiCreate,
 	"policy.update":                      apiUpdate,
 	"role.create":                        apiCreate,
 	"role.delete":                        apiDelete,

@@ -72,6 +72,10 @@ type Service struct {
 	Apps     Apps
 	Registry *api.Registry
 
+	// Notifiers are the notification adapters a subscription may send
+	// through. Nil reads them from Registry.
+	Notifiers Notifiers
+
 	// Resolver looks webhook hosts up when one is saved. Nil uses the
 	// system resolver.
 	Resolver Resolver
@@ -107,6 +111,10 @@ type CreateRequest struct {
 	URL         string   `json:"url,omitempty"`
 	AdapterID   string   `json:"adapter_id,omitempty"`
 	Description string   `json:"description,omitempty"`
+
+	// Channel is the channel an adapter whose capabilities say Channels
+	// posts to, from GET /notify/{id}/channels; refused for every other.
+	Channel string `json:"channel,omitempty"`
 
 	// How a webhook is sent (R-375). Header values are secret.Value: they
 	// are read from the request, sealed, and never written back out.
@@ -199,34 +207,46 @@ func checkEvents(patterns []string) ([]string, error) {
 // to reach: an account token's subscription may send to a webhook or a
 // channel, and not to an inbox or an email address it does not have.
 func (s *Service) checkDestination(ctx context.Context, destination, rawURL, adapterID string, tokenOwned bool) (string, error) {
+	_, target, err := s.checkTarget(ctx, destination, rawURL, adapterID, tokenOwned)
+	return target, err
+}
+
+// checkTarget is checkDestination, returning the adapter's capabilities too
+// for a notify destination.
+func (s *Service) checkTarget(ctx context.Context, destination, rawURL, adapterID string, tokenOwned bool) (api.NotifyCapabilities, string, error) {
+	var none api.NotifyCapabilities
 	switch destination {
 	case state.DestinationWebhook:
 		allow := false
 		if s.Policy != nil {
 			doc, err := s.Policy.Load(ctx)
 			if err != nil {
-				return "", err
+				return none, "", err
 			}
 			allow = doc.AllowPrivateWebhooks
 		}
-		return CheckURL(ctx, rawURL, allow, s.resolver())
+		target, err := CheckURL(ctx, rawURL, allow, s.resolver())
+		return none, target, err
 	case state.DestinationNotify:
-		if s.Registry == nil {
-			return "", errs.New(errs.StateInvalid, "Pando has no notification adapters configured.")
+		n := notifiersOf(s.Notifiers, s.Registry)
+		if n == nil {
+			return none, "", errs.New(errs.StateInvalid, "Pando has no notification adapters configured.")
 		}
-		a, ok := s.Registry.Notify(adapterID)
+		a, ok := n.Notify(ctx, adapterID)
 		if !ok {
-			return "", errs.Newf(errs.ValidInvalid,
-				"%q is not a notification adapter configured on this installation. Valid answers are the destinations GET /api/v1/events lists.", adapterID)
+			return none, "", errs.Newf(errs.ValidInvalid,
+				"%q is not a notification adapter on this installation that can send. Valid answers are the destinations GET /api/v1/events lists.", adapterID).
+				WithRemedy("An adapter that needs connecting, such as Slack, is connected under Adapters in the console first.")
 		}
-		if tokenOwned && a.Capabilities().Audience == api.AudiencePeople {
-			return "", errs.Newf(errs.ValidInvalid,
+		caps := a.Capabilities()
+		if tokenOwned && caps.Audience == api.AudiencePeople {
+			return none, "", errs.Newf(errs.ValidInvalid,
 				"%s sends to people, and this subscription belongs to an account token, which is not a person and has no inbox or email address. "+
 					"Send to a webhook or a channel such as Slack, or make the subscription signed in as a person.", adapterID)
 		}
-		return "", nil
+		return caps, "", nil
 	default:
-		return "", errs.Newf(errs.ValidInvalid,
+		return none, "", errs.Newf(errs.ValidInvalid,
 			"%q is not a destination. Valid answers: webhook (Pando posts each event to a URL) or notify (a notification adapter such as Slack or email delivers it).", destination)
 	}
 }
@@ -299,7 +319,11 @@ func (s *Service) Create(ctx context.Context, p authz.Principal, req CreateReque
 	if err != nil {
 		return Created{}, err
 	}
-	target, err := s.checkDestination(ctx, req.Destination, req.URL, req.AdapterID, ownerToken != "")
+	caps, target, err := s.checkTarget(ctx, req.Destination, req.URL, req.AdapterID, ownerToken != "")
+	if err != nil {
+		return Created{}, err
+	}
+	channel, err := checkChannel(req.AdapterID, req.Channel, caps)
 	if err != nil {
 		return Created{}, err
 	}
@@ -316,13 +340,13 @@ func (s *Service) Create(ctx context.Context, p authz.Principal, req CreateReque
 	if req.Destination == state.DestinationWebhook {
 		sub.URL = target
 	} else {
-		sub.AdapterID = req.AdapterID
+		sub.AdapterID, sub.Channel = req.AdapterID, channel
 	}
 
 	// The audit names headers and never their values.
 	s.audit(ctx, p, "subscription.create", sub, map[string]any{
 		"events": names, "destination": sub.Destination, "url": sub.URL, "adapter_id": sub.AdapterID,
-		"method": sub.Method, "headers": sub.HeaderNames, "templated": sub.PayloadTemplate != "",
+		"channel": sub.Channel, "method": sub.Method, "headers": sub.HeaderNames, "templated": sub.PayloadTemplate != "",
 	})
 	created, err := s.Subscriptions.Create(ctx, sub)
 	if err != nil {
@@ -411,6 +435,7 @@ type UpdateRequest struct {
 	Events          *[]string                `json:"events,omitempty"`
 	URL             *string                  `json:"url,omitempty"`
 	AdapterID       *string                  `json:"adapter_id,omitempty"`
+	Channel         *string                  `json:"channel,omitempty"`
 	Description     *string                  `json:"description,omitempty"`
 	Enabled         *bool                    `json:"enabled,omitempty"`
 	Method          *string                  `json:"method,omitempty"`
@@ -454,16 +479,21 @@ func (s *Service) Update(ctx context.Context, p authz.Principal, subscriptionID 
 		patch.URL = &target
 		detail["url"] = target
 	}
-	if req.AdapterID != nil {
+	if req.AdapterID != nil || req.Channel != nil {
 		if sub.Destination != state.DestinationNotify {
 			return state.Subscription{}, errs.New(errs.ValidInvalid,
-				"This subscription is a webhook, so it has no notification adapter to change. Change url instead.")
+				"This subscription is a webhook, so it has no notification adapter or channel to change. Change url instead.")
 		}
-		if _, err := s.checkDestination(ctx, sub.Destination, "", *req.AdapterID, sub.OwnerTokenID != ""); err != nil {
+		adapterID, channel := or(req.AdapterID, sub.AdapterID), or(req.Channel, sub.Channel)
+		caps, _, err := s.checkTarget(ctx, sub.Destination, "", adapterID, sub.OwnerTokenID != "")
+		if err != nil {
 			return state.Subscription{}, err
 		}
-		patch.AdapterID = req.AdapterID
-		detail["adapter_id"] = *req.AdapterID
+		if channel, err = checkChannel(adapterID, channel, caps); err != nil {
+			return state.Subscription{}, err
+		}
+		patch.AdapterID, patch.Channel = &adapterID, &channel
+		detail["adapter_id"], detail["channel"] = adapterID, channel
 	}
 
 	var headers map[string]secret.Value
@@ -679,4 +709,24 @@ func appOf(ctx context.Context, apps Apps, appID string) *EnvelopeApp {
 		out.Name, out.Slug = app.Name, app.Slug
 	}
 	return out
+}
+
+// checkChannel checks the channel a notify subscription names against what
+// its adapter takes: one is required where the adapter posts to the channel
+// each subscription chooses, and refused everywhere else.
+func checkChannel(adapterID, channel string, caps api.NotifyCapabilities) (string, error) {
+	channel = strings.TrimSpace(channel)
+	switch {
+	case caps.Channels && channel == "":
+		return "", errs.Newf(errs.ValidInvalid,
+			"%s posts to the channel each subscription chooses, and this one chooses none.", adapterID).
+			WithRemedy("Choose a channel from GET /api/v1/notify/" + adapterID + "/channels, and send its id as channel.")
+	case !caps.Channels && channel != "":
+		return "", errs.Newf(errs.ValidInvalid,
+			"%s posts to the one place its settings name, so a subscription to it cannot choose a channel.", adapterID).
+			WithRemedy("Leave channel out.")
+	case len(channel) > 200:
+		return "", errs.New(errs.ValidInvalid, "That channel is longer than any Slack channel ID or name.")
+	}
+	return channel, nil
 }

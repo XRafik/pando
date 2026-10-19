@@ -29,7 +29,8 @@ import {
 
 import { api } from '@api/client';
 import type { App } from '@api/types.gen';
-import { Quiet, Screen, messageOf } from './Accounts';
+import { Quiet, Screen, messageOf, refusal } from './Accounts';
+import { useNotifyChannels } from './Notify';
 import { Table } from '../ui/Table';
 import { ShowMore, usePaged, type PageOf } from '../ui/paged';
 import { relative } from '../ui/time';
@@ -46,8 +47,11 @@ interface EventDef {
 
 interface Destination {
   id: string;
+  name?: string;
   kind: string;
   audience: 'people' | 'channel';
+  /** A subscription to it names a channel: Slack. */
+  channels?: boolean;
 }
 
 interface Subscription {
@@ -58,6 +62,7 @@ interface Subscription {
   app_name?: string;
   events: string[];
   destination: 'webhook' | 'notify';
+  channel?: string;
   url?: string;
   adapter_id?: string;
   description: string;
@@ -314,6 +319,8 @@ function CreateSubscription({
   const [kind, setKind] = useState<'webhook' | 'notify'>('webhook');
   const [url, setURL] = useState('');
   const [adapterID, setAdapterID] = useState(destinations[0]?.id ?? '');
+  const [channel, setChannel] = useState('');
+  const takesChannel = kind === 'notify' && destinations.some((d) => d.id === adapterID && d.channels);
   const [description, setDescription] = useState('');
 
   // An install event never reaches an app subscription, so it is not offered
@@ -335,6 +342,7 @@ function CreateSubscription({
         destination: kind,
         url: kind === 'webhook' ? url : undefined,
         adapter_id: kind === 'notify' ? adapterID : undefined,
+        channel: takesChannel ? channel : undefined,
         description,
         ...(kind === 'webhook' ? requestBody(request, true) : {}),
       }),
@@ -351,7 +359,9 @@ function CreateSubscription({
 
   const ready =
     chosen.length > 0 &&
-    (kind === 'webhook' ? url.trim() !== '' && !parseHeaders(request.headers).problem : adapterID !== '') &&
+    (kind === 'webhook'
+      ? url.trim() !== '' && !parseHeaders(request.headers).problem
+      : adapterID !== '' && (!takesChannel || channel !== '')) &&
     (Boolean(fixedApp) || aboutOptions.length > 0);
 
   return (
@@ -471,12 +481,16 @@ function CreateSubscription({
             </Disclosure>
           ) : (
             <Select
-              label="Channel"
+              label="Adapter"
               value={adapterID}
               options={destinations.map((d) => ({ value: d.id, label: destinationName(d, d.id) }))}
-              onChange={(e) => setAdapterID(e.target.value)}
+              onChange={(e) => {
+                setAdapterID(e.target.value);
+                setChannel('');
+              }}
             />
           )}
+          {takesChannel && <ChannelPicker adapterID={adapterID} value={channel} onChange={setChannel} />}
         </fieldset>
 
         <Input
@@ -653,7 +667,7 @@ function SubscriptionDetail({
                 : destinationName(
                     destinations.find((d) => d.id === s.adapter_id),
                     s.adapter_id ?? '',
-                  )}
+                  ) + (s.channel ? `, channel ${s.channel}` : '')}
             </dd>
             {s.destination === 'webhook' && (
               <>
@@ -970,5 +984,29 @@ function EditRequest({ sub, onClose, onSaved }: { sub: Subscription; onClose: ()
         )}
       </div>
     </Dialog>
+  );
+}
+
+/** The channel a subscription to Slack posts to, from the workspace's. */
+function ChannelPicker({
+  adapterID,
+  value,
+  onChange,
+}: Readonly<{ adapterID: string; value: string; onChange: (id: string) => void }>) {
+  const channels = useNotifyChannels(adapterID);
+  if (channels.isError) return <Banner tone="failed">{refusal(channels.error)}</Banner>;
+  const list = channels.data?.channels ?? [];
+  return (
+    <Select
+      label="Slack channel"
+      value={value}
+      disabled={channels.isPending}
+      helper="A private channel is listed once Pando is invited with /invite @Pando."
+      options={[
+        { value: '', label: channels.isPending ? 'Loading channels' : 'Choose a channel' },
+        ...list.map((c) => ({ value: c.id, label: `#${c.name}` })),
+      ]}
+      onChange={(e) => onChange(e.target.value)}
+    />
   );
 }

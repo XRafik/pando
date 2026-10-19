@@ -161,12 +161,23 @@ an ntfy server on the local network is an ordinary thing to want.
 |---|---|---|---|
 | `console` | people | — | `notify/console` |
 | `smtp` | people | `password` | `notify/smtp` |
-| `slack` | channel | `webhook_url` (hooks.slack.com) | `notify/chat` |
+| `slack` | channel, each subscription choosing its channel | `bot_token`, from connecting (03 §8); `webhook_url` (hooks.slack.com) for one set up before | `notify/slack` |
 | `teams` | channel | `webhook_url` (a Workflows webhook) | `notify/chat` |
 | `discord` | channel | `webhook_url` (discord.com) | `notify/chat` |
 | `ntfy` | channel | `topic`, `access_token` | `notify/ntfy` |
 
-Slack, Teams and Discord differ only in layout, so they are one package with a `Platform` value each.
+Teams and Discord differ only in layout, so they are one package with a `Platform` value each; Slack's
+layout and its incoming-webhook path are that package's too, used by `notify/slack`.
+
+**[D] A subscription to Slack names its channel** (R-367). `subscriptions.channel` holds it — a Slack channel's
+ID, or a name — and is refused unless the adapter's capabilities say `Channels`, and required when they do
+(`subscriptions_channel_is_notify` refuses one on a webhook in the database too). The dispatcher puts it on
+the notification. The channels offered are the adapter's (`GET /notify/{id}/channels`): Slack's public
+channels, and the private ones Pando was invited to. Pando posts to a public channel without joining it
+(`chat:write.public`); a private one needs `/invite @Pando`, and a post refused for it says so in the
+delivery log. **[P]** Anyone who may subscribe chooses any channel the app can post in; whether an
+administrator should be able to narrow that is O-63. Changing a subscription's adapter or channel is announced to every replica like a changed
+filter (migration 77).
 Slack escapes `&`, `<`, `>` so an app named `<!channel>` pings nobody; Discord sends
 `allowed_mentions: {parse: []}` for the same reason. A webhook URL is the credential, and an error from a
 failed post never includes it. SMTP sends one message per recipient, so nobody sees who else was told, and

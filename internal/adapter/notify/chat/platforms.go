@@ -16,7 +16,7 @@ var Slack = Platform{
 	Help:        "The incoming webhook URL Slack gives you for the channel.",
 	Hosts:       []string{"hooks.slack.com", "hooks.slack-gov.com"},
 	Steps:       slackSteps(),
-	Format:      slackMessage,
+	Format:      func(n api.Notification) any { return SlackMessage(n) },
 }
 
 // Teams posts to a Microsoft Teams channel through a Workflows webhook.
@@ -72,7 +72,9 @@ func slackEscape(s string) string {
 	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(s)
 }
 
-func slackMessage(n api.Notification) any {
+// SlackMessage lays a notification out as a Slack message: text for the phone
+// notification, blocks for the message itself. Used by the Slack adapter too.
+func SlackMessage(n api.Notification) map[string]any {
 	text := "*" + slackEscape(n.Subject) + "*"
 	if n.Body != "" {
 		text += "\n" + slackEscape(n.Body)

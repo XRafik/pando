@@ -48,6 +48,9 @@
       "name": "Deploys"
     },
     {
+      "name": "Installation"
+    },
+    {
       "name": "Events"
     },
     {
@@ -67,9 +70,6 @@
     },
     {
       "name": "SCIM"
-    },
-    {
-      "name": "Installation"
     },
     {
       "name": "Sources"
@@ -6276,7 +6276,7 @@
       "get": {
         "operationId": "listEvents",
         "summary": "List events",
-        "description": "The event catalog: every event a subscription can name — `name`, `scope` (app or install), `source`, `summary` and its data `fields`. The same list as docs/events.md. `destinations` lists the notification adapters a subscription can send through (`id`, `kind`, and `audience`: people or channel).",
+        "description": "The event catalog: every event a subscription can name — `name`, `scope` (app or install), `source`, `summary` and its data `fields`. The same list as docs/events.md. `destinations` lists the notification adapters a subscription can send through now (`id`, `name`, `kind`, `audience`: people or channel, and `channels`: whether a subscription to it names a channel, from GET /api/v1/notify/{adapterID}/channels).",
         "tags": [
           "Events"
         ],
@@ -8364,6 +8364,225 @@
         }
       }
     },
+    "/api/v1/notify": {
+      "get": {
+        "operationId": "listNotify",
+        "summary": "List notification adapters",
+        "description": "The notification adapters, each with its `capabilities` — `audience`, whether it is `authorized` (connected), whether it can be connected in the browser (`web_authorization`) or by hand (`manual_authorization`), whether a subscription to it names a channel (`channels`), and `manage_url`, the provider's page for what connecting created — and `problem`, why one cannot send. Built from their settings as they are now, so one added or connected needs no restart.\n\nNeeds `install.view`.",
+        "tags": [
+          "Installation"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "adapters": {
+                      "type": [
+                        "array",
+                        "null"
+                      ],
+                      "items": {
+                        "$ref": "#/components/schemas/Adapter"
+                      }
+                    }
+                  },
+                  "required": [
+                    "adapters"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-pando-verb": "install.view"
+      }
+    },
+    "/api/v1/notify/callback": {
+      "get": {
+        "operationId": "notifyCallback",
+        "summary": "Notification adapter callback",
+        "description": "Where Slack returns the browser after approving Pando's app. Stores the bot token and redirects to the console's Adapters screen with `authorized` or `error`.\n\nNeeds `install.adapters.manage`.",
+        "tags": [
+          "Installation"
+        ],
+        "parameters": [
+          {
+            "name": "code",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "error",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "A redirect, for a browser to follow.",
+            "headers": {
+              "Location": {
+                "description": "Where the browser is sent.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-pando-verb": "install.adapters.manage"
+      }
+    },
+    "/api/v1/notify/{adapterID}/authorize": {
+      "post": {
+        "operationId": "authorizeNotify",
+        "summary": "Connect a notification adapter",
+        "description": "Connect an adapter to its provider; for Slack, create Pando's Slack app and install it. `mode` `web` (the default) takes `token`, a Slack configuration token used once and never stored, creates the app, gives it Pando's icon, and returns `authorize_url`, Slack's approval screen, which comes back to GET /api/v1/notify/callback; Slack returns only to an https address. `mode` `manual` without `token` returns `authorize_url`, Slack's create-app page with Pando's app filled in; with `token`, the bot token the app shows once installed, it checks and stores it and answers `status` `authorized`.\n\nNeeds `install.adapters.manage`.",
+        "tags": [
+          "Installation"
+        ],
+        "parameters": [
+          {
+            "name": "adapterID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string"
+                  },
+                  "token": {
+                    "type": "string",
+                    "description": "Always `[redacted]`: a secret's value is never written to a response."
+                  }
+                },
+                "required": [
+                  "mode",
+                  "token"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status"
+                      ]
+                    },
+                    {
+                      "$ref": "#/components/schemas/NotifyconnAuthorization"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-pando-verb": "install.adapters.manage"
+      }
+    },
+    "/api/v1/notify/{adapterID}/channels": {
+      "get": {
+        "operationId": "listNotifyChannels",
+        "summary": "List an adapter's channels",
+        "description": "The channels a subscription to the adapter can post to — for Slack, the workspace's public channels and the private ones Pando was invited to — each `id`, `name` and `private`. `q` narrows by name. Only for an adapter whose capabilities say `channels`.",
+        "tags": [
+          "Events"
+        ],
+        "parameters": [
+          {
+            "name": "adapterID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "channels": {
+                      "type": [
+                        "array",
+                        "null"
+                      ],
+                      "items": {
+                        "$ref": "#/components/schemas/NotifyChannel"
+                      }
+                    }
+                  },
+                  "required": [
+                    "channels"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/api/v1/passwords/generate": {
       "post": {
         "operationId": "generatePassword",
@@ -9704,7 +9923,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Authorization"
+                  "$ref": "#/components/schemas/SourceconnAuthorization"
                 }
               }
             }
@@ -10079,7 +10298,7 @@
       "post": {
         "operationId": "createSubscription",
         "summary": "Create a subscription",
-        "description": "Subscribe to events (`events`: names, prefixes such as `deploy.*`, or `*`) on one app (`app_id`, which needs `app.view`) or install-wide (no `app_id`, which needs `install.events.manage`), sent to a `webhook` (`url`) or through a notification adapter (`notify`, `adapter_id`). A webhook's `signing_key` is in this response and never again.",
+        "description": "Subscribe to events (`events`: names, prefixes such as `deploy.*`, or `*`) on one app (`app_id`, which needs `app.view`) or install-wide (no `app_id`, which needs `install.events.manage`), sent to a `webhook` (`url`) or through a notification adapter (`notify`, `adapter_id`, and `channel` for one whose destination says `channels`, such as Slack). A webhook's `signing_key` is in this response and never again.",
         "tags": [
           "Events"
         ],
@@ -10172,7 +10391,7 @@
       "patch": {
         "operationId": "patchSubscription",
         "summary": "Update a subscription",
-        "description": "Change a subscription's `events`, `url`, `adapter_id` or `description`, or turn it on or off (`enabled`). Turning one on clears its record of failures.",
+        "description": "Change a subscription's `events`, `url`, `adapter_id`, `channel` or `description`, or turn it on or off (`enabled`). Turning one on clears its record of failures.",
         "tags": [
           "Events"
         ],
@@ -11826,6 +12045,35 @@
           "kind"
         ]
       },
+      "Adapter": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "capabilities": {
+            "$ref": "#/components/schemas/NotifyCapabilities"
+          },
+          "declared": {
+            "type": "boolean"
+          },
+          "problem": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "capabilities"
+        ]
+      },
       "AnswersRequest": {
         "type": "object",
         "properties": {
@@ -12442,37 +12690,6 @@
           "name",
           "how",
           "description"
-        ]
-      },
-      "Authorization": {
-        "type": "object",
-        "properties": {
-          "mode": {
-            "type": "string"
-          },
-          "user_code": {
-            "type": "string"
-          },
-          "verification_url": {
-            "type": "string"
-          },
-          "authorize_url": {
-            "type": "string"
-          },
-          "interval_seconds": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "expires_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "form": {
-            "$ref": "#/components/schemas/AuthorizeForm"
-          }
-        },
-        "required": [
-          "mode"
         ]
       },
       "AuthorizationStatus": {
@@ -13130,6 +13347,9 @@
           "description": {
             "type": "string"
           },
+          "channel": {
+            "type": "string"
+          },
           "method": {
             "type": "string"
           },
@@ -13218,6 +13438,9 @@
             "type": "string"
           },
           "adapter_id": {
+            "type": "string"
+          },
+          "channel": {
             "type": "string"
           },
           "method": {
@@ -13652,15 +13875,22 @@
           "id": {
             "type": "string"
           },
+          "name": {
+            "type": "string"
+          },
           "kind": {
             "type": "string"
           },
           "audience": {
             "type": "string"
+          },
+          "channels": {
+            "type": "boolean"
           }
         },
         "required": [
           "id",
+          "name",
           "kind",
           "audience"
         ]
@@ -15037,6 +15267,69 @@
           "kind",
           "channel",
           "enabled"
+        ]
+      },
+      "NotifyCapabilities": {
+        "type": "object",
+        "properties": {
+          "audience": {
+            "type": "string"
+          },
+          "channels": {
+            "type": "boolean"
+          },
+          "web_authorization": {
+            "type": "boolean"
+          },
+          "manual_authorization": {
+            "type": "boolean"
+          },
+          "authorized": {
+            "type": "boolean"
+          },
+          "manage_url": {
+            "type": "string"
+          },
+          "icon_set": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "audience",
+          "authorized"
+        ]
+      },
+      "NotifyChannel": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "private": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ]
+      },
+      "NotifyconnAuthorization": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string"
+          },
+          "authorize_url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode",
+          "authorize_url"
         ]
       },
       "Option": {
@@ -16770,6 +17063,37 @@
           "authorized"
         ]
       },
+      "SourceconnAuthorization": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string"
+          },
+          "user_code": {
+            "type": "string"
+          },
+          "verification_url": {
+            "type": "string"
+          },
+          "authorize_url": {
+            "type": "string"
+          },
+          "interval_seconds": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "form": {
+            "$ref": "#/components/schemas/AuthorizeForm"
+          }
+        },
+        "required": [
+          "mode"
+        ]
+      },
       "SpecSource": {
         "type": "object",
         "properties": {
@@ -17050,6 +17374,9 @@
           "adapter_id": {
             "type": "string"
           },
+          "channel": {
+            "type": "string"
+          },
           "method": {
             "type": "string"
           },
@@ -17241,6 +17568,9 @@
             "type": "string"
           },
           "adapter_id": {
+            "type": "string"
+          },
+          "channel": {
             "type": "string"
           },
           "description": {

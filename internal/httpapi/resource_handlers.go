@@ -653,10 +653,11 @@ func (s *Server) pinnedOrLatest(r *http.Request, app state.App) (*spec.AppSpec, 
 // liveCategory says an adapter of this category is built from its row each
 // time it is used rather than at startup, so saving one needs no restart:
 // source connections (core/sourceconn), image registries
-// (core/imageregistry) and audit sinks (core/auditstream).
+// (core/imageregistry), audit sinks (core/auditstream) and notification
+// adapters (core/notifyconn).
 func liveCategory(category string) bool {
 	return category == string(api.CategorySource) || category == string(api.CategoryImageRegistry) ||
-		category == string(api.CategoryAuditSink)
+		category == string(api.CategoryAuditSink) || category == string(api.CategoryNotify)
 }
 
 // isAuditSink reports whether an audit sink is stored under id.

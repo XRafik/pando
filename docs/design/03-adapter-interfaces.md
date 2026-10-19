@@ -1441,8 +1441,11 @@ is a thing an operator discovers at restore time.
 ```go
 type NotifyAdapter interface {
     Adapter
-    Capabilities() NotifyCapabilities // Audience: people | channel
+    Capabilities() NotifyCapabilities // Audience: people | channel; Channels, Web/ManualAuthorization, Authorized, ManageURL, IconSet
     Notify(ctx context.Context, n Notification) error
+    Channels(ctx context.Context, query string) ([]NotifyChannel, error)        // only with Capabilities().Channels
+    BeginAuthorization(ctx, AuthorizationRequest) (Authorization, error)        // only when it connects (Slack)
+    CompleteAuthorization(ctx, AuthorizationCompletion) (AuthorizationResult, error)
 }
 
 type Notification struct {
@@ -1454,8 +1457,34 @@ type Notification struct {
     EventID    string           // evt_…, when it tells of an event
     Fields     []NotificationField
     Link       string
+    Channel    string           // the subscription's, for an adapter whose capabilities say Channels
 }
 ```
+
+An adapter with nothing to connect and one place to post embeds `notifykit.Unconnected` for the last three
+methods.
+
+**[D] Notification adapters are built from their rows on each use** (`core/notifyconn`), like source
+connections and image registries (§10, §11): adding one needs no restart, and connecting Slack — whose bot
+token arrives after the adapter is saved — takes effect on every replica at once. Only an adapter the
+configuration file declares is built at startup. The subscription service, the router and the dispatcher
+read them through `subscription.Notifiers`. An adapter that takes no authorization is usable once
+configured; one that does (`WebAuthorization` or `ManualAuthorization`) sends nothing until it is
+`Authorized`.
+
+**[D] Slack is Pando's own Slack app, created by Pando.** Connecting it (`POST /notify/{id}/authorize`) takes
+a configuration token the person generates in Slack's app settings, used for that call only and never
+stored, to create the app from a manifest (`apps.manifest.create`: a bot user, `chat:write`,
+`chat:write.public`, `channels:read`, `groups:read`, token rotation off) and give it Pando's icon
+(`apps.icon.set`, a 1,024-pixel square embedded in the binary). The browser goes to Slack's approval screen
+and returns to `/api/v1/notify/callback`, where the code is exchanged (`oauth.v2.access`) for the bot token,
+stored with the app's ID and client secret as the adapter's credentials (R-190). The app's client secret
+crosses the trip sealed in `notify_authorizations`, with the state's hash, under the scope
+`notify-authorization:`. Slack returns a browser only to https, so a Pando reached over http connects by
+hand: a link opening Slack's create-app page with the manifest filled in, and the bot token pasted back,
+checked with `auth.test`. An icon Slack refuses does not fail connecting; the console then offers the icon to
+upload on the app's page. A Slack adapter set up with an incoming webhook URL before this keeps posting
+through it, to its one channel (`notify/chat`'s Slack platform), with no channels to choose.
 
 **[D]** The console is the default (R-231). Email, Slack, Microsoft Teams, Discord and ntfy ship
 built in (R-232, R-374, issue #50). An adapter's **audience** is capabilities data (R-254): one that reaches

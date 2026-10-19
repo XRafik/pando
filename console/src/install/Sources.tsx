@@ -8,7 +8,7 @@
 // in with OAuth, or creating and installing its GitHub App, through
 // POST /sources/{id}/authorize (R-261).
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Banner, Button, CodeBlock, Dialog } from '@design';
 
@@ -198,41 +198,50 @@ export function AuthorizeDialog({
   );
 }
 
-/** The last step of connecting a GitHub App: its logo. GitHub takes none from
- *  a manifest or its API, so the person uploads Pando's on the App's page. */
-export function AppLogoDialog({ source, onClose }: Readonly<{ source: SourceConnection; onClose: () => void }>) {
-  const settings = source.capabilities.manage_url ?? '';
+/** The last step of connecting an app Pando created on a provider: its logo,
+ *  where the provider takes none from Pando — a GitHub App always, a Slack app
+ *  made by hand. Uploaded on the app's own settings page. */
+export function AppLogoDialog({
+  manageURL,
+  logo = appLogo,
+  where,
+  onClose,
+}: Readonly<{ manageURL: string; logo?: string; where: ReactNode; onClose: () => void }>) {
   return (
     <Dialog
       open
-      title="Add Pando's logo to the App"
+      title="Add Pando's logo to the app"
       onClose={onClose}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
             Done
           </Button>
-          <Button variant="primary" onClick={() => window.open(settings, '_blank', 'noopener,noreferrer')}>
-            Open App settings
+          <Button variant="primary" onClick={() => window.open(manageURL, '_blank', 'noopener,noreferrer')}>
+            Open app settings
           </Button>
         </>
       }
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
-        <img src={appLogo} alt="Pando logo" style={{ width: 'var(--space-8)', height: 'var(--space-8)' }} />
+        <img src={logo} alt="Pando logo" style={{ width: 'var(--space-8)', height: 'var(--space-8)' }} />
         <ol style={{ margin: 0, paddingLeft: 'var(--space-5)', font: 'var(--type-body-ui)', color: 'var(--ink)' }}>
           <li>
-            <a href={appLogo} download="pando-logo.png">
+            <a href={logo} download="pando-logo.png">
               Download the logo
             </a>
           </li>
-          <li>
-            On the App&apos;s settings page, under <strong>Display information</strong>, choose{' '}
-            <strong>Upload a logo</strong>.
-          </li>
+          <li>{where}</li>
         </ol>
       </div>
     </Dialog>
   );
 }
+
+/** Where a GitHub App's logo is uploaded. */
+export const githubLogoPlace = (
+  <>
+    On the App&apos;s settings page, under <strong>Display information</strong>, choose <strong>Upload a logo</strong>.
+  </>
+);
 

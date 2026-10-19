@@ -25,7 +25,10 @@ type Preferences interface {
 // Best effort, like what it replaced: an adapter that fails is logged and the
 // rest still send, and telling people never blocks what it is about (R-159).
 type Router struct {
-	Registry    *api.Registry
+	Registry *api.Registry
+
+	// Notifiers are the notification adapters. Nil reads them from Registry.
+	Notifiers   Notifiers
 	Preferences Preferences
 	Users       Users
 	Logger      *zap.Logger
@@ -40,15 +43,25 @@ func (r Router) logger() *zap.Logger {
 
 // Notify sends msg.
 func (r Router) Notify(ctx context.Context, msg api.Notification) error {
-	if r.Registry == nil {
+	n := notifiersOf(r.Notifiers, r.Registry)
+	if n == nil {
 		return nil
 	}
 	recipients := r.withEmail(ctx, msg.Recipients)
 	choices := r.choices(ctx, recipients)
 
-	for _, ref := range r.Registry.ByCategory(api.CategoryNotify) {
-		adapter, ok := r.Registry.Notify(ref)
-		if !ok || adapter.Capabilities().Audience != api.AudiencePeople {
+	usable, err := n.Usable(ctx)
+	if err != nil {
+		return err
+	}
+	for _, u := range usable {
+		// Pando's own notifications never go to a channel (R-373).
+		if u.Capabilities.Audience != api.AudiencePeople {
+			continue
+		}
+		ref := u.ID
+		adapter, ok := n.Notify(ctx, ref)
+		if !ok {
 			continue
 		}
 		var to []api.Recipient

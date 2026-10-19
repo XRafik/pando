@@ -128,7 +128,7 @@ func TestAFailedPostDoesNotRevealTheURL(t *testing.T) {
 func TestSlackEscapesAndDiscordMentionsNobody(t *testing.T) {
 	n := sample
 	n.Subject = "<!channel> & friends"
-	msg := slackMessage(n).(map[string]any)
+	msg := SlackMessage(n)
 	require.Equal(t, "&lt;!channel&gt; &amp; friends", msg["text"], "the preview is escaped too")
 	section := msg["blocks"].([]any)[0].(map[string]any)["text"].(map[string]any)
 	require.Contains(t, section["text"], "&lt;!channel&gt; &amp; friends")

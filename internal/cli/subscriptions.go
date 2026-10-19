@@ -22,6 +22,7 @@ type subscriptionView struct {
 	Destination         string   `json:"destination"`
 	URL                 string   `json:"url"`
 	AdapterID           string   `json:"adapter_id"`
+	Channel             string   `json:"channel"`
 	Description         string   `json:"description"`
 	Enabled             bool     `json:"enabled"`
 	DisabledReason      string   `json:"disabled_reason"`
@@ -32,6 +33,9 @@ type subscriptionView struct {
 func (s subscriptionView) where() string {
 	if s.Destination == "webhook" {
 		return s.URL
+	}
+	if s.Channel != "" {
+		return "notify:" + s.AdapterID + " " + s.Channel
 	}
 	return "notify:" + s.AdapterID
 }
@@ -223,7 +227,7 @@ func subscriptionsCmd(client func() (*Client, error)) *cobra.Command {
 	list.Flags().BoolVar(&everyone, "everyone", false, "Every person's subscriptions (needs install.events.manage)")
 	cmd.AddCommand(list)
 
-	var createApp, createURL, createAdapter, createDescription string
+	var createApp, createURL, createAdapter, createChannel, createDescription string
 	var createRequest, updateRequest requestFlags
 	var createEvents []string
 	create := &cobra.Command{
@@ -247,6 +251,9 @@ func subscriptionsCmd(client func() (*Client, error)) *cobra.Command {
 				body["destination"], body["url"] = "webhook", createURL
 			} else {
 				body["destination"], body["adapter_id"] = "notify", createAdapter
+				if createChannel != "" {
+					body["channel"] = createChannel
+				}
 			}
 			if err := createRequest.apply(cmd, body); err != nil {
 				return err
@@ -268,6 +275,7 @@ func subscriptionsCmd(client func() (*Client, error)) *cobra.Command {
 	create.Flags().StringVar(&createApp, "app", "", "The app's ID; omit for install-wide")
 	create.Flags().StringVar(&createURL, "url", "", "Post each event to this webhook URL")
 	create.Flags().StringVar(&createAdapter, "adapter", "", "Send each event through this notification adapter")
+	create.Flags().StringVar(&createChannel, "channel", "", "The channel it posts to, for an adapter such as Slack; `pando notify channels` lists them")
 	create.Flags().StringVar(&createDescription, "description", "", "What this subscription is for")
 	createRequest.register(create)
 	_ = create.MarkFlagRequired("events")
@@ -305,7 +313,7 @@ func subscriptionsCmd(client func() (*Client, error)) *cobra.Command {
 	})
 
 	var updEvents []string
-	var updURL, updAdapter, updDescription string
+	var updURL, updAdapter, updChannel, updDescription string
 	var enable, disable bool
 	update := &cobra.Command{
 		Use:   "update <subscription-id>",
@@ -321,6 +329,9 @@ func subscriptionsCmd(client func() (*Client, error)) *cobra.Command {
 			}
 			if cmd.Flags().Changed("adapter") {
 				body["adapter_id"] = updAdapter
+			}
+			if cmd.Flags().Changed("channel") {
+				body["channel"] = updChannel
 			}
 			if cmd.Flags().Changed("description") {
 				body["description"] = updDescription
@@ -338,7 +349,7 @@ func subscriptionsCmd(client func() (*Client, error)) *cobra.Command {
 				return err
 			}
 			if len(body) == 0 {
-				return fmt.Errorf("nothing to change: give --events, --url, --adapter, --description, --enable or --disable")
+				return fmt.Errorf("nothing to change: give --events, --url, --adapter, --channel, --description, --enable or --disable")
 			}
 			c, err := client()
 			if err != nil {
@@ -355,6 +366,7 @@ func subscriptionsCmd(client func() (*Client, error)) *cobra.Command {
 	update.Flags().StringSliceVar(&updEvents, "events", nil, "Replace the events it sends")
 	update.Flags().StringVar(&updURL, "url", "", "A new webhook URL")
 	update.Flags().StringVar(&updAdapter, "adapter", "", "A new notification adapter")
+	update.Flags().StringVar(&updChannel, "channel", "", "A new channel, for an adapter such as Slack")
 	update.Flags().StringVar(&updDescription, "description", "", "A new description")
 	update.Flags().BoolVar(&enable, "enable", false, "Turn it on, clearing its record of failures")
 	update.Flags().BoolVar(&disable, "disable", false, "Turn it off")

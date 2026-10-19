@@ -111,6 +111,14 @@ type stubNotify struct{ base }
 func (stubNotify) Notify(context.Context, api.Notification) error { return nil }
 func (stubNotify) Capabilities() api.NotifyCapabilities           { return api.NotifyCapabilities{} }
 
+func (stubNotify) Channels(context.Context, string) ([]api.NotifyChannel, error) { return nil, nil }
+func (stubNotify) BeginAuthorization(context.Context, api.AuthorizationRequest) (api.Authorization, error) {
+	return api.Authorization{}, nil
+}
+func (stubNotify) CompleteAuthorization(context.Context, api.AuthorizationCompletion) (api.AuthorizationResult, error) {
+	return api.AuthorizationResult{}, nil
+}
+
 type stubBackup struct{ base }
 
 func (stubBackup) Capabilities() api.BackupCapabilities { return api.BackupCapabilities{} }

@@ -57,6 +57,15 @@ func NewSourceAuthorizations(db *DB, adapter api.SecretsAdapter, adapterRef stri
 		table: "source_authorizations", column: "adapter_id", scope: "source-authorization:"}
 }
 
+// NewNotifyAuthorizations stores the connection of a notification adapter
+// while it is in progress: what the adapter needs back at the callback (the
+// Slack app it created, and the app's client secret), and the state the
+// callback presents. Sealed like a credential and under its own scope.
+func NewNotifyAuthorizations(db *DB, adapter api.SecretsAdapter, adapterRef string) *AdapterCredentials {
+	return &AdapterCredentials{db: db, adapter: adapter, adapterRef: adapterRef,
+		table: "notify_authorizations", column: "adapter_id", scope: "notify-authorization:"}
+}
+
 // NewIdentityCredentials stores identity providers' secrets — an OIDC client
 // secret — the same way, in their own table (identity_adapters is not
 // adapter_configs). A different scope in the sealed reference as well, so a

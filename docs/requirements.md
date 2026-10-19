@@ -888,7 +888,8 @@ event with nothing left to deliver is removed after 30 days **[P]**; the audit l
 
 **R-367 [D]** **A subscription is a filter and a destination.** The filter is a list of event names,
 prefixes (`deploy.*`) or `*`. A subscription is about one app or the whole installation. The destination
-is a webhook URL or a notification adapter. A subscription hears about events that happen after it is
+is a webhook URL or a notification adapter — and, for an adapter that posts to any of a workspace's channels
+(Slack), the channel (amended with the Slack app change). A subscription hears about events that happen after it is
 made. Subscriptions are managed from the API, CLI, MCP and console (R-261); a test delivery can be sent
 to one subscription whatever its filter says.
 
@@ -930,7 +931,10 @@ person must not land in a room. Each person may turn each kind of notification o
 a kind they have not chosen for follows its default.
 
 **R-374 [D]** **Built-in notify adapters for the platforms people use.** Email (SMTP, R-232), Slack,
-Microsoft Teams, Discord and ntfy. Each formats a notification for its platform. A channel adapter's
+Microsoft Teams, Discord and ntfy. Each formats a notification for its platform. Slack posts as Pando's own
+Slack app, which Pando creates and installs when it is connected — one configuration token and Slack's
+Allow, or by hand where Slack cannot return to Pando — so nothing else is copied, and each subscription
+chooses the channel it posts to (amended with the Slack app change). A channel adapter's
 webhook URL, an ntfy topic and an SMTP password are credentials, stored like any adapter credential
 (R-190). Pushover and other platforms are a new adapter each, by pull request (R-253).
 
