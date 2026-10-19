@@ -27,7 +27,7 @@ import {
   stepFields,
   unasked,
 } from './adapters';
-import type { AdapterForm, AdapterKind, KindField, KindPreset, KindStep } from './adapters';
+import type { AdapterForm, AdapterKind, FieldValue, KindField, KindPreset, KindStep } from './adapters';
 
 /** One screen of the walk-through. */
 type Screen =
@@ -106,10 +106,10 @@ export function AdapterGuide({
    *  provider's {callback_url}. */
   supplied?: Record<string, string>;
   /** What is wrong with the settings, by key, when not the adapter rules. */
-  checkFields?: (values: Record<string, string | boolean>) => Record<string, string>;
+  checkFields?: (values: Record<string, FieldValue>) => Record<string, string>;
   /** Pando's Name screen, when not an adapter's name, ID and default. */
   nameStep?: {
-    content: (errors: Record<string, string>) => React.ReactNode;
+    content: React.ReactNode;
     problems: () => Record<string, string>;
     rows: { label: string; value: string }[];
   };
@@ -130,11 +130,7 @@ export function AdapterGuide({
   const preset = provider?.kind === chosen ? provider.id : undefined;
   const ready = Boolean(kind) && (presets.length === 0 || preset !== undefined);
   const steps = kind && form && ready ? kindSteps(kind, form.values, preset) : [];
-  const screens: Screen[] = [];
-  if (!skipChoose) screens.push({ kind: 'choose' });
-  if (kind && presets.length > 0) screens.push({ kind: 'provider' });
-  for (const step of steps) screens.push({ kind: 'step', step });
-  if (ready) screens.push({ kind: 'name' }, { kind: 'review' });
+  const screens = buildScreens(skipChoose, Boolean(kind) && presets.length > 0, steps, ready);
   const index = Math.min(at, screens.length - 1);
   // Never empty: there is a choice to make, or a kind and its screens.
   const screen: Screen = screens[index] ?? { kind: 'choose' };
@@ -161,45 +157,49 @@ export function AdapterGuide({
   };
   const goTo = (id: string) => go(Math.max(0, screens.findIndex((s) => screenID(s) === id)));
 
-  const next = () => {
-    if (screen.kind === 'choose') {
-      if (!kind) {
-        setErrors({ choose: category ? 'Choose an adapter to continue.' : 'Choose a category to continue.' });
-        return;
-      }
-    } else if (screen.kind === 'provider') {
-      if (preset === undefined) {
-        setErrors({ choose: 'Choose a provider to continue.' });
-        return;
-      }
-    } else if (screen.kind === 'step' && kind && form) {
-      const problems = problemsOn(screen.step);
-      if (Object.keys(problems).length > 0) {
-        setErrors(problems);
-        return;
-      }
-    } else if (screen.kind === 'name' && kind && form) {
-      const named = nameStep ? nameStep.problems() : { ...(formProblems(kind, form, stored).id ? { id: formProblems(kind, form, stored).id! } : {}) };
-      if (Object.keys(named).length > 0) {
-        setErrors(named);
-        return;
-      }
-    } else if (screen.kind === 'review' && kind && form) {
-      // Each step was checked on the way; one changed since is sent back to.
-      const problems = fieldProblems();
-      const back = screens.findIndex(
-        (s) => s.kind === 'step' && stepFields(kind, s.step, form.values).some((f) => problems[f.key]),
-      );
-      const target = screens[back];
-      if (target?.kind === 'step') {
-        setAt(back);
-        setErrors(problemsOn(target.step));
-        return;
-      }
-      onSave();
+  const nameProblems = (): Record<string, string> => {
+    if (nameStep) return nameStep.problems();
+    const id = kind && form ? formProblems(kind, form, stored).id : undefined;
+    return id ? { id } : {};
+  };
+  // What keeps Continue from moving on, if anything.
+  const blocking = (): Record<string, string> | null => {
+    switch (screen.kind) {
+      case 'choose':
+        return kind ? null : { choose: chooseProblem(category) };
+      case 'provider':
+        return preset === undefined ? { choose: 'Choose a provider to continue.' } : null;
+      case 'step':
+        return nonEmpty(problemsOn(screen.step));
+      case 'name':
+        return nonEmpty(nameProblems());
+      default:
+        return null;
+    }
+  };
+  // Each step was checked on the way; one changed since is sent back to.
+  const save = () => {
+    if (!kind || !form) return;
+    const problems = fieldProblems();
+    const back = screens.findIndex(
+      (s) => s.kind === 'step' && stepFields(kind, s.step, form.values).some((f) => problems[f.key]),
+    );
+    const target = screens[back];
+    if (target?.kind === 'step') {
+      setAt(back);
+      setErrors(problemsOn(target.step));
       return;
     }
-    go(index + 1);
+    onSave();
+  };
+  const next = () => {
+    if (screen.kind === 'review') {
+      save();
+      return;
+    }
+    const stop = blocking();
+    if (stop) setErrors(stop);
+    else go(index + 1);
   };
 
   const choosing = screen.kind === 'choose';
@@ -214,12 +214,8 @@ export function AdapterGuide({
     onProvider?.(presets.find((p) => p.id === id));
     setErrors({});
   };
-  const categoryWord = category === 'ai' ? 'AI' : categoryLabel(category).toLowerCase();
-  // The kind is named once it is chosen and the walk-through has moved past
-  // choosing it: on the first screen, a pick can still change.
-  let title = pickTitle ?? 'Add adapter';
-  if (kind && !choosing) title = `Add ${kind.name}${noun ? ` ${noun}` : ''}`;
-  else if (category && !pickTitle) title = `Add ${categoryWord} adapter`;
+  const categoryWord = wordFor(category);
+  const title = guideTitle({ pickTitle, kindName: choosing ? undefined : kind?.name, noun, categoryWord: category ? categoryWord : '' });
 
   return (
     <Dialog
@@ -240,7 +236,7 @@ export function AdapterGuide({
             Cancel
           </Button>
           <Button variant="primary" disabled={saving} onClick={next}>
-            {last ? (saving ? 'Adding' : addLabel) : 'Continue'}
+            {primaryLabel(last, saving, addLabel)}
           </Button>
         </>
       }
@@ -260,52 +256,27 @@ export function AdapterGuide({
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)', minWidth: 0 }}>
           {screen.kind === 'choose' && (
-            <>
-              {askCategory && (
-                <div>
-                  <Select
-                    label="Category"
-                    value={category}
-                    options={[
-                      ...(category ? [] : [{ value: '', label: 'Choose a category' }]),
-                      ...categories.map((c) => ({ value: c, label: categoryLabel(c) })),
-                    ]}
-                    onChange={(e) => {
-                      setErrors({});
-                      onCategory(e.target.value);
-                    }}
-                  />
-                </div>
-              )}
-              {category && (
-                <TilePicker
-                  label={pickLabel}
-                  items={inCategory.map((k) => ({ key: kindKey(k), name: k.name, description: k.description }))}
-                  chosen={chosen}
-                  onPick={(key) => {
-                    setErrors({});
-                    onPick(key);
-                  }}
-                />
-              )}
-              {errors.choose && <p style={{ ...caption, color: 'var(--marker-deep)' }}>{errors.choose}</p>}
-            </>
+            <ChooseScreen
+              askCategory={askCategory}
+              categories={categories}
+              category={category}
+              inCategory={inCategory}
+              chosen={chosen}
+              pickLabel={pickLabel}
+              error={errors.choose}
+              onCategory={(c) => {
+                setErrors({});
+                onCategory(c);
+              }}
+              onPick={(key) => {
+                setErrors({});
+                onPick(key);
+              }}
+            />
           )}
 
           {screen.kind === 'provider' && kind && (
-            <>
-              <h4 style={{ font: 'var(--type-h4)', margin: 0 }}>Choose a provider</h4>
-              <TilePicker
-                label="Provider"
-                items={[
-                  ...presets.map((p) => ({ key: p.id, name: p.label })),
-                  ...(kind.other_preset ? [{ key: PRESET_OTHER, name: kind.other_preset }] : []),
-                ]}
-                chosen={preset ?? ''}
-                onPick={pickProvider}
-              />
-              {errors.choose && <p style={{ ...caption, color: 'var(--marker-deep)' }}>{errors.choose}</p>}
-            </>
+            <ProviderScreen kind={kind} preset={preset} error={errors.choose} onPick={pickProvider} />
           )}
 
           {screen.kind === 'step' && kind && form && (
@@ -323,25 +294,14 @@ export function AdapterGuide({
             </StepBody>
           )}
 
-          {screen.kind === 'name' && kind && form && nameStep && (
+          {screen.kind === 'name' && kind && form && (
             <>
               <h4 style={{ font: 'var(--type-h4)', margin: 0 }}>Name</h4>
-              {nameStep.content(errors)}
-            </>
-          )}
-
-          {screen.kind === 'name' && kind && form && !nameStep && (
-            <>
-              <h4 style={{ font: 'var(--type-h4)', margin: 0 }}>Name</h4>
-              <NameFields form={form} edit={edit} error={errors.id} />
-              {showDefault && (
-                <Checkbox
-                  label={`Default ${categoryWord} adapter`}
-                  checked={form.isDefault}
-                  onChange={(e) => edit({ isDefault: e.target.checked })}
-                />
+              {nameStep ? (
+                nameStep.content
+              ) : (
+                <AdapterName form={form} edit={edit} error={errors.id} defaultLabel={showDefault ? `Default ${categoryWord} adapter` : undefined} isAI={isAI} />
               )}
-              {isAI && <p style={caption}>Choose its functions after Pando restarts.</p>}
             </>
           )}
 
@@ -351,9 +311,7 @@ export function AdapterGuide({
               form={form}
               steps={steps}
               preset={preset}
-              provider={
-                preset === PRESET_OTHER ? kind.other_preset : presets.find((p) => p.id === preset)?.label
-              }
+              provider={providerName(kind, preset)}
               showDefault={showDefault}
               nameRows={nameStep?.rows}
               renderField={renderField}
@@ -369,7 +327,149 @@ export function AdapterGuide({
   );
 }
 
+/** The screens of a walk-through, in order. */
+function buildScreens(skipChoose: boolean, hasPresets: boolean, steps: KindStep[], ready: boolean): Screen[] {
+  const screens: Screen[] = [];
+  if (!skipChoose) screens.push({ kind: 'choose' });
+  if (hasPresets) screens.push({ kind: 'provider' });
+  for (const step of steps) screens.push({ kind: 'step', step });
+  if (ready) screens.push({ kind: 'name' }, { kind: 'review' });
+  return screens;
+}
+
+/** Problems, or none at all. */
+function nonEmpty(problems: Record<string, string>): Record<string, string> | null {
+  return Object.keys(problems).length > 0 ? problems : null;
+}
+
+function chooseProblem(category: string): string {
+  return category ? 'Choose an adapter to continue.' : 'Choose a category to continue.';
+}
+
+/** A category as it reads mid-sentence: "routing", "AI". */
+function wordFor(category: string): string {
+  return category === 'ai' ? 'AI' : categoryLabel(category).toLowerCase();
+}
+
+/** The dialog's title. The kind is named once it is past choosing, since on
+ *  the first screen a pick can still change. */
+function guideTitle(o: { pickTitle?: string; kindName?: string; noun: string; categoryWord: string }): string {
+  if (o.kindName) return o.noun ? `Add ${o.kindName} ${o.noun}` : `Add ${o.kindName}`;
+  if (o.pickTitle) return o.pickTitle;
+  return o.categoryWord ? `Add ${o.categoryWord} adapter` : 'Add adapter';
+}
+
+function primaryLabel(last: boolean, saving: boolean, addLabel: string): string {
+  if (!last) return 'Continue';
+  return saving ? 'Adding' : addLabel;
+}
+
+/** The provider chosen, by name. */
+function providerName(kind: AdapterKind, preset: string | undefined): string | undefined {
+  if (preset === PRESET_OTHER) return kind.other_preset;
+  return kind.presets?.find((p) => p.id === preset)?.label;
+}
+
+/** Choosing the kind: the category, when it was not given, then its kinds. */
+function ChooseScreen({
+  askCategory,
+  categories,
+  category,
+  inCategory,
+  chosen,
+  pickLabel,
+  error,
+  onCategory,
+  onPick,
+}: Readonly<{
+  askCategory: boolean;
+  categories: string[];
+  category: string;
+  inCategory: AdapterKind[];
+  chosen: string;
+  pickLabel: string;
+  error?: string;
+  onCategory: (c: string) => void;
+  onPick: (key: string) => void;
+}>) {
+  return (
+    <>
+      {askCategory && (
+        <div>
+          <Select
+            label="Category"
+            value={category}
+            options={[
+              ...(category ? [] : [{ value: '', label: 'Choose a category' }]),
+              ...categories.map((c) => ({ value: c, label: categoryLabel(c) })),
+            ]}
+            onChange={(e) => onCategory(e.target.value)}
+          />
+        </div>
+      )}
+      {category && (
+        <TilePicker
+          label={pickLabel}
+          items={inCategory.map((k) => ({ key: kindKey(k), name: k.name, description: k.description }))}
+          chosen={chosen}
+          onPick={onPick}
+        />
+      )}
+      {error && <p style={{ ...caption, color: 'var(--marker-deep)' }}>{error}</p>}
+    </>
+  );
+}
+
+/** Choosing the provider, for a kind with presets. */
+function ProviderScreen({
+  kind,
+  preset,
+  error,
+  onPick,
+}: Readonly<{ kind: AdapterKind; preset?: string; error?: string; onPick: (id: string) => void }>) {
+  const items = (kind.presets ?? []).map((p) => ({ key: p.id, name: p.label }));
+  if (kind.other_preset) items.push({ key: PRESET_OTHER, name: kind.other_preset });
+  return (
+    <>
+      <h4 style={{ font: 'var(--type-h4)', margin: 0 }}>Choose a provider</h4>
+      <TilePicker label="Provider" items={items} chosen={preset ?? ''} onPick={onPick} />
+      {error && <p style={{ ...caption, color: 'var(--marker-deep)' }}>{error}</p>}
+    </>
+  );
+}
+
+/** An adapter's name, ID and whether it is its category's default. */
+function AdapterName({
+  form,
+  edit,
+  error,
+  defaultLabel,
+  isAI,
+}: Readonly<{
+  form: AdapterForm;
+  edit: (p: Partial<AdapterForm>) => void;
+  error?: string;
+  /** Offered as the default of its category, under this label; absent is not offered. */
+  defaultLabel?: string;
+  isAI: boolean;
+}>) {
+  return (
+    <>
+      <NameFields form={form} edit={edit} error={error} />
+      {defaultLabel && (
+        <Checkbox label={defaultLabel} checked={form.isDefault} onChange={(e) => edit({ isDefault: e.target.checked })} />
+      )}
+      {isAI && <p style={caption}>Choose its functions after Pando restarts.</p>}
+    </>
+  );
+}
+
 /** A screen's name in the list of steps. */
+function railState(i: number, index: number): 'done' | 'current' | 'next' {
+  if (i < index) return 'done';
+  return i === index ? 'current' : 'next';
+}
+
 function screenLabel(s: Screen, pickLabel: string): string {
   if (s.kind === 'choose') return pickLabel;
   if (s.kind === 'provider') return 'Provider';
@@ -409,7 +509,7 @@ function StepRail({
 }>) {
   const items: { label: string; state: 'done' | 'current' | 'next'; at: number }[] = screens.map((s, i) => ({
     label: screenLabel(s, pickLabel),
-    state: i < index ? 'done' : i === index ? 'current' : 'next',
+    state: railState(i, index),
     at: i,
   }));
 
@@ -558,12 +658,12 @@ function TilePicker({
 function Marked({ text }: Readonly<{ text: string }>) {
   return (
     <>
-      {runs(text).map((r, i) => {
-        if (r.kind === 'bold') return <strong key={i} style={{ fontWeight: 600 }}>{r.text}</strong>;
+      {keyed(runs(text), (r) => `${r.kind}:${r.text}`).map(([key, r]) => {
+        if (r.kind === 'bold') return <strong key={key} style={{ fontWeight: 600 }}>{r.text}</strong>;
         if (r.kind === 'code')
           return (
             <code
-              key={i}
+              key={key}
               style={{
                 font: 'var(--type-code-sm)',
                 background: 'var(--paper-sunken)',
@@ -575,10 +675,22 @@ function Marked({ text }: Readonly<{ text: string }>) {
               {r.text}
             </code>
           );
-        return <span key={i}>{r.text}</span>;
+        return <span key={key}>{r.text}</span>;
       })}
     </>
   );
+}
+
+/** Items with a key each made from what they say, numbered only where two
+ *  say the same, so a key follows its item rather than its place. */
+function keyed<T>(items: readonly T[], name: (item: T) => string): [string, T][] {
+  const seen = new Map<string, number>();
+  return items.map((item) => {
+    const base = name(item);
+    const n = seen.get(base) ?? 0;
+    seen.set(base, n + 1);
+    return [n === 0 ? base : `${base}#${n}`, item];
+  });
 }
 
 /** A kind's step: its title, what to do, its links with any {key} filled in, and its settings. */
@@ -615,8 +727,8 @@ function StepBody({
             gap: 'var(--space-2)',
           }}
         >
-          {step.do!.map((a, i) => (
-            <li key={i}>
+          {keyed(step.do ?? [], (a) => a.text).map(([key, a]) => (
+            <li key={key}>
               <Marked text={fill(a.text)} />
               {a.table && <StepTable table={a.table} />}
             </li>
@@ -678,11 +790,11 @@ function StepTable({ table }: Readonly<{ table: NonNullable<NonNullable<KindStep
         </tr>
       </thead>
       <tbody>
-        {table.rows.map((row, i) => (
-          <tr key={i}>
-            {row.map((cell, j) => (
-              <td key={j} style={{ padding: 'var(--space-1) var(--space-3)' }}>
-                {cell}
+        {keyed(table.rows, (row) => row.join('|')).map(([key, row]) => (
+          <tr key={key}>
+            {table.columns.map((column, j) => (
+              <td key={column} style={{ padding: 'var(--space-1) var(--space-3)' }}>
+                {row[j]}
               </td>
             ))}
           </tr>
@@ -746,8 +858,10 @@ function Review({
   if (nameRows) {
     for (const r of nameRows) rows.push({ ...r, mono: false, to: 'name' });
   } else {
-    rows.push({ label: 'Name', value: form.name.trim() || kind.name, mono: false, to: 'name' });
-    rows.push({ label: 'ID', value: form.id.trim(), mono: true, to: 'name' });
+    rows.push(
+      { label: 'Name', value: form.name.trim() || kind.name, mono: false, to: 'name' },
+      { label: 'ID', value: form.id.trim(), mono: true, to: 'name' },
+    );
     if (showDefault) rows.push({ label: 'Default', value: form.isDefault ? 'Yes' : 'No', mono: false, to: 'name' });
   }
 

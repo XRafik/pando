@@ -153,31 +153,4 @@ func Info() api.KindInfo {
 	}
 }
 
-// steps walk through a connection: the method and host, then the method's
-// credential, then the path prefix.
-func steps() []api.Step {
-	when := func(method string) *api.Condition {
-		return &api.Condition{Key: "method", Values: []string{method}}
-	}
-	return []api.Step{
-		{ID: "method", Label: "Sign-in method", Title: "Choose how Pando signs in",
-			Fields: []string{"method", "host"}},
-		{ID: "token", Label: "Access token", Title: "Create an access token", ShownWhen: when(forgekit.MethodToken),
-			Do: []api.Action{
-				{Text: "On the git host, create an access token with read access to the repositories."},
-			},
-			Fields: []string{"username", forgekit.FieldToken}},
-		{ID: "ssh", Label: "SSH key", Title: "Add an SSH key", ShownWhen: when(forgekit.MethodSSH),
-			Do: []api.Action{
-				{Text: "Run `ssh-keygen -t ed25519 -f pando-deploy -N \"\"`."},
-				{Text: "On the git host, add `pando-deploy.pub` to the repository as a read-only deploy key."},
-				{Text: "Paste `pando-deploy` below."},
-				{Text: "Run `ssh-keyscan` with the host's name, on a machine you trust, and paste its output below."},
-			},
-			Fields: []string{forgekit.FieldSSHPrivateKey, forgekit.FieldSSHPassphrase, "known_hosts"}},
-		{ID: "scope", Label: "Repositories", Title: "Choose a path prefix",
-			Fields: []string{"scope"}},
-	}
-}
-
 var _ api.SourceAdapter = (*Adapter)(nil)

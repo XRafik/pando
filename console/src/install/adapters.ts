@@ -6,6 +6,9 @@
 // knows what an Anthropic or a Traefik adapter takes; a kind added to Pando is
 // configurable here without this file changing (R-261).
 
+/** A setting's value as a form holds it: text, or a bool's true or false. */
+export type FieldValue = string | boolean;
+
 /** One choice a `select` setting offers. */
 interface KindOption {
   value: string;
@@ -51,7 +54,7 @@ export interface KindField {
 
 /** Whether any advanced setting is set to something other than its default,
  *  so a form opens them rather than hiding what is configured. */
-export function advancedChanged(kind: AdapterKind, values: Record<string, string | boolean>): boolean {
+export function advancedChanged(kind: AdapterKind, values: Record<string, FieldValue>): boolean {
   return (kind.fields ?? []).some((f) => {
     if (!f.advanced || !(f.key in values)) return false;
     if (f.type === 'bool') return boolValue(f, values[f.key]) !== (f.default === 'true');
@@ -61,13 +64,13 @@ export function advancedChanged(kind: AdapterKind, values: Record<string, string
 }
 
 /** A bool setting as it stands: what was set, or the kind's default. */
-export function boolValue(f: KindField, v: string | boolean | undefined): boolean {
+export function boolValue(f: KindField, v: FieldValue | undefined): boolean {
   return typeof v === 'boolean' ? v : f.default === 'true';
 }
 
 /** A setting as the adapter will read it, as text: what was entered, or the
  *  kind's default. A bool is "true" or "false". */
-export function effectiveText(f: KindField, v: string | boolean | undefined): string {
+export function effectiveText(f: KindField, v: FieldValue | undefined): string {
   if (f.type === 'bool') return String(boolValue(f, v));
   const text = typeof v === 'string' ? v.trim() : '';
   return text || f.default || '';
@@ -75,7 +78,7 @@ export function effectiveText(f: KindField, v: string | boolean | undefined): st
 
 /** Whether a setting applies, given the others. A hidden one is neither
  *  checked nor sent: a DNS provider means nothing without DNS certificates. */
-export function isShown(kind: AdapterKind, f: KindField, values: Record<string, string | boolean>): boolean {
+export function isShown(kind: AdapterKind, f: KindField, values: Record<string, FieldValue>): boolean {
   if (!f.shown_when) return true;
   const on = (kind.fields ?? []).find((x) => x.key === f.shown_when!.key);
   if (!on) return true;
@@ -165,7 +168,7 @@ export function runs(text: string): Run[] {
  */
 export function kindSteps(
   kind: AdapterKind,
-  values: Record<string, string | boolean>,
+  values: Record<string, FieldValue>,
   preset?: string,
 ): KindStep[] {
   const declared = (kind.steps ?? []).filter((st) => !preset || !st.presets?.length || st.presets.includes(preset));
@@ -181,7 +184,7 @@ export function kindSteps(
 }
 
 /** The settings a step shows, in its order: those it names that apply. */
-export function stepFields(kind: AdapterKind, step: KindStep, values: Record<string, string | boolean>): KindField[] {
+export function stepFields(kind: AdapterKind, step: KindStep, values: Record<string, FieldValue>): KindField[] {
   const byKey = new Map((kind.fields ?? []).map((f) => [f.key, f]));
   return step.fields
     .map((k) => byKey.get(k))
@@ -196,7 +199,7 @@ export function stepFields(kind: AdapterKind, step: KindStep, values: Record<str
  */
 export function fillRefs(
   kind: AdapterKind,
-  values: Record<string, string | boolean>,
+  values: Record<string, FieldValue>,
   template: string,
   supplied: Record<string, string> = {},
 ): string | undefined {
@@ -215,7 +218,7 @@ export function fillRefs(
  *  stays as written, so the instruction still reads. */
 export function fillText(
   kind: AdapterKind,
-  values: Record<string, string | boolean>,
+  values: Record<string, FieldValue>,
   text: string,
   supplied: Record<string, string> = {},
 ): string {
@@ -228,7 +231,7 @@ export function fillText(
 export function unasked(
   kind: AdapterKind,
   steps: KindStep[],
-  values: Record<string, string | boolean>,
+  values: Record<string, FieldValue>,
   preset?: string,
 ): KindField[] {
   if ((kind.steps ?? []).length === 0) return [];
@@ -248,7 +251,7 @@ export function unasked(
  * is example.com, and follows it until the setting itself is edited. One
  * naming a setting still empty is left empty.
  */
-export function withSuggestions(kind: AdapterKind, values: Record<string, string | boolean>): Record<string, string | boolean> {
+export function withSuggestions(kind: AdapterKind, values: Record<string, FieldValue>): Record<string, FieldValue> {
   const out = { ...values };
   for (const f of kind.fields ?? []) {
     if (!f.suggest || f.key in values) continue;
@@ -274,13 +277,13 @@ export function joinList(items: string[]): string {
  * taken back, unless they were changed since, and the new one's filled in.
  */
 export function withPreset(
-  values: Record<string, string | boolean>,
+  values: Record<string, FieldValue>,
   previous: KindPreset | undefined,
   next: KindPreset | undefined,
-): Record<string, string | boolean> {
+): Record<string, FieldValue> {
   const out = { ...values };
   for (const [key, v] of Object.entries(previous?.values ?? {})) if (out[key] === v) delete out[key];
-  return { ...out, ...(next?.values ?? {}) };
+  return { ...out, ...next?.values };
 }
 
 /** The problems with a step's own settings — what Continue checks. */
@@ -300,7 +303,7 @@ export function stepProblems(
 }
 
 /** A setting as the review states it: what the adapter will use. */
-export function reviewText(f: KindField, v: string | boolean | undefined): string {
+export function reviewText(f: KindField, v: FieldValue | undefined): string {
   if (f.type === 'bool') return boolValue(f, v) ? 'Yes' : 'No';
   const text = typeof v === 'string' ? v.trim() : '';
   if (f.credential) return text ? 'Entered' : 'Not entered';
@@ -311,7 +314,7 @@ export function reviewText(f: KindField, v: string | boolean | undefined): strin
 }
 
 /** How many advanced settings are changed from their defaults. */
-export function advancedCount(kind: AdapterKind, values: Record<string, string | boolean>): { total: number; changed: number } {
+export function advancedCount(kind: AdapterKind, values: Record<string, FieldValue>): { total: number; changed: number } {
   const adv = (kind.fields ?? []).filter((f) => f.advanced && isShown(kind, f, values));
   const changed = adv.filter((f) => advancedChanged({ ...kind, fields: [f] }, values)).length;
   return { total: adv.length, changed };
@@ -323,7 +326,7 @@ export interface AdapterForm {
   id: string;
   name: string;
   isDefault: boolean;
-  values: Record<string, string | boolean>;
+  values: Record<string, FieldValue>;
 }
 
 export interface AdapterRequest {

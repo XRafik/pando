@@ -296,16 +296,6 @@ func Info() api.KindInfo {
 			{Key: "port", Label: "Port", Type: "int", Default: "587", Advanced: true, Help: "587 for STARTTLS, 465 for TLS."},
 			{Key: "timeout_seconds", Label: "Timeout", Type: "int", Default: "15", Advanced: true, Help: "Seconds to wait for the server."},
 		},
-		Steps: []api.Step{
-			{ID: "server", Label: "Server", Title: "Enter your SMTP server",
-				Do:     []api.Action{{Text: "Find your email provider's SMTP server name and port."}},
-				Fields: []string{"host"}},
-			{ID: "sign-in", Label: "Sign-in", Title: "Enter SMTP credentials",
-				Do:     []api.Action{{Text: "Create SMTP credentials with your email provider, if the server requires sign-in."}},
-				Fields: []string{"username", "password"}},
-			{ID: "sender", Label: "Sender", Title: "Choose the From address",
-				Do:     []api.Action{{Text: "Verify the address or its domain with your email provider, if it requires a verified sender."}},
-				Fields: []string{"from"}},
-		},
+		Steps: steps(),
 	}
 }

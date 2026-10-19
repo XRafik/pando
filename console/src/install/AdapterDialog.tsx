@@ -669,7 +669,7 @@ function ListInput({
               add(typing);
             } else if (e.key === 'Backspace' && typing === '' && items.length > 0) {
               e.preventDefault();
-              const last = items[items.length - 1] ?? '';
+              const last = items.at(-1) ?? '';
               onChange(joinList(items.slice(0, -1)));
               setTyping(last);
             }

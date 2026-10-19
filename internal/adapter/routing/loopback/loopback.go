@@ -138,8 +138,6 @@ func Info() api.KindInfo {
 		Fields: []api.Field{
 			{Key: "base_url", Label: "Base URL", Type: "string", Help: "The address apps are reached at.", Default: "The address each request arrives on"},
 		},
-		Steps: []api.Step{
-			{ID: "address", Label: "Address", Title: "Where are apps reached?", Fields: []string{"base_url"}},
-		},
+		Steps: steps(),
 	}
 }

@@ -241,32 +241,45 @@ func (k KindInfo) Validate() error {
 			return fmt.Errorf("%s/%s has two settings named %q", k.Category, k.Kind, f.Key)
 		}
 		seen[f.Key] = true
-		for _, id := range f.Presets {
-			if !slices.ContainsFunc(k.Presets, func(p Preset) bool { return p.ID == id }) {
-				return fmt.Errorf("%s/%s setting %q is for provider %q, which is not one of its presets", k.Category, k.Kind, f.Key, id)
-			}
-		}
-		if f.List && (f.Type != "string" || f.Credential || f.Multiline) {
-			return fmt.Errorf("%s/%s setting %q is a list: a list is a plain string setting, neither a credential nor multiline", k.Category, k.Kind, f.Key)
-		}
-		for _, m := range suggestRef.FindAllStringSubmatch(f.Suggest, -1) {
-			if !k.hasField(m[1]) || m[1] == f.Key {
-				return fmt.Errorf("%s/%s setting %q suggests from {%s}, which is not another of its settings", k.Category, k.Kind, f.Key, m[1])
-			}
-		}
-		if !f.Advanced {
-			continue
-		}
-		switch {
-		case f.Required:
-			return fmt.Errorf("%s/%s setting %q is both required and advanced: a required setting belongs among the basic ones", k.Category, k.Kind, f.Key)
-		case f.Credential:
-			return fmt.Errorf("%s/%s setting %q is a credential marked advanced: the CLI asks for credentials only among the basic settings", k.Category, k.Kind, f.Key)
-		case f.Default == "" && f.Type != "bool":
-			return fmt.Errorf("%s/%s setting %q is advanced and states no default: say what leaving it empty does", k.Category, k.Kind, f.Key)
+		if err := k.validateField(f); err != nil {
+			return err
 		}
 	}
 	return k.validateSteps()
+}
+
+// validateField checks one setting on its own.
+func (k KindInfo) validateField(f Field) error {
+	for _, id := range f.Presets {
+		if !slices.ContainsFunc(k.Presets, func(p Preset) bool { return p.ID == id }) {
+			return fmt.Errorf("%s/%s setting %q is for provider %q, which is not one of its presets", k.Category, k.Kind, f.Key, id)
+		}
+	}
+	if f.List && (f.Type != "string" || f.Credential || f.Multiline) {
+		return fmt.Errorf("%s/%s setting %q is a list: a list is a plain string setting, neither a credential nor multiline", k.Category, k.Kind, f.Key)
+	}
+	for _, m := range suggestRef.FindAllStringSubmatch(f.Suggest, -1) {
+		if !k.hasField(m[1]) || m[1] == f.Key {
+			return fmt.Errorf("%s/%s setting %q suggests from {%s}, which is not another of its settings", k.Category, k.Kind, f.Key, m[1])
+		}
+	}
+	if f.Advanced {
+		return k.validateAdvanced(f)
+	}
+	return nil
+}
+
+// validateAdvanced checks that an advanced setting is safe to leave empty.
+func (k KindInfo) validateAdvanced(f Field) error {
+	switch {
+	case f.Required:
+		return fmt.Errorf("%s/%s setting %q is both required and advanced: a required setting belongs among the basic ones", k.Category, k.Kind, f.Key)
+	case f.Credential:
+		return fmt.Errorf("%s/%s setting %q is a credential marked advanced: the CLI asks for credentials only among the basic settings", k.Category, k.Kind, f.Key)
+	case f.Default == "" && f.Type != "bool":
+		return fmt.Errorf("%s/%s setting %q is advanced and states no default: say what leaving it empty does", k.Category, k.Kind, f.Key)
+	}
+	return nil
 }
 
 // suggestRef is a {key} in a Suggest.
@@ -291,65 +304,14 @@ func (k KindInfo) validateSteps() error {
 		return nil
 	}
 	where := fmt.Sprintf("%s/%s", k.Category, k.Kind)
-	presets := map[string]bool{}
-	for _, p := range k.Presets {
-		presets[p.ID] = true
-	}
 	stepIDs := map[string]bool{}
 	for i, st := range k.Steps {
-		switch {
-		case st.ID == "":
-			return fmt.Errorf("%s step %d has no ID", where, i+1)
-		case stepIDs[st.ID]:
-			return fmt.Errorf("%s has two steps named %q", where, st.ID)
-		case st.Label == "":
-			return fmt.Errorf("%s step %q has no label: name it in a word or two for the list of steps", where, st.ID)
-		case st.Title == "":
-			return fmt.Errorf("%s step %q has no title: say what to do, or ask a question", where, st.ID)
-		case len(st.Fields) == 0:
-			return fmt.Errorf("%s step %q asks for no settings: fold its instructions into the step that uses them", where, st.ID)
+		if err := k.validateStep(where, i, st, stepIDs); err != nil {
+			return err
 		}
 		stepIDs[st.ID] = true
-		for _, l := range st.Links {
-			if l.Label == "" || l.URL == "" {
-				return fmt.Errorf("%s step %q has a link without both a label and an address", where, st.ID)
-			}
-			for _, m := range suggestRef.FindAllStringSubmatch(l.URL, -1) {
-				if !k.hasField(m[1]) && m[1] != RefCallbackURL && m[1] != RefEntityID {
-					return fmt.Errorf("%s step %q links with {%s}, which is not one of its settings", where, st.ID, m[1])
-				}
-			}
-		}
-		for _, a := range st.Do {
-			if a.Text == "" {
-				return fmt.Errorf("%s step %q has an empty instruction", where, st.ID)
-			}
-			for _, m := range suggestRef.FindAllStringSubmatch(a.Text, -1) {
-				if !k.hasField(m[1]) && m[1] != RefCallbackURL && m[1] != RefEntityID {
-					return fmt.Errorf("%s step %q says {%s}, which is not one of its settings", where, st.ID, m[1])
-				}
-			}
-		}
-		for _, id := range st.Presets {
-			if !presets[id] && (id != PresetOther || k.OtherPreset == "") {
-				return fmt.Errorf("%s step %q is for provider %q, which is not one of its presets", where, st.ID, id)
-			}
-		}
 	}
-
-	// Each provider a person can pick sees the steps for it; with no presets,
-	// there is one way through.
-	paths := []string{""}
-	if len(k.Presets) > 0 {
-		paths = paths[:0]
-		for _, p := range k.Presets {
-			paths = append(paths, p.ID)
-		}
-		if k.OtherPreset != "" {
-			paths = append(paths, PresetOther)
-		}
-	}
-	for _, path := range paths {
+	for _, path := range k.paths() {
 		var steps []Step
 		for _, st := range k.Steps {
 			if st.forPreset(path) {
@@ -361,6 +323,81 @@ func (k KindInfo) validateSteps() error {
 		}
 	}
 	return nil
+}
+
+// validateStep checks one step on its own; stepIDs holds the IDs of the steps
+// before it.
+func (k KindInfo) validateStep(where string, i int, st Step, stepIDs map[string]bool) error {
+	switch {
+	case st.ID == "":
+		return fmt.Errorf("%s step %d has no ID", where, i+1)
+	case stepIDs[st.ID]:
+		return fmt.Errorf("%s has two steps named %q", where, st.ID)
+	case st.Label == "":
+		return fmt.Errorf("%s step %q has no label: name it in a word or two for the list of steps", where, st.ID)
+	case st.Title == "":
+		return fmt.Errorf("%s step %q has no title: say what to do, or ask a question", where, st.ID)
+	case len(st.Fields) == 0:
+		return fmt.Errorf("%s step %q asks for no settings: fold its instructions into the step that uses them", where, st.ID)
+	}
+	for _, l := range st.Links {
+		if l.Label == "" || l.URL == "" {
+			return fmt.Errorf("%s step %q has a link without both a label and an address", where, st.ID)
+		}
+		if ref, ok := k.unknownRef(l.URL); !ok {
+			return fmt.Errorf("%s step %q links with {%s}, which is not one of its settings", where, st.ID, ref)
+		}
+	}
+	for _, a := range st.Do {
+		if a.Text == "" {
+			return fmt.Errorf("%s step %q has an empty instruction", where, st.ID)
+		}
+		if ref, ok := k.unknownRef(a.Text); !ok {
+			return fmt.Errorf("%s step %q says {%s}, which is not one of its settings", where, st.ID, ref)
+		}
+	}
+	for _, id := range st.Presets {
+		if !k.hasPreset(id) {
+			return fmt.Errorf("%s step %q is for provider %q, which is not one of its presets", where, st.ID, id)
+		}
+	}
+	return nil
+}
+
+// unknownRef returns the first {key} in s that is neither a setting nor a
+// value Pando fills in, and false; or "" and true when every one is known.
+func (k KindInfo) unknownRef(s string) (string, bool) {
+	for _, m := range suggestRef.FindAllStringSubmatch(s, -1) {
+		if !k.hasField(m[1]) && m[1] != RefCallbackURL && m[1] != RefEntityID {
+			return m[1], false
+		}
+	}
+	return "", true
+}
+
+// hasPreset reports whether a step may name the preset: one of the kind's, or
+// "other" when the kind offers it.
+func (k KindInfo) hasPreset(id string) bool {
+	if slices.ContainsFunc(k.Presets, func(p Preset) bool { return p.ID == id }) {
+		return true
+	}
+	return id == PresetOther && k.OtherPreset != ""
+}
+
+// paths lists the providers a person can pick, each seeing the steps for it;
+// with no presets, there is one way through.
+func (k KindInfo) paths() []string {
+	if len(k.Presets) == 0 {
+		return []string{""}
+	}
+	paths := make([]string, 0, len(k.Presets)+1)
+	for _, p := range k.Presets {
+		paths = append(paths, p.ID)
+	}
+	if k.OtherPreset != "" {
+		paths = append(paths, PresetOther)
+	}
+	return paths
 }
 
 // forPreset reports whether a step is shown to someone who chose the preset;
@@ -380,35 +417,55 @@ func (k KindInfo) validatePath(where, path string, steps []Step) error {
 	}
 	askedOn := map[string]int{} // field key -> index of the step asking it
 	for i, st := range steps {
-		if c := st.ShownWhen; c != nil {
-			if j, ok := askedOn[c.Key]; !ok || j >= i {
-				return fmt.Errorf("%s step %q is shown for setting %q, which no earlier step asks for", where, st.ID, c.Key)
-			}
+		if c := st.ShownWhen; c != nil && !askedBefore(askedOn, c.Key, i) {
+			return fmt.Errorf("%s step %q is shown for setting %q, which no earlier step asks for", where, st.ID, c.Key)
 		}
 		for _, key := range st.Fields {
-			f, ok := fields[key]
-			switch {
-			case !ok:
-				return fmt.Errorf("%s step %q asks for %q, which is not one of its settings", where, st.ID, key)
-			case f.Advanced:
-				return fmt.Errorf("%s step %q asks for advanced setting %q: advanced settings are shown on the review, not on a step", where, st.ID, key)
-			}
-			if j, dup := askedOn[key]; dup {
-				return fmt.Errorf("%s asks for setting %q on both step %q and step %q", where, key, steps[j].ID, st.ID)
-			}
-			if c := f.ShownWhen; c != nil {
-				if j, ok := askedOn[c.Key]; !ok || j > i {
-					return fmt.Errorf("%s setting %q is shown for setting %q, which is not asked before it", where, key, c.Key)
-				}
+			if err := checkStepField(where, fields, steps, askedOn, i, key); err != nil {
+				return err
 			}
 			askedOn[key] = i
 		}
 	}
-	// A provider's steps may leave out a setting that is not required: its
-	// preset settles it, or it does not apply — a Google Workspace domain to
-	// anyone else. Review shows it with the advanced ones. A kind without
-	// presets asks every setting.
-	named := path != ""
+	return k.checkCoverage(where, path, askedOn)
+}
+
+// askedBefore reports whether a step before the i'th asks for the setting.
+func askedBefore(askedOn map[string]int, key string, i int) bool {
+	j, ok := askedOn[key]
+	return ok && j < i
+}
+
+// checkStepField checks one setting the i'th step asks for, against the
+// settings the steps before it asked.
+func checkStepField(where string, fields map[string]Field, steps []Step, askedOn map[string]int, i int, key string) error {
+	st := steps[i]
+	f, ok := fields[key]
+	switch {
+	case !ok:
+		return fmt.Errorf("%s step %q asks for %q, which is not one of its settings", where, st.ID, key)
+	case f.Advanced:
+		return fmt.Errorf("%s step %q asks for advanced setting %q: advanced settings are shown on the review, not on a step", where, st.ID, key)
+	}
+	if j, dup := askedOn[key]; dup {
+		return fmt.Errorf("%s asks for setting %q on both step %q and step %q", where, key, steps[j].ID, st.ID)
+	}
+	if c := f.ShownWhen; c != nil {
+		if j, ok := askedOn[c.Key]; !ok || j > i {
+			return fmt.Errorf("%s setting %q is shown for setting %q, which is not asked before it", where, key, c.Key)
+		}
+	}
+	return nil
+}
+
+// checkCoverage checks that one way through the steps asks every basic
+// setting it must.
+//
+// A provider's steps may leave out a setting that is not required: its
+// preset settles it, or it does not apply — a Google Workspace domain to
+// anyone else. Review shows it with the advanced ones. A kind without
+// presets asks every setting.
+func (k KindInfo) checkCoverage(where, path string, askedOn map[string]int) error {
 	var values map[string]string
 	for _, p := range k.Presets {
 		if p.ID == path {
@@ -416,13 +473,19 @@ func (k KindInfo) validatePath(where, path string, steps []Step) error {
 		}
 	}
 	for _, f := range k.Fields {
-		if _, ok := askedOn[f.Key]; ok || f.Advanced || (path != "" && len(f.Presets) > 0 && !slices.Contains(f.Presets, path)) {
+		if _, ok := askedOn[f.Key]; ok || f.Advanced || !f.appliesTo(path) {
 			continue
 		}
-		if _, given := values[f.Key]; named && (!f.Required || given) {
+		if _, given := values[f.Key]; path != "" && (!f.Required || given) {
 			continue
 		}
 		return fmt.Errorf("%s setting %q is on no step: every basic setting is asked on exactly one", where, f.Key)
 	}
 	return nil
+}
+
+// appliesTo reports whether a setting is shown to someone who chose the
+// preset; a setting that names none is for everyone.
+func (f Field) appliesTo(path string) bool {
+	return path == "" || len(f.Presets) == 0 || slices.Contains(f.Presets, path)
 }

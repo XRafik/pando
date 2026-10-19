@@ -15,18 +15,8 @@ var Slack = Platform{
 	Placeholder: "https://hooks.slack.com/services/…",
 	Help:        "The incoming webhook URL Slack gives you for the channel.",
 	Hosts:       []string{"hooks.slack.com", "hooks.slack-gov.com"},
-	Steps: []api.Step{
-		{ID: "webhook", Label: "Webhook", Title: "Create an incoming webhook",
-			Do: []api.Action{
-				{Text: "In Slack's app settings, choose **Create an app**, then **Blank app**, and pick your workspace."},
-				{Text: "Open **Incoming Webhooks** and turn on **Activate Incoming Webhooks**."},
-				{Text: "Choose **Add New Webhook to Workspace**, pick the channel, then **Allow**."},
-				{Text: "Copy the URL under **Webhook URLs for Your Workspace**."},
-			},
-			Links:  []api.Link{{Label: "Open Slack apps", URL: "https://api.slack.com/apps"}},
-			Fields: []string{"webhook_url"}},
-	},
-	Format: slackMessage,
+	Steps:       slackSteps(),
+	Format:      slackMessage,
 }
 
 // Teams posts to a Microsoft Teams channel through a Workflows webhook.
@@ -37,18 +27,8 @@ var Teams = Platform{
 	IDPrefix:    "ntf_",
 	Placeholder: "https://….environment.api.powerplatform.com/powerautomate/automations/direct/workflows/…",
 	Help:        "The webhook URL of a Send webhook alerts to a channel workflow.",
-	Steps: []api.Step{
-		{ID: "workflow", Label: "Workflow", Title: "Create a webhook workflow",
-			Do: []api.Action{
-				{Text: "In Teams, select **More options** next to a standard or shared channel, then **Workflows**."},
-				{Text: "Choose the **Send webhook alerts to a channel** template."},
-				{Text: "Check the team and channel, then select **Save**."},
-				{Text: "Copy the webhook URL from the workflow's details page."},
-			},
-			Links:  []api.Link{{Label: "Open Teams", URL: "https://teams.microsoft.com/"}},
-			Fields: []string{"webhook_url"}},
-	},
-	Format: teamsMessage,
+	Steps:       teamsSteps(),
+	Format:      teamsMessage,
 }
 
 // Discord posts to a Discord channel webhook.
@@ -60,18 +40,8 @@ var Discord = Platform{
 	Placeholder: "https://discord.com/api/webhooks/…",
 	Help:        "The webhook URL from the server's Integrations settings.",
 	Hosts:       []string{"discord.com", "discordapp.com"},
-	Steps: []api.Step{
-		{ID: "webhook", Label: "Webhook", Title: "Create a channel webhook",
-			Do: []api.Action{
-				{Text: "In Discord, open **Server Settings** → **Integrations**."},
-				{Text: "Choose **Create Webhook**, or **New Webhook** under **Webhooks**."},
-				{Text: "Pick the channel it posts to."},
-				{Text: "Choose **Copy Webhook URL**."},
-			},
-			Links:  []api.Link{{Label: "Open Discord", URL: "https://discord.com/app"}},
-			Fields: []string{"webhook_url"}},
-	},
-	Format: discordMessage,
+	Steps:       discordSteps(),
+	Format:      discordMessage,
 }
 
 // slackEscape escapes the three characters Slack's mrkdwn gives meaning.

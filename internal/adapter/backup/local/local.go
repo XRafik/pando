@@ -232,9 +232,6 @@ func Info() api.KindInfo {
 		Fields: []api.Field{
 			{Key: "path", Label: "Directory", Type: "string", Help: "Created if it does not exist.", Default: "/var/lib/pando/backups"},
 		},
-		// Nothing to do outside Pando: one plain step for the one setting.
-		Steps: []api.Step{
-			{ID: "directory", Label: "Directory", Title: "Choose a directory", Fields: []string{"path"}},
-		},
+		Steps: steps(),
 	}
 }

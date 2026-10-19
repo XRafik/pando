@@ -245,22 +245,6 @@ func Info() api.KindInfo {
 			{Key: "base_url", Label: "Base URL", Type: "string", Help: "A gateway or proxy in front of the Anthropic API. Empty is the API itself.", Default: "https://api.anthropic.com", Advanced: true},
 			{Key: "api_key_env", Label: "API key variable", Type: "string", Help: "The environment variable to read the key from, instead of a stored one.", Default: "ANTHROPIC_API_KEY", Advanced: true},
 		},
-		// Pando sends no anthropic-workspace-id header, so the key has to be
-		// scoped to one workspace: a key that is not is refused by the API.
-		Steps: []api.Step{
-			{ID: "key", Label: "API key", Title: "Create an API key",
-				Do: []api.Action{
-					{Text: "In the Claude Console, open **API keys** and choose **Create key**."},
-					{Text: "Name the key and choose an expiration."},
-					{Text: "Set **Linked account** to a service account, or to yourself."},
-					{Text: "Scope the key to one workspace."},
-					{Text: "Copy the key, which starts with `sk-ant-`."},
-				},
-				Links:  []api.Link{{Label: "Open API keys", URL: "https://platform.claude.com/settings/keys"}},
-				Fields: []string{"api_key"}},
-			{ID: "model", Label: "Model", Title: "Choose a model",
-				Links:  []api.Link{{Label: "Compare models", URL: "https://platform.claude.com/docs/en/models/overview"}},
-				Fields: []string{"model"}},
-		},
+		Steps: steps(),
 	}
 }

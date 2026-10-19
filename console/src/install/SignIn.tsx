@@ -36,7 +36,13 @@ interface Listing {
   providers: ProviderView[] | null;
   kinds: ProviderKind[] | null;
   /** A new provider's addresses, with {id} for the ID it is created with. */
-  endpoints?: { callback_url: string; entity_id: string };
+  endpoints?: Endpoints;
+}
+
+/** A new provider's callback URL and entity ID, with {id} for its ID. */
+interface Endpoints {
+  callback_url: string;
+  entity_id: string;
 }
 
 const KIND_LABEL: Record<string, string> = { local: 'Username and password', oidc: 'OpenID Connect', saml: 'SAML 2.0' };
@@ -330,6 +336,135 @@ function ProviderCard({
   );
 }
 
+/** The full form's button, as it says what it is doing. */
+function saveLabel(existing: boolean, pending: boolean): string {
+  if (existing) return pending ? 'Saving' : 'Save provider';
+  return pending ? 'Adding' : 'Add provider';
+}
+
+const NAME_NEEDED = 'A provider needs a name. People see it on the sign-in page.';
+
+/**
+ * Adding a sign-in provider one step at a time, on the same walk-through as
+ * an adapter: protocol, provider, its steps, then its name and the account
+ * options. Its addresses are filled in from the ID it will be created with.
+ */
+function ProviderGuide({
+  kinds,
+  kind,
+  onKind,
+  providerID,
+  endpoints,
+  name,
+  onName,
+  values,
+  onValues,
+  options,
+  rows,
+  saving,
+  saveError,
+  onSave,
+  onShowAll,
+  onClose,
+}: Readonly<{
+  kinds: ProviderKind[];
+  kind?: ProviderKind;
+  onKind: (kind: string) => void;
+  providerID: string;
+  endpoints?: Endpoints;
+  name: string;
+  onName: (name: string) => void;
+  values: Values;
+  onValues: (values: Values) => void;
+  /** The account options, as the full form shows them too. */
+  options: React.ReactNode;
+  rows: { label: string; value: string }[];
+  saving: boolean;
+  saveError: unknown;
+  onSave: () => void;
+  onShowAll: () => void;
+  onClose: () => void;
+}>) {
+  // Said under the name once Continue has found it empty.
+  const [nameError, setNameError] = useState<string | undefined>();
+  const supplied: Record<string, string> = endpoints
+    ? {
+        callback_url: endpoints.callback_url.replace('{id}', providerID),
+        entity_id: endpoints.entity_id.replace('{id}', providerID),
+      }
+    : {};
+  return (
+    <AdapterGuide
+      categories={[]}
+      category="identity"
+      askCategory={false}
+      onCategory={() => undefined}
+      inCategory={kinds}
+      chosen={kind ? kindKey(kind) : ''}
+      onPick={(key) => onKind(key.slice(key.indexOf('/') + 1))}
+      skipChoose={false}
+      kind={kind}
+      form={{ id: providerID, name, isDefault: false, values }}
+      edit={(patch) => {
+        if (patch.values) onValues(patch.values as Values);
+        if (patch.name !== undefined) onName(patch.name);
+      }}
+      stored={[]}
+      renderField={(f, error, instructed) => (
+        <FieldInput
+          guided
+          instructed={instructed}
+          field={f}
+          value={values[f.key]}
+          error={error}
+          onChange={(v) => onValues({ ...values, [f.key]: v })}
+        />
+      )}
+      showDefault={false}
+      isAI={false}
+      saving={saving}
+      saveError={saveError}
+      onSave={onSave}
+      onShowAll={onShowAll}
+      onClose={onClose}
+      pickLabel="Protocol"
+      pickTitle="Add identity provider"
+      noun="provider"
+      addLabel="Add provider"
+      supplied={supplied}
+      checkFields={(v) => {
+        if (!kind) return {};
+        const { name: _name, ...rest } = problems(kind, 'named', v);
+        return rest;
+      }}
+      onProvider={(p) => {
+        if (p && !name) onName(p.label);
+      }}
+      reviewNote="It starts off. Test it with a real sign-in, then turn it on."
+      nameStep={{
+        content: (
+          <>
+            <Input
+              label="Name (required)"
+              value={name}
+              helper="Shown on the sign-in page."
+              error={nameError}
+              onChange={(e) => onName(e.target.value)}
+            />
+            {options}
+          </>
+        ),
+        problems: (): Record<string, string> => {
+          const problem = name.trim() ? undefined : NAME_NEEDED;
+          setNameError(problem);
+          return problem ? { name: problem } : {};
+        },
+        rows,
+      }}
+    />
+  );
+}
+
 function ProviderDialog({
   kinds,
   existing,
@@ -338,7 +473,7 @@ function ProviderDialog({
 }: {
   kinds: ProviderKind[];
   existing?: ProviderView;
-  endpoints?: Listing['endpoints'];
+  endpoints?: Endpoints;
   onClose: () => void;
 }) {
   const queries = useQueryClient();
@@ -365,9 +500,9 @@ function ProviderDialog({
   const save = useMutation({
     mutationFn: () => {
       const body = providerRequest(kind!, name, values, { jit, linkByEmail }, !existing);
-      return existing
-        ? api.patch(`/identity-providers/${existing.id}`, body)
-        : api.post('/identity-providers', endpoints ? { ...body, id: providerID } : body);
+      if (existing) return api.patch(`/identity-providers/${existing.id}`, body);
+      // With the addresses known, it is created with the ID they were built from.
+      return api.post('/identity-providers', endpoints ? { ...body, id: providerID } : body);
     },
     onSuccess: () => {
       void queries.invalidateQueries({ queryKey: ['identity-providers'] });
@@ -402,81 +537,31 @@ function ProviderDialog({
   );
 
   if (guided && !existing) {
-    const supplied: Record<string, string> = endpoints
-      ? { callback_url: endpoints.callback_url.replace('{id}', providerID), entity_id: endpoints.entity_id.replace('{id}', providerID) }
-      : {};
     return (
-      <AdapterGuide
-        categories={[]}
-        category="identity"
-        askCategory={false}
-        onCategory={() => undefined}
-        inCategory={kinds}
-        chosen={kind ? kindKey(kind) : ''}
-        onPick={(key) => {
-          setKindName(key.slice(key.indexOf('/') + 1));
+      <ProviderGuide
+        kinds={kinds}
+        kind={kind}
+        onKind={(k) => {
+          setKindName(k);
           setValues({});
         }}
-        skipChoose={false}
-        kind={kind}
-        form={{ id: providerID, name, isDefault: false, values }}
-        edit={(patch) => {
-          if (patch.values) setValues(patch.values as Values);
-          if (patch.name !== undefined) setName(patch.name);
-        }}
-        stored={[]}
-        renderField={(f, error, instructed) => (
-          <FieldInput
-            guided
-            instructed={instructed}
-            field={f}
-            value={values[f.key]}
-            error={error}
-            onChange={(v) => setValues({ ...values, [f.key]: v })}
-          />
-        )}
-        showDefault={false}
-        isAI={false}
+        providerID={providerID}
+        endpoints={endpoints}
+        name={name}
+        onName={setName}
+        values={values}
+        onValues={setValues}
+        options={options}
+        rows={[
+          { label: 'Name', value: name.trim() },
+          { label: 'Just-in-time provisioning', value: jit ? 'On' : 'Off' },
+          { label: 'Link by verified email', value: linkByEmail ? 'On' : 'Off' },
+        ]}
         saving={save.isPending}
         saveError={save.isError ? save.error : undefined}
         onSave={() => save.mutate()}
         onShowAll={() => setGuided(false)}
         onClose={onClose}
-        pickLabel="Protocol"
-        pickTitle="Add identity provider"
-        noun="provider"
-        addLabel="Add provider"
-        supplied={supplied}
-        checkFields={(v) => {
-          if (!kind) return {};
-          const { name: _name, ...rest } = problems(kind, 'named', v);
-          return rest;
-        }}
-        onProvider={(p) => {
-          if (p && !name) setName(p.label);
-        }}
-        reviewNote="It starts off. Test it with a real sign-in, then turn it on."
-        nameStep={{
-          content: (errors) => (
-            <>
-              <Input
-                label="Name (required)"
-                value={name}
-                helper="Shown on the sign-in page."
-                error={errors.name}
-                onChange={(e) => setName(e.target.value)}
-              />
-              {options}
-            </>
-          ),
-          problems: (): Record<string, string> =>
-            name.trim() ? {} : { name: 'A provider needs a name. People see it on the sign-in page.' },
-          rows: [
-            { label: 'Name', value: name.trim() },
-            { label: 'Just-in-time provisioning', value: jit ? 'On' : 'Off' },
-            { label: 'Link by verified email', value: linkByEmail ? 'On' : 'Off' },
-          ],
-        }}
       />
     );
   }
@@ -505,7 +590,7 @@ function ProviderDialog({
               if (Object.keys(found).length === 0) save.mutate();
             }}
           >
-            {existing ? (save.isPending ? 'Saving' : 'Save provider') : save.isPending ? 'Adding' : 'Add provider'}
+            {saveLabel(Boolean(existing), save.isPending)}
           </Button>
         </>
       }

@@ -170,26 +170,6 @@ func Info() api.KindInfo {
 					{Value: "high", Label: "High"}, {Value: "urgent", Label: "Urgent"}}},
 			{Key: "timeout_seconds", Label: "Timeout", Type: "int", Default: "10", Advanced: true, Help: "Seconds to wait for the server to answer."},
 		},
-		Steps: []api.Step{
-			{ID: "server", Label: "Server", Title: "Choose a server",
-				Fields: []string{"server_url"}},
-			{ID: "topic", Label: "Topic", Title: "Subscribe to a topic",
-				Do: []api.Action{
-					{Text: "In the ntfy app, choose **Subscribe to topic**."},
-					{Text: "Enter a **Topic name** nobody would guess."},
-					{Text: "For your own server, turn on **Use another server** and enter its address."},
-					{Text: "Choose **Subscribe**."},
-				},
-				Links:  []api.Link{{Label: "Open ntfy", URL: "{server_url}"}},
-				Fields: []string{"topic"}},
-			{ID: "token", Label: "Access token", Title: "Create an access token",
-				Do: []api.Action{
-					{Text: "Sign in to the ntfy web app and open **Account**."},
-					{Text: "Under **Access tokens**, choose **Create access token**, then **Create token**."},
-					{Text: "Copy the token."},
-				},
-				Links:  []api.Link{{Label: "Open your ntfy account", URL: "{server_url}/account"}},
-				Fields: []string{"access_token"}},
-		},
+		Steps: steps(),
 	}
 }

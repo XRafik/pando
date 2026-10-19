@@ -219,42 +219,6 @@ func Info() api.KindInfo {
 			{Key: "api_key", Label: "API key", Type: "string", Help: "Only if your server asks for one. Stored encrypted and never shown again.", Credential: true},
 			{Key: "timeout_seconds", Label: "Timeout, in seconds", Type: "int", Help: "How long one request may take. Local models are slower than hosted ones.", Default: "300", Advanced: true},
 		},
-		Steps: []api.Step{
-			{ID: "server", Label: "Server", Title: "Connect to your model server",
-				Do: []api.Action{
-					{Text: "Enter the address of the OpenAI-compatible server you run, ending `/v1`. On this machine, by its default port:", Table: &api.Table{
-						Columns: []string{"Server", "Address"},
-						Rows: [][]string{
-							{"Ollama", "http://host.docker.internal:11434/v1"},
-							{"LM Studio", "http://host.docker.internal:1234/v1"},
-							{"llama.cpp", "http://host.docker.internal:9931/v1"},
-							{"vLLM", "http://host.docker.internal:8000/v1"},
-						},
-					}},
-					{Text: "On another machine, use its address instead, such as `http://10.0.0.20:11434/v1`."},
-					{Text: "On Linux, a server on this machine has to listen on an address other than `127.0.0.1`, and hosted apps can reach it there too."},
-					{Text: "Enter an API key only if the server requires one: `--api-key` for `llama-server` or `vllm serve`, **Require Authentication** in LM Studio."},
-				},
-				Links: []api.Link{
-					{Label: "Ollama", URL: "https://docs.ollama.com/api/openai-compatibility"},
-					{Label: "LM Studio", URL: "https://lmstudio.ai/docs/developer/core/server"},
-					{Label: "llama.cpp", URL: "https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md"},
-					{Label: "vLLM", URL: "https://docs.vllm.ai/en/latest/serving/online_serving/openai_compatible_server/"},
-				},
-				Fields: []string{"base_url", "api_key"}},
-			{ID: "model", Label: "Model", Title: "Choose a model",
-				Do: []api.Action{
-					{Text: "Enter the model's name as the server serves it:", Table: &api.Table{
-						Columns: []string{"Server", "Model name"},
-						Rows: [][]string{
-							{"Ollama", "As `ollama list` shows it, after `ollama pull`"},
-							{"LM Studio", "Its identifier, as `lms ls` shows it"},
-							{"llama.cpp", "Its `--alias`, or else the `-m` path"},
-							{"vLLM", "Its `--served-model-name`, or else the model given to `vllm serve`"},
-						},
-					}},
-				},
-				Fields: []string{"model"}},
-		},
+		Steps: steps(),
 	}
 }

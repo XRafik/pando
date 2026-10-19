@@ -142,28 +142,14 @@ func walkSteps(cmd *cobra.Command, info *kindInfo, preset string, values, creden
 			return nil, err
 		}
 	}
-	var steps []kindStep
-	for _, st := range info.Steps {
-		if preset == "" || len(st.Presets) == 0 || slices.Contains(st.Presets, preset) {
-			steps = append(steps, st)
-		}
-	}
+	steps := stepsFor(info, preset)
 	fields := map[string]kindField{}
 	for _, f := range info.Fields {
 		fields[f.Key] = f
 	}
 	asked := map[string]bool{}
 	for i, st := range steps {
-		if !shown(info, values, st.ShownWhen) {
-			continue
-		}
-		var pending []kindField
-		for _, key := range st.Fields {
-			f, ok := fields[key]
-			if _, given := values[key]; ok && !given && shown(info, values, f.ShownWhen) {
-				pending = append(pending, f)
-			}
-		}
+		pending := pendingFields(info, fields, values, st)
 		if len(pending) == 0 {
 			continue
 		}
@@ -177,6 +163,35 @@ func walkSteps(cmd *cobra.Command, info *kindInfo, preset string, values, creden
 		}
 	}
 	return asked, nil
+}
+
+// stepsFor is the steps someone who chose the preset sees; a step that names
+// no preset is for everyone.
+func stepsFor(info *kindInfo, preset string) []kindStep {
+	var steps []kindStep
+	for _, st := range info.Steps {
+		if preset == "" || len(st.Presets) == 0 || slices.Contains(st.Presets, preset) {
+			steps = append(steps, st)
+		}
+	}
+	return steps
+}
+
+// pendingFields is the settings a step still has to ask for: those shown for
+// what was answered so far that --set did not give. A step that is not shown
+// asks for none.
+func pendingFields(info *kindInfo, fields map[string]kindField, values map[string]string, st kindStep) []kindField {
+	if !shown(info, values, st.ShownWhen) {
+		return nil
+	}
+	var pending []kindField
+	for _, key := range st.Fields {
+		f, ok := fields[key]
+		if _, given := values[key]; ok && !given && shown(info, values, f.ShownWhen) {
+			pending = append(pending, f)
+		}
+	}
+	return pending
 }
 
 func printInstructions(out io.Writer, info *kindInfo, values map[string]string, st kindStep) {
@@ -202,14 +217,7 @@ func printInstructions(out io.Writer, info *kindInfo, values map[string]string, 
 // suggestion, filled in from what was answered before it, or its default.
 func ask(cmd *cobra.Command, info *kindInfo, values, credentials map[string]string, f kindField) error {
 	if f.Credential {
-		v, err := promptSecret(cmd, f.Label+": ")
-		if err != nil {
-			return err
-		}
-		if v != "" {
-			credentials[f.Key] = v
-		}
-		return nil
+		return askSecret(cmd, credentials, f)
 	}
 	start := f.Default
 	if f.Suggest != "" {
@@ -217,10 +225,8 @@ func ask(cmd *cobra.Command, info *kindInfo, values, credentials map[string]stri
 			start = s
 		}
 	}
-	if len(f.Options) > 0 {
-		for n, o := range f.Options {
-			fmt.Fprintf(cmd.ErrOrStderr(), "  %d) %s\n", n+1, o.Label)
-		}
+	for n, o := range f.Options {
+		fmt.Fprintf(cmd.ErrOrStderr(), "  %d) %s\n", n+1, o.Label)
 	}
 	label := f.Label
 	if start != "" {
@@ -230,11 +236,7 @@ func ask(cmd *cobra.Command, info *kindInfo, values, credentials map[string]stri
 	if err != nil && !errors.Is(err, io.EOF) {
 		return err
 	}
-	if len(f.Options) > 0 && v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n >= 1 && n <= len(f.Options) {
-			v = f.Options[n-1].Value
-		}
-	}
+	v = chosenOption(f, v)
 	if v == "" && f.Suggest != "" {
 		v = start
 	}
@@ -242,4 +244,25 @@ func ask(cmd *cobra.Command, info *kindInfo, values, credentials map[string]stri
 		values[f.Key] = v
 	}
 	return nil
+}
+
+// askSecret asks for a credential without echoing it.
+func askSecret(cmd *cobra.Command, credentials map[string]string, f kindField) error {
+	v, err := promptSecret(cmd, f.Label+": ")
+	if err != nil {
+		return err
+	}
+	if v != "" {
+		credentials[f.Key] = v
+	}
+	return nil
+}
+
+// chosenOption reads an answer to a setting with options: a number picks that
+// option's value, and anything else is taken as typed.
+func chosenOption(f kindField, v string) string {
+	if n, err := strconv.Atoi(v); err == nil && n >= 1 && n <= len(f.Options) {
+		return f.Options[n-1].Value
+	}
+	return v
 }
