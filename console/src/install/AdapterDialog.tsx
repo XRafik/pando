@@ -8,7 +8,7 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Banner, Button, Checkbox, Dialog, Input, Radio, Select } from '@design';
+import { Banner, Button, Checkbox, Dialog, Icon, IconButton, Input, Radio, Select } from '@design';
 
 import { api } from '@api/client';
 import { Quiet, refusal } from './Accounts';
@@ -26,7 +26,9 @@ import {
   fieldPlaceholder,
   formProblems,
   isShown,
+  joinList,
   kindKey,
+  listItems,
   orderCategories,
   sortKinds,
 } from './adapters';
@@ -508,6 +510,18 @@ export function FieldInput({
     );
   }
 
+  if (field.list) {
+    return (
+      <ListInput
+        field={field}
+        label={label}
+        value={typeof value === 'string' ? value : ''}
+        error={error}
+        onChange={onChange}
+      />
+    );
+  }
+
   if (field.type === 'select') {
     return <ChoiceInput field={field} label={label} value={value} error={error} onChange={onChange} radios={guided} />;
   }
@@ -556,6 +570,60 @@ export function FieldInput({
       error={error}
       onChange={(e) => onChange(e.target.value)}
     />
+  );
+}
+
+/**
+ * A list setting: one field per value, an add button reading the kind's
+ * `list_add`, and a remove beside each. The rows are kept as typed, an empty
+ * one included, and sent as one comma-separated string.
+ */
+function ListInput({
+  field,
+  label,
+  value,
+  error,
+  onChange,
+}: {
+  field: KindField;
+  label: string;
+  value: string;
+  error?: string;
+  onChange: (v: string) => void;
+}) {
+  const [rows, setRows] = useState<string[]>(() => listItems(value));
+  const set = (next: string[]) => {
+    setRows(next);
+    onChange(joinList(next));
+  };
+  return (
+    <fieldset style={{ border: 0, margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+      <legend style={{ font: 'var(--type-label)', color: 'var(--ink)', padding: 0, marginBottom: 'var(--space-1)' }}>{label}</legend>
+      {field.help && <p style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)', margin: 0 }}>{field.help}</p>}
+      {rows.map((row, i) => (
+        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+          <div style={{ flex: 1 }}>
+            <Input
+              aria-label={`${field.label}, value ${i + 1} of ${rows.length}`}
+              autoComplete="off"
+              spellCheck={false}
+              value={row}
+              placeholder={field.placeholder}
+              onChange={(e) => set(rows.map((r, j) => (j === i ? e.target.value : r)))}
+            />
+          </div>
+          <IconButton label={row.trim() ? `Remove ${row.trim()}` : 'Remove this empty value'} onClick={() => set(rows.filter((_, j) => j !== i))}>
+            <Icon name="x" size={16} />
+          </IconButton>
+        </div>
+      ))}
+      <span>
+        <Button variant="secondary" onClick={() => setRows([...rows, ''])}>
+          {field.list_add || 'Add another'}
+        </Button>
+      </span>
+      {error && <p style={{ font: 'var(--type-caption)', color: 'var(--marker-deep)', margin: 0 }}>{error}</p>}
+    </fieldset>
   );
 }
 

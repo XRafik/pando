@@ -35,6 +35,10 @@ export interface KindField {
   other?: boolean;
   /** Asks for a text area, such as credentials given as NAME=value lines. */
   multiline?: boolean;
+  /** Any number of values, each in its own field, sent comma-separated. */
+  list?: boolean;
+  /** What the button adding one more value reads. */
+  list_add?: string;
   /** Shown only while another setting has one of these values. */
   shown_when?: { key: string; values: string[] };
   /** A setting most people never change, asked for under "Advanced
@@ -156,6 +160,17 @@ export function stepFields(kind: AdapterKind, step: KindStep, values: Record<str
   return step.fields
     .map((k) => byKey.get(k))
     .filter((f): f is KindField => f !== undefined && isShown(kind, f, values));
+}
+
+/** A list setting's values, as typed: split on commas, spaces and new lines,
+ *  the way the adapter reads them. */
+export function listItems(text: string): string[] {
+  return text.split(/[\s,]+/).filter((v) => v !== '');
+}
+
+/** A list setting's values as the one string it is sent as. */
+export function joinList(items: string[]): string {
+  return items.map((v) => v.trim()).filter((v) => v !== '').join(', ');
 }
 
 /** The kinds a search matches, by name or description. */

@@ -11647,6 +11647,20 @@
           "install_roles"
         ]
       },
+      "Action": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "table": {
+            "$ref": "#/components/schemas/Table"
+          }
+        },
+        "required": [
+          "text"
+        ]
+      },
       "Actor": {
         "type": "object",
         "properties": {
@@ -11707,6 +11721,12 @@
           },
           "multiline": {
             "type": "boolean"
+          },
+          "list": {
+            "type": "boolean"
+          },
+          "list_add": {
+            "type": "string"
           },
           "shown_when": {
             "$ref": "#/components/schemas/Condition"
@@ -14531,6 +14551,12 @@
             "items": {
               "$ref": "#/components/schemas/Preset"
             }
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Step"
+            }
           }
         },
         "required": [
@@ -14574,6 +14600,21 @@
           "limit",
           "source",
           "owned"
+        ]
+      },
+      "Link": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "url"
         ]
       },
       "LoginRequest": {
@@ -16686,6 +16727,50 @@
           "breaking"
         ]
       },
+      "Step": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "lede": {
+            "type": "string"
+          },
+          "do": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Action"
+            }
+          },
+          "link": {
+            "$ref": "#/components/schemas/Link"
+          },
+          "fields": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "shown_when": {
+            "$ref": "#/components/schemas/Condition"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "title",
+          "fields"
+        ]
+      },
       "SubjectView": {
         "type": "object",
         "properties": {
@@ -16813,6 +16898,39 @@
           "created_by",
           "created_at",
           "updated_at"
+        ]
+      },
+      "Table": {
+        "type": "object",
+        "properties": {
+          "columns": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "rows": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "required": [
+          "columns",
+          "rows"
         ]
       },
       "TestReport": {

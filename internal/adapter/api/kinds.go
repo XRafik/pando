@@ -123,6 +123,13 @@ type Field struct {
 	// Multiline asks for a text area: a credential given as KEY=value lines.
 	Multiline bool `json:"multiline,omitempty"`
 
+	// List asks for any number of values of a "string" setting, each in a
+	// field of its own, with ListAdd as the button that adds one: "Add a
+	// secondary zone". They are sent as one string, separated by commas, so
+	// an adapter reads a list the same way whichever surface set it.
+	List    bool   `json:"list,omitempty"`
+	ListAdd string `json:"list_add,omitempty"`
+
 	// ShownWhen hides the setting unless another setting has one of the
 	// given values — DNS provider fields only when certificates use DNS. A
 	// form that ignores it still works; it only shows more than it needs to.
@@ -182,6 +189,9 @@ func (k KindInfo) Validate() error {
 			return fmt.Errorf("%s/%s has two settings named %q", k.Category, k.Kind, f.Key)
 		}
 		seen[f.Key] = true
+		if f.List && (f.Type != "string" || f.Credential || f.Multiline || f.ListAdd == "") {
+			return fmt.Errorf("%s/%s setting %q is a list: a list is a plain string setting, and says in ListAdd what its add button reads", k.Category, k.Kind, f.Key)
+		}
 		if !f.Advanced {
 			continue
 		}
