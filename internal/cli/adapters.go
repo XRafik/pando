@@ -126,9 +126,22 @@ func adapterCmd(client func() (*Client, error)) *cobra.Command {
 			config := map[string]any{}
 			credentials := map[string]string{}
 			for _, f := range info.Fields {
+				if _, typed := values[f.Key]; typed && f.Credential {
+					return fmt.Errorf("%s is a secret: leave it off --set and Pando will ask for it", f.Key)
+				}
+			}
+			// At a terminal, a kind's steps are walked for whatever --set left
+			// out: the same steps, in the same order, as the console's.
+			asked := map[string]bool{}
+			if interactive(cmd) && len(info.Steps) > 0 {
+				if asked, err = walkSteps(cmd, info, values, credentials); err != nil {
+					return err
+				}
+			}
+			for _, f := range info.Fields {
 				if f.Credential {
-					if _, typed := values[f.Key]; typed {
-						return fmt.Errorf("%s is a secret: leave it off --set and Pando will ask for it", f.Key)
+					if asked[f.Key] {
+						continue
 					}
 					value, err := promptSecret(cmd, f.Label+" (empty to skip): ")
 					if err != nil {
@@ -200,13 +213,17 @@ func adapterCmd(client func() (*Client, error)) *cobra.Command {
 				body["enabled"] = false
 			}
 			var saved struct {
-				Handover string `json:"handover"`
+				Handover string   `json:"handover"`
+				Warnings []string `json:"warnings"`
 			}
 			if err := c.Do("POST", adaptersPath, body, &saved); err != nil {
 				return err
 			}
 			if saved.Handover != "" {
 				fmt.Fprintln(cmd.OutOrStdout(), saved.Handover)
+			}
+			for _, w := range saved.Warnings {
+				fmt.Fprintln(cmd.OutOrStdout(), "Warning: "+w)
 			}
 			if category == "source" {
 				fmt.Fprintf(cmd.OutOrStdout(), "Saved %s. It is used from now on; `pando source list` shows whether it is ready.\n", id)
@@ -304,20 +321,57 @@ func orDash(keys []string) string {
 }
 
 type kindInfo struct {
-	Category    string `json:"category"`
-	Kind        string `json:"kind"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	IDPrefix    string `json:"id_prefix"`
-	Fields      []struct {
-		Key        string `json:"key"`
-		Label      string `json:"label"`
-		Type       string `json:"type"`
-		Required   bool   `json:"required"`
-		Credential bool   `json:"credential"`
-		Advanced   bool   `json:"advanced"`
-		Default    string `json:"default"`
-	} `json:"fields"`
+	Category    string      `json:"category"`
+	Kind        string      `json:"kind"`
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
+	IDPrefix    string      `json:"id_prefix"`
+	Fields      []kindField `json:"fields"`
+	Steps       []kindStep  `json:"steps"`
+}
+
+// kindField is one setting a kind takes, as GET /adapters/kinds says.
+type kindField struct {
+	Key         string `json:"key"`
+	Label       string `json:"label"`
+	Help        string `json:"help"`
+	Type        string `json:"type"`
+	Required    bool   `json:"required"`
+	Credential  bool   `json:"credential"`
+	Advanced    bool   `json:"advanced"`
+	Default     string `json:"default"`
+	Placeholder string `json:"placeholder"`
+	Suggest     string `json:"suggest"`
+	Options     []struct {
+		Value string `json:"value"`
+		Label string `json:"label"`
+	} `json:"options"`
+	ShownWhen *condition `json:"shown_when"`
+}
+
+// kindStep is one step of a kind's guided setup.
+type kindStep struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Title string `json:"title"`
+	Do    []struct {
+		Text  string `json:"text"`
+		Table *struct {
+			Columns []string   `json:"columns"`
+			Rows    [][]string `json:"rows"`
+		} `json:"table"`
+	} `json:"do"`
+	Links []struct {
+		Label string `json:"label"`
+		URL   string `json:"url"`
+	} `json:"links"`
+	Fields    []string   `json:"fields"`
+	ShownWhen *condition `json:"shown_when"`
+}
+
+type condition struct {
+	Key    string   `json:"key"`
+	Values []string `json:"values"`
 }
 
 // defaultUnlessTaken is whether an adapter saved without --default is its

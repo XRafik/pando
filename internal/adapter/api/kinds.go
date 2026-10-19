@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 )
@@ -36,6 +37,13 @@ type KindInfo struct {
 	// naming the adapter and reviewing it are the form's own steps, the same
 	// for every kind, and are not listed here.
 	Steps []Step `json:"steps,omitempty"`
+
+	// Warn says what in a configuration works but may not do what someone
+	// wants — a console hostname Cloudflare's included certificate does not
+	// cover — each in a sentence that says what to do about it. Never a
+	// reason to refuse a configuration: that is the adapter's Configure.
+	// Saving one returns its warnings. Nil when a kind has none to give.
+	Warn func(config json.RawMessage) []string `json:"-"`
 }
 
 // Step is one screen of guided setup.

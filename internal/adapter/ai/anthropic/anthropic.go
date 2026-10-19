@@ -240,10 +240,27 @@ func Info() api.KindInfo {
 		Description: "Performs the AI functions assigned to it: repairing a failed plan, answering detection's questions, revising a plan on request, drafting access and policy, searching the audit log, and answering from the reference. Needs an Anthropic API key.",
 		IDPrefix:    "ai_",
 		Fields: []api.Field{
-			{Key: "api_key", Label: "API key", Type: "string", Help: "An Anthropic API key. Stored encrypted and never shown again. Leave empty to use ANTHROPIC_API_KEY from Pando’s environment.", Credential: true, Placeholder: "sk-ant-…"},
+			{Key: "api_key", Label: "API key", Type: "string", Help: "Empty reads ANTHROPIC_API_KEY from Pando’s environment.", Credential: true, Placeholder: "sk-ant-…"},
 			{Key: "model", Label: "Model", Type: "string", Help: "The Claude model each function uses unless its assignment names another.", Default: DefaultModel},
 			{Key: "base_url", Label: "Base URL", Type: "string", Help: "A gateway or proxy in front of the Anthropic API. Empty is the API itself.", Default: "https://api.anthropic.com", Advanced: true},
 			{Key: "api_key_env", Label: "API key variable", Type: "string", Help: "The environment variable to read the key from, instead of a stored one.", Default: "ANTHROPIC_API_KEY", Advanced: true},
+		},
+		// Pando sends no anthropic-workspace-id header, so the key has to be
+		// scoped to one workspace: a key that is not is refused by the API.
+		Steps: []api.Step{
+			{ID: "key", Label: "API key", Title: "Create an API key",
+				Do: []api.Action{
+					{Text: "In the Claude Console, open **API keys** and choose **Create key**."},
+					{Text: "Name the key and choose an expiration."},
+					{Text: "Set **Linked account** to a service account, or to yourself."},
+					{Text: "Scope the key to one workspace."},
+					{Text: "Copy the key, which starts with `sk-ant-`."},
+				},
+				Links:  []api.Link{{Label: "Open API keys", URL: "https://platform.claude.com/settings/keys"}},
+				Fields: []string{"api_key"}},
+			{ID: "model", Label: "Model", Title: "Choose a model",
+				Links:  []api.Link{{Label: "Compare models", URL: "https://platform.claude.com/docs/en/models/overview"}},
+				Fields: []string{"model"}},
 		},
 	}
 }

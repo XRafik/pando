@@ -608,7 +608,7 @@ func Info() api.KindInfo {
 			api.Option{Value: forgekit.MethodToken, Label: "Personal access token",
 				Description: "A token with Code (Read) scope. Works with Azure DevOps Services and Server."},
 			api.Option{Value: forgekit.MethodOAuth, Label: "Microsoft Entra ID sign-in",
-				Description: "A person authorizes Pando with their Microsoft account, by device code or in the browser. Azure DevOps Services only."},
+				Description: "A person authorizes Pando with their work or school account, by device code or in the browser. Azure DevOps Services only."},
 			api.Option{Value: forgekit.MethodServicePrincipal, Label: "Service principal",
 				Description: "An app registration signs in with its client secret. It must be added to the organization. Azure DevOps Services only."},
 			api.Option{Value: forgekit.MethodSSH, Label: "SSH key",
@@ -620,11 +620,11 @@ func Info() api.KindInfo {
 			"acme or acme/Payments"),
 		forgekit.TokenField("Personal access token", "A personal access token with the Code (Read) scope."),
 		{Key: "tenant_id", Label: "Directory (tenant) ID", Type: "string", Default: defaultTenant, ShownWhen: entra,
-			Help: "The Microsoft Entra tenant. A service principal needs its own tenant's ID; a person's sign-in can use organizations."},
+			Help: "The app registration's directory (tenant) ID. Only a multitenant app accepts organizations."},
 		{Key: "client_id", Label: "Application (client) ID", Type: "string", ShownWhen: entra,
 			Help: "The app registration's application (client) ID, from Microsoft Entra ID."},
 		{Key: forgekit.FieldClientSecret, Label: "Client secret", Type: "string", Credential: true, ShownWhen: entra,
-			Help: "The app registration's client secret. Required for a service principal and for browser authorization; device authorization works without one."},
+			Help: "Required for a service principal and for browser sign-in. Device sign-in works without one."},
 	}
 	fields = append(fields, forgekit.SSHFields(
 		"The host's public key, as ssh-keyscan ssh.dev.azure.com (or your server's host) prints it.")...)
@@ -639,6 +639,59 @@ func Info() api.KindInfo {
 		Description: "Clone from Azure DevOps Services or Azure DevOps Server with a personal access token, Microsoft Entra ID or an SSH key, and pick repositories from a list.",
 		IDPrefix:    "src_",
 		Fields:      fields,
+		Steps:       steps(),
+	}
+}
+
+// steps walks through one sign-in method's setup, chosen first. The two
+// Microsoft Entra ID methods share an app registration, so they share its
+// steps, with the actions only one of them needs marked as such.
+func steps() []api.Step {
+	when := func(methods ...string) *api.Condition {
+		return &api.Condition{Key: "method", Values: methods}
+	}
+	entra := when(forgekit.MethodOAuth, forgekit.MethodServicePrincipal)
+	return []api.Step{
+		{ID: "method", Label: "Sign-in method", Title: "Choose how Pando signs in",
+			Fields: []string{"method", "host"}},
+		{ID: "token", Label: "Access token", Title: "Create a personal access token", ShownWhen: when(forgekit.MethodToken),
+			Do: []api.Action{
+				{Text: "In Azure DevOps, open **User settings** → **Personal access tokens** → **New Token**."},
+				{Text: "Enter a **Name**, select the **Organization**, and set an **Expiration**. On Azure DevOps Server, select the collection."},
+				{Text: "Under **Scopes**, choose **Custom defined**, then select **Read** under **Code**."},
+				{Text: "Choose **Create** and copy the token."},
+			},
+			Fields: []string{forgekit.FieldToken}},
+		{ID: "app", Label: "App registration", Title: "Register an app in Microsoft Entra ID", ShownWhen: entra,
+			Do: []api.Action{
+				{Text: "In the Microsoft Entra admin center, open **Entra ID** → **App registrations** → **New registration**."},
+				{Text: "Enter a **Name** and choose **Register**."},
+				{Text: "For Entra ID sign-in, under **API permissions**, choose **Add a permission** → **Azure DevOps** → **Delegated permissions**, select **vso.code**, and choose **Add permissions**."},
+				{Text: "For Entra ID sign-in, under **Authentication**, set **Allow public client flows** to **Yes** and choose **Save**."},
+				{Text: "For browser sign-in, under **Authentication**, choose **Add Redirect URI** → **Web**, enter your Pando address plus `/api/v1/sources/callback`, and choose **Configure**."},
+				{Text: "For a service principal, in Azure DevOps open **Organization settings** → **Users** → **Add users**. Enter the app's name, choose **Basic** access and the projects, and choose **Add**."},
+				{Text: "On the app's **Overview**, copy the **Application (client) ID** and **Directory (tenant) ID**."},
+			},
+			Links:  []api.Link{{Label: "Open App registrations", URL: "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"}},
+			Fields: []string{"client_id", "tenant_id"}},
+		{ID: "secret", Label: "Client secret", Title: "Create a client secret", ShownWhen: entra,
+			Do: []api.Action{
+				{Text: "In the app registration, open **Certificates & secrets** → **Client secrets** → **New client secret**."},
+				{Text: "Enter a description, choose an expiration, and choose **Add**."},
+				{Text: "Copy the secret's **Value**."},
+			},
+			Fields: []string{forgekit.FieldClientSecret}},
+		{ID: "ssh", Label: "SSH key", Title: "Add an SSH key", ShownWhen: when(forgekit.MethodSSH),
+			Do: []api.Action{
+				{Text: "Run `ssh-keygen -t rsa -b 3072 -f pando-azure -N \"\"`."},
+				{Text: "In Azure DevOps, open **User settings** → **SSH public keys** → **New Key**."},
+				{Text: "Paste `pando-azure.pub` into **Public Key Data**, enter a name, and choose **Save**."},
+				{Text: "Paste `pando-azure` below."},
+				{Text: "Run `ssh-keyscan ssh.dev.azure.com`, or your server's host, and paste its output below."},
+			},
+			Fields: []string{forgekit.FieldSSHPrivateKey, forgekit.FieldSSHPassphrase, "known_hosts"}},
+		{ID: "scope", Label: "Organization", Title: "Choose an organization",
+			Fields: []string{"scope"}},
 	}
 }
 

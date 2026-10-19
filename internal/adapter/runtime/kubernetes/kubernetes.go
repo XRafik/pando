@@ -368,7 +368,7 @@ func (c *Config) validate() error {
 		if r.value == "" {
 			return errs.Newf(errs.ValidInvalid,
 				"The Kubernetes runtime needs the cluster's %s, so that apps can be kept from opening connections into the cluster. It is not set.", r.key).
-				WithRemedy("Set it to the range the cluster gives pods or Services, such as 10.244.0.0/16 for pods or 10.96.0.0/12 for Services. `kubectl cluster-info dump | grep -m1 -e cluster-cidr -e service-cluster-ip-range` shows them on most clusters.")
+				WithRemedy("Set it to the range the cluster gives pods or Services, such as 10.244.0.0/16 for pods or 10.96.0.0/12 for Services. `kubectl get servicecidr kubernetes` shows the Service range, and `kubectl cluster-info dump | grep -m1 -- --cluster-cidr` the pod range on most clusters.")
 		}
 		if _, _, err := net.ParseCIDR(r.value); err != nil {
 			return errs.Newf(errs.ValidInvalid, "The Kubernetes runtime's %s is %q, which is not an address range such as 10.244.0.0/16.", r.key, r.value)
@@ -743,11 +743,11 @@ func Info() api.KindInfo {
 		IDPrefix:    "rt_",
 		Fields: []api.Field{
 			{Key: "pod_cidr", Label: "Pod address range", Type: "string", Required: true, Placeholder: "10.244.0.0/16",
-				Help: "The range the cluster gives pods. Apps may open connections out of the cluster, never into this range."},
+				Help: "The range the cluster assigns pods. Apps may not open connections into it."},
 			{Key: "service_cidr", Label: "Service address range", Type: "string", Required: true, Placeholder: "10.96.0.0/12",
-				Help: "The range the cluster gives Services. Apps may not open connections into it."},
+				Help: "The range the cluster assigns Services. Apps may not open connections into it."},
 			{Key: "egress_gateway_image", Label: "Egress gateway image", Type: "string", Placeholder: "ghcr.io/trypando/pando:latest",
-				Help: "An image with Pando's binary at /usr/local/bin/pando, run in front of an app whose egress rules restrict anything. Without one, such apps cannot be deployed."},
+				Help: "Any image with Pando's binary at /usr/local/bin/pando. Empty, apps that restrict egress can't be deployed."},
 			{Key: "kubeconfig", Label: "Kubeconfig file", Type: "string", Advanced: true, Default: "The cluster Pando runs in",
 				Help: "A kubeconfig file, for running Pando outside the cluster during development. Pando's proxy reaches apps by cluster DNS names, so in production Pando runs inside the cluster."},
 			{Key: "context", Label: "Kubeconfig context", Type: "string", Advanced: true, Default: "The file's current context",
@@ -794,6 +794,37 @@ func Info() api.KindInfo {
 			{Key: "edge_https_node_port", Label: "Edge HTTPS node port", Type: "int", Advanced: true, Default: "30443",
 				Help:      "The port every node listens on for the edge's HTTPS.",
 				ShownWhen: &api.Condition{Key: "edge_service_type", Values: []string{string(corev1.ServiceTypeNodePort)}}},
+		},
+		Steps: []api.Step{
+			{ID: "cluster", Label: "Cluster", Title: "Prepare the cluster",
+				Do: []api.Action{
+					{Text: "Use a network plugin that enforces NetworkPolicy, such as Calico or Cilium."},
+					{Text: "Grant the ServiceAccount `pando` in the namespace `pando` these permissions, as `deploy/kubernetes/rbac.yaml` does:", Table: &api.Table{
+						Columns: []string{"Where", "Resources", "Verbs"},
+						Rows: [][]string{
+							{"Cluster", "namespaces", "get, list, create, delete"},
+							{"Cluster", "serviceaccounts", "get"},
+							{"Cluster", "rolebindings", "create"},
+							{"Cluster", "clusterroles " + defaultAppRole, "bind"},
+							{"Cluster", "nodes, pods", "get, list, watch"},
+							{"Cluster", "persistentvolumes", "get, patch"},
+							{"Cluster", "runtimeclasses", "get"},
+							{"Cluster", "metrics.k8s.io pods, nodes", "list"},
+							{"Each app namespace, through ClusterRole " + defaultAppRole, "pods, pods/log, pods/exec, services, configmaps, secrets, persistentvolumeclaims, resourcequotas, networkpolicies", "get, list, watch, create, update, patch, delete"},
+							{"Namespace " + defaultEdgeNamespace, "deployments, services, secrets, poddisruptionbudgets, networkpolicies", "get, list, create, update, delete"},
+							{"Namespace " + defaultEdgeNamespace, "pods", "list"},
+						},
+					}},
+					{Text: "Run `kubectl get servicecidr kubernetes` and copy **CIDRS**."},
+					{Text: "Run `kubectl cluster-info dump | grep -m1 -- --cluster-cidr` and copy the pod range. On a managed cluster, copy it from the cluster's network settings."},
+				},
+				Links: []api.Link{
+					{Label: "Open rbac.yaml", URL: "https://github.com/trypando/pando/blob/main/deploy/kubernetes/rbac.yaml"},
+					{Label: "Open the RBAC guide", URL: "https://kubernetes.io/docs/reference/access-authn-authz/rbac/"},
+				},
+				Fields: []string{"pod_cidr", "service_cidr"}},
+			{ID: "egress", Label: "Egress gateway", Title: "Choose an egress gateway image",
+				Fields: []string{"egress_gateway_image"}},
 		},
 	}
 }

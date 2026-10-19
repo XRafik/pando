@@ -135,9 +135,9 @@ func Info() api.KindInfo {
 		),
 		forgekit.HostField(""),
 		forgekit.ScopeField("Path prefix",
-			"Limit the connection to repositories under this path, such as acme. Empty is every repository on the host.",
+			"Empty is every repository on the host.",
 			"acme"),
-		forgekit.UsernameField("The account the token belongs to. Defaults to git.", "git"),
+		forgekit.UsernameField("The account the token belongs to. Empty is git.", "git"),
 		forgekit.TokenField("Token or password", "Read access to the repositories is enough."),
 	}
 	fields = append(fields, forgekit.SSHFields("The host's public key, as ssh-keyscan <host> prints it.")...)
@@ -149,6 +149,34 @@ func Info() api.KindInfo {
 		Description: "Clone from any git server with a username and token over HTTPS, or an SSH key. Repositories are entered by address.",
 		IDPrefix:    "src_",
 		Fields:      fields,
+		Steps:       steps(),
+	}
+}
+
+// steps walk through a connection: the method and host, then the method's
+// credential, then the path prefix.
+func steps() []api.Step {
+	when := func(method string) *api.Condition {
+		return &api.Condition{Key: "method", Values: []string{method}}
+	}
+	return []api.Step{
+		{ID: "method", Label: "Sign-in method", Title: "Choose how Pando signs in",
+			Fields: []string{"method", "host"}},
+		{ID: "token", Label: "Access token", Title: "Create an access token", ShownWhen: when(forgekit.MethodToken),
+			Do: []api.Action{
+				{Text: "On the git host, create an access token with read access to the repositories."},
+			},
+			Fields: []string{"username", forgekit.FieldToken}},
+		{ID: "ssh", Label: "SSH key", Title: "Add an SSH key", ShownWhen: when(forgekit.MethodSSH),
+			Do: []api.Action{
+				{Text: "Run `ssh-keygen -t ed25519 -f pando-deploy -N \"\"`."},
+				{Text: "On the git host, add `pando-deploy.pub` to the repository as a read-only deploy key."},
+				{Text: "Paste `pando-deploy` below."},
+				{Text: "Run `ssh-keyscan` with the host's name, on a machine you trust, and paste its output below."},
+			},
+			Fields: []string{forgekit.FieldSSHPrivateKey, forgekit.FieldSSHPassphrase, "known_hosts"}},
+		{ID: "scope", Label: "Repositories", Title: "Choose a path prefix",
+			Fields: []string{"scope"}},
 	}
 }
 

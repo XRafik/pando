@@ -230,7 +230,11 @@ func Info() api.KindInfo {
 		Description: "Writes backups to a directory on the host.",
 		IDPrefix:    "bkp_",
 		Fields: []api.Field{
-			{Key: "path", Label: "Directory", Type: "string", Help: "Where backups are written.", Default: "/var/lib/pando/backups"},
+			{Key: "path", Label: "Directory", Type: "string", Help: "Created if it does not exist.", Default: "/var/lib/pando/backups"},
+		},
+		// Nothing to do outside Pando: one plain step for the one setting.
+		Steps: []api.Step{
+			{ID: "directory", Label: "Directory", Title: "Choose a directory", Fields: []string{"path"}},
 		},
 	}
 }

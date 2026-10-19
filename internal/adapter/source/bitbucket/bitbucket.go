@@ -117,7 +117,7 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 			if cfg.Username == "" {
 				return errs.New(errs.ValidInvalid,
 					"A Bitbucket Cloud API token needs the Bitbucket username it belongs to, which git signs in with beside it.").
-					WithRemedy("Enter your Bitbucket username, shown under Personal settings → Account settings.")
+					WithRemedy("Enter your Bitbucket username, shown under Personal Bitbucket settings → Bitbucket profile settings.")
 			}
 		default:
 			return errs.Newf(errs.ValidInvalid,
@@ -608,15 +608,15 @@ func Info() api.KindInfo {
 				{Value: tokenTypeAPI, Label: "API token", Description: "An Atlassian account's API token, with your Bitbucket username."},
 			}},
 		forgekit.UsernameField(
-			"Bitbucket Cloud API token: your Bitbucket username. Data Center: the account the token belongs to, if git should sign in as it; x-token-auth otherwise.",
+			"Your username, for a Cloud API token or a Data Center personal token. Empty is x-token-auth.",
 			"alice"),
 		{Key: "email", Label: "Atlassian account email", Type: "string", ShownWhen: token, Placeholder: "alice@example.com",
-			Help: "Bitbucket Cloud API token only: the email of the Atlassian account the token was created under, which Bitbucket's API signs in with. The username when empty."},
+			Help: "Cloud API token only. Empty is the username."},
 		forgekit.TokenField("Token", "Read access to repositories is enough."),
 		{Key: "client_id", Label: "OAuth consumer key", Type: "string", ShownWhen: oauth,
-			Help: "From the workspace's settings → OAuth consumers. Give the consumer Pando's callback address and the Repositories: Read permission."},
+			Help: "The Key from Workspace settings → OAuth consumers."},
 		{Key: forgekit.FieldClientSecret, Label: "OAuth consumer secret", Type: "string", Credential: true, ShownWhen: oauth,
-			Help: "The consumer's secret, shown beside its key."},
+			Help: "The Secret shown beside the Key."},
 	}
 	fields = append(fields, forgekit.SSHFields(
 		"The host's public key, as ssh-keyscan bitbucket.org prints it. For Data Center, ssh-keyscan -p 7999 HOST, whose lines begin [HOST]:7999.")...)
@@ -634,6 +634,55 @@ func Info() api.KindInfo {
 		Description: "Clone from Bitbucket Cloud or Bitbucket Data Center with an access token, an OAuth consumer or an SSH access key, and pick repositories from a list.",
 		IDPrefix:    "src_",
 		Fields:      fields,
+		Steps:       steps(),
+	}
+}
+
+// steps is guided setup: the method first, then one step for it.
+func steps() []api.Step {
+	when := func(method string) *api.Condition {
+		return &api.Condition{Key: "method", Values: []string{method}}
+	}
+	return []api.Step{
+		{ID: "method", Label: "Sign-in method", Title: "Choose how Pando signs in",
+			Fields: []string{"method", "host"}},
+		{ID: "token", Label: "Token", Title: "Create a token", ShownWhen: when(forgekit.MethodToken),
+			Do: []api.Action{
+				{Text: "Create one of these tokens:", Table: &api.Table{
+					Columns: []string{"Token", "Where", "Permission"},
+					Rows: [][]string{
+						{"Cloud access token", "Workspace, project or repository settings → Security → Access tokens → Create access token", "Repositories: Read"},
+						{"Cloud API token", "Account settings → Security → Create API token with scopes → Bitbucket", "read:repository:bitbucket"},
+						{"Data Center HTTP access token", "Manage account, Project settings or Repository settings → HTTP access tokens → Create token", "Repository read"},
+					},
+				}},
+				{Text: "For a Cloud API token or a Data Center personal token, enter your username below."},
+			},
+			Links: []api.Link{
+				{Label: "Open Bitbucket", URL: "https://{host}/"},
+				{Label: "Open Atlassian API tokens", URL: "https://id.atlassian.com/manage-profile/security/api-tokens"},
+			},
+			Fields: []string{"token_type", "username", "email", forgekit.FieldToken}},
+		{ID: "oauth", Label: "OAuth consumer", Title: "Add an OAuth consumer", ShownWhen: when(forgekit.MethodOAuth),
+			Do: []api.Action{
+				{Text: "In the workspace, open **Settings** → **Workspace settings** → **OAuth consumers** → **Add consumer**."},
+				{Text: "Enter a **Name**. Set **Callback URL** to your Pando address plus `/api/v1/sources/callback`."},
+				{Text: "Under **Permissions**, check **Repositories** **Read** and choose **Save**."},
+				{Text: "Choose the consumer's name and copy its **Key** and **Secret**."},
+			},
+			Links:  []api.Link{{Label: "Open workspaces", URL: "https://bitbucket.org/account/workspaces/"}},
+			Fields: []string{"client_id", forgekit.FieldClientSecret}},
+		{ID: "ssh", Label: "Access key", Title: "Add an access key", ShownWhen: when(forgekit.MethodSSH),
+			Do: []api.Action{
+				{Text: "Run `ssh-keygen -t ed25519 -f pando-access -N \"\"`."},
+				{Text: "On Bitbucket Cloud, open **Repository settings** → **Access keys** → **Add key**. Enter a **Label**, paste `pando-access.pub` into **Key** and save it."},
+				{Text: "On Data Center, open the project's or repository's **Settings** → **Access keys** → **Add key**. Paste `pando-access.pub`, choose **Read** and choose **Add key**."},
+				{Text: "Paste `pando-access` below."},
+				{Text: "Run `ssh-keyscan bitbucket.org`, or `ssh-keyscan -p 7999 HOST` for Data Center, and paste its output into **Known hosts**."},
+			},
+			Fields: []string{forgekit.FieldSSHPrivateKey, forgekit.FieldSSHPassphrase, "known_hosts"}},
+		{ID: "scope", Label: "Workspace or project", Title: "Choose a workspace or project",
+			Fields: []string{"scope"}},
 	}
 }
 

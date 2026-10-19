@@ -206,7 +206,7 @@
       "post": {
         "operationId": "createAdapter",
         "summary": "Configure an adapter",
-        "description": "Configure an adapter. Settings go in config; credentials such as an API key go in credentials, which is write-only and stored encrypted. A source connection (category `source`) and an image registry (category `image_registry`) are used from the moment they are saved, with no restart; an image registry Pando could not push to is refused before it is saved. An audit sink (category `audit_sink`) is used from the next delivery pass too, is refused when its settings are, and needs `install.audit.export` as well, because it sends the audit log off the installation. `is_default` makes it the default of its category in place of the current one, in one step: `replaced_default` names the adapter that stopped being the default, and `handover` says what that changes. Through the API, an adapter's `*_env` setting may name only its kind's default variable, and an adapter that would read its key from Pando's environment may not be pointed at another `base_url` without a stored key.\n\nNeeds `install.adapters.manage`.",
+        "description": "Configure an adapter. Settings go in config; credentials such as an API key go in credentials, which is write-only and stored encrypted. A source connection (category `source`) and an image registry (category `image_registry`) are used from the moment they are saved, with no restart; an image registry Pando could not push to is refused before it is saved. An audit sink (category `audit_sink`) is used from the next delivery pass too, is refused when its settings are, and needs `install.audit.export` as well, because it sends the audit log off the installation. `warnings` lists what saved but may not work as wanted, such as a Cloudflare console hostname its included certificate does not cover; a warning never refuses a save. `is_default` makes it the default of its category in place of the current one, in one step: `replaced_default` names the adapter that stopped being the default, and `handover` says what that changes. Through the API, an adapter's `*_env` setting may name only its kind's default variable, and an adapter that would read its key from Pando's environment may not be pointed at another `base_url` without a stored key.\n\nNeeds `install.adapters.manage`.",
         "tags": [
           "Installation"
         ],
@@ -275,6 +275,15 @@
                     },
                     "note": {
                       "type": "string"
+                    },
+                    "warnings": {
+                      "type": [
+                        "array",
+                        "null"
+                      ],
+                      "items": {
+                        "type": "string"
+                      }
                     },
                     "replaced_default": {
                       "type": "string"

@@ -558,6 +558,31 @@ func (a *Adapter) removeRecord(ctx context.Context, host string) error {
 	return nil
 }
 
+// warn says what in a configuration works but needs more from Cloudflare:
+// a console hostname more than one level below its zone. Cloudflare's
+// included certificate covers a zone and one level under it, so TLS fails
+// there without one that covers it — which an Enterprise or Advanced
+// Certificate Manager zone may have, so it is not refused.
+func warn(raw json.RawMessage) []string {
+	var cfg Config
+	if json.Unmarshal(raw, &cfg) != nil {
+		return nil
+	}
+	host := normalizeZone(cfg.ConsoleHostname)
+	if host == "" {
+		return nil
+	}
+	zones := []string{normalizeZone(cfg.Zone)}
+	for _, z := range strings.FieldsFunc(cfg.OtherZones, func(r rune) bool { return r == ',' || r == ' ' || r == '\n' }) {
+		zones = append(zones, normalizeZone(z))
+	}
+	zone := zoneOf(host, zones)
+	if zone == "" || strings.Count(host, ".")-strings.Count(zone, ".") < 2 {
+		return nil
+	}
+	return []string{fmt.Sprintf("The console hostname %s is more than one level below %s. Cloudflare's included certificate covers only one level, so TLS fails there unless the zone has a certificate covering it, such as one from Advanced Certificate Manager.", host, zone)}
+}
+
 // --- helpers -----------------------------------------------------------------
 
 // within reports whether host is zone or a name under it.
@@ -645,6 +670,7 @@ func Info() api.KindInfo {
 			{Key: "image", Label: "cloudflared image", Type: "string", Default: DefaultImage,
 				Help: "Set to run a different cloudflared release than this Pando ships with.", Advanced: true},
 		},
+		Warn: warn,
 		Steps: []api.Step{
 			{ID: "token", Label: "API token", Title: "Create an API token",
 				Do: []api.Action{

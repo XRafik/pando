@@ -211,10 +211,29 @@ func Info() api.KindInfo {
 			"Needs an OpenAI API key.",
 		IDPrefix: "ai_",
 		Fields: []api.Field{
-			{Key: "api_key", Label: "API key", Type: "string", Help: "An OpenAI API key. Stored encrypted and never shown again. Leave empty to use OPENAI_API_KEY from Pando’s environment.", Credential: true, Placeholder: "sk-…"},
+			{Key: "api_key", Label: "API key", Type: "string", Help: "Empty reads OPENAI_API_KEY from Pando’s environment.", Credential: true, Placeholder: "sk-…"},
 			{Key: "model", Label: "Model", Type: "string", Help: "The model each function uses unless its assignment names another.", Default: DefaultModel},
-			{Key: "base_url", Label: "Base URL", Type: "string", Help: "A gateway or proxy in front of the OpenAI API. Empty is the API itself.", Default: "https://api.openai.com/v1", Advanced: true},
+			{Key: "base_url", Label: "Base URL", Type: "string", Help: "An endpoint that serves the OpenAI Responses API, such as a gateway or proxy.", Default: "https://api.openai.com/v1", Advanced: true},
 			{Key: "api_key_env", Label: "API key variable", Type: "string", Help: "The environment variable to read the key from, instead of a stored one.", Default: "OPENAI_API_KEY", Advanced: true},
+		},
+		Steps: []api.Step{
+			{ID: "key", Label: "API key", Title: "Create an API key",
+				Do: []api.Action{
+					{Text: "In the OpenAI platform, open **API keys** and choose **Create new secret key**."},
+					{Text: "Under **Permissions**, choose **Restricted** and set:", Table: &api.Table{
+						Columns: []string{"Resource", "Access"},
+						Rows: [][]string{
+							{"Models", "Read"},
+							{"Model capabilities", "Request"},
+						},
+					}},
+					{Text: "Create the key and copy it."},
+				},
+				Links:  []api.Link{{Label: "Open API keys", URL: "https://platform.openai.com/settings/organization/api-keys"}},
+				Fields: []string{"api_key"}},
+			{ID: "model", Label: "Model", Title: "Choose a model",
+				Links:  []api.Link{{Label: "Open OpenAI models", URL: "https://developers.openai.com/api/docs/models"}},
+				Fields: []string{"model"}},
 		},
 	}
 }

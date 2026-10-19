@@ -35,7 +35,10 @@ const maxPages = 100
 
 var methods = []string{forgekit.MethodToken, forgekit.MethodOAuth, forgekit.MethodSSH}
 
-var scopes = []string{"read:repository"}
+// Listing repositories is GET /user/repos, which Gitea refuses an OAuth2
+// token without read:user as well as read:repository (since 1.23). Forgejo
+// grants an OAuth2 token full access whatever it asks for.
+var scopes = []string{"read:repository", "read:user"}
 
 // Adapter is one connection to a Gitea or Forgejo host.
 type Adapter struct {
@@ -380,7 +383,7 @@ func Info() api.KindInfo {
 	fields := []api.Field{
 		forgekit.MethodField(
 			api.Option{Value: forgekit.MethodToken, Label: "Access token",
-				Description: "An access token with read permission on repositories. Repositories can be picked from a list."},
+				Description: "An access token with Read on repository and user. Repositories can be picked from a list."},
 			api.Option{Value: forgekit.MethodOAuth, Label: "OAuth2 application",
 				Description: "Authorize once in the browser. Needs an address the host can send you back to."},
 			api.Option{Value: forgekit.MethodSSH, Label: "Deploy key",
@@ -390,12 +393,12 @@ func Info() api.KindInfo {
 		forgekit.ScopeField("Owner",
 			"Limit the connection to one user's or organization's repositories, such as acme. Empty is every repository the credential can read.",
 			"acme"),
-		forgekit.UsernameField("The account the token belongs to. Defaults to oauth2, which Gitea and Forgejo accept beside a token.", "oauth2"),
-		forgekit.TokenField("Access token", "Create one under Settings → Applications with read permission on repositories."),
+		forgekit.UsernameField("The token's account. Empty is oauth2.", "oauth2"),
+		forgekit.TokenField("Access token", "Needs Read on repository and user."),
 		{Key: "client_id", Label: "OAuth2 client ID", Type: "string", ShownWhen: oauthWhen,
 			Help: "The client ID of an OAuth2 application created under Settings → Applications, with Pando's callback as its redirect URI."},
 		{Key: forgekit.FieldClientSecret, Label: "OAuth2 client secret", Type: "string", Credential: true, ShownWhen: oauthWhen,
-			Help: "The application's client secret. Gitea and Forgejo authorize only in the browser, so it is required."},
+			Help: "Required."},
 	}
 	fields = append(fields, forgekit.SSHFields("The host's public key, as ssh-keyscan <host> prints it.")...)
 	fields = append(fields, forgekit.APIURLField("https://<host>/api/v1"), forgekit.CAField())
@@ -406,11 +409,58 @@ func Info() api.KindInfo {
 		Description: "Clone from a Gitea or Forgejo server, Codeberg included, with an access token, an OAuth2 application, or a deploy key, optionally limited to one owner.",
 		IDPrefix:    "src_",
 		Fields:      fields,
+		Steps:       steps(),
 		Presets: []api.Preset{
 			{ID: "codeberg", Label: "Codeberg",
-				Help:   "Create an access token on Codeberg under Settings → Applications, with read permission on repositories.",
+				Help:   "Create an access token on Codeberg under Settings → Applications, with Read on repository and user.",
 				Values: map[string]string{"host": "codeberg.org"}},
 		},
+	}
+}
+
+// steps walk through each sign-in method. The names in Do are Forgejo's, as
+// Codeberg shows them; Gitea title-cases the same labels ("Token Name").
+func steps() []api.Step {
+	when := func(method string) *api.Condition {
+		return &api.Condition{Key: "method", Values: []string{method}}
+	}
+	applications := []api.Link{{Label: "Open Applications", URL: "https://{host}/user/settings/applications"}}
+	return []api.Step{
+		{ID: "method", Label: "Sign-in method", Title: "Choose how Pando signs in",
+			Fields: []string{"method", "host"}},
+		{ID: "token", Label: "Access token", Title: "Create an access token", ShownWhen: when(forgekit.MethodToken),
+			Do: []api.Action{
+				{Text: "Open **Settings** → **Applications**. On Forgejo, choose **New access token**."},
+				{Text: "Enter a **Token name**. Under **Repository and organization access**, choose **All (public, private, and limited)**."},
+				{Text: "Under **Select permissions**, set these:", Table: &api.Table{
+					Columns: []string{"Permission", "Access"},
+					Rows:    [][]string{{"repository", "Read"}, {"user", "Read"}},
+				}},
+				{Text: "Choose **Generate token** and copy the token."},
+			},
+			Links:  applications,
+			Fields: []string{forgekit.FieldToken, "username"}},
+		{ID: "oauth", Label: "OAuth2 app", Title: "Create an OAuth2 application", ShownWhen: when(forgekit.MethodOAuth),
+			Do: []api.Action{
+				{Text: "Open **Settings** → **Applications**."},
+				{Text: "Under **Create a new OAuth2 application**, enter an **Application name**."},
+				{Text: "Set **Redirect URIs** to your Pando address plus `/api/v1/sources/callback`."},
+				{Text: "Leave **Confidential client** checked and choose **Create application**."},
+				{Text: "Copy the **Client ID** and **Client secret**."},
+			},
+			Links:  applications,
+			Fields: []string{"client_id", forgekit.FieldClientSecret}},
+		{ID: "ssh", Label: "Deploy key", Title: "Add a deploy key", ShownWhen: when(forgekit.MethodSSH),
+			Do: []api.Action{
+				{Text: "Run `ssh-keygen -t ed25519 -f pando-deploy -N \"\"`."},
+				{Text: "In the repository, open **Settings** → **Deploy keys** → **Add deploy key** (**Add SSH key** on Gitea)."},
+				{Text: "Enter a **Title**, paste `pando-deploy.pub` into **Content**, and add the key."},
+				{Text: "Paste `pando-deploy` below."},
+				{Text: "Run `ssh-keyscan` with the host and paste its output below."},
+			},
+			Fields: []string{forgekit.FieldSSHPrivateKey, forgekit.FieldSSHPassphrase, "known_hosts"}},
+		{ID: "scope", Label: "Owner", Title: "Choose an owner",
+			Fields: []string{"scope"}},
 	}
 }
 

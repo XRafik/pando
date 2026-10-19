@@ -80,8 +80,9 @@ export function AdapterDialog({
   /** Every configured adapter, to know whether a category has one yet. */
   adapters: ConfiguredAdapter[];
   onClose: () => void;
-  /** Told the saved adapter's name, for the restart notice. */
-  onSaved: (name: string, category: string) => void;
+  /** Told the saved adapter's name, for the restart notice, and what the
+   *  save warned of. */
+  onSaved: (name: string, category: string, warnings?: string[]) => void;
 }) {
   const kinds = useQuery({
     queryKey: ['adapter-kinds'],
@@ -157,8 +158,13 @@ export function AdapterDialog({
       // The adapter's own settings are saved only when they changed: that is
       // what needs a restart, and choosing functions does not.
       const settingsChanged = draft !== null || !existing;
+      let warnings: string[] = [];
       if (settingsChanged) {
-        await api.post<{ id: string; note?: string }>('/adapters', adapterRequest(kind!, view!, isRegistry ? enabled : existing?.enabled));
+        const saved = await api.post<{ id: string; note?: string; warnings?: string[] }>(
+          '/adapters',
+          adapterRequest(kind!, view!, isRegistry ? enabled : existing?.enabled),
+        );
+        warnings = saved.warnings ?? [];
       }
       if (existing && choice) {
         for (const c of choiceChanges(existing.id, had, choice)) {
@@ -166,10 +172,10 @@ export function AdapterDialog({
           else await api.put(`/ai/functions/${c.fn}`, { adapter_id: c.adapterID, model: c.model ?? '' });
         }
       }
-      return settingsChanged;
+      return { settingsChanged, warnings };
     },
-    onSuccess: (settingsChanged) => {
-      if (settingsChanged) onSaved(form!.name.trim() || kind!.name, kind!.category);
+    onSuccess: ({ settingsChanged, warnings }) => {
+      if (settingsChanged) onSaved(form!.name.trim() || kind!.name, kind!.category, warnings);
       else onClose();
     },
     onSettled: () => void queries.invalidateQueries({ queryKey: ['ai-functions'] }),

@@ -467,21 +467,21 @@ func Info() api.KindInfo {
 		IDPrefix:    "rte_",
 		Fields: []api.Field{
 			{Key: "base_domain", Label: "Base domain", Type: "string", Help: "Apps are served at <app>.<base domain>. Point this domain and *.<base domain> at this machine.", Placeholder: "apps.example.com"},
-			{Key: "console_hostname", Label: "Console hostname", Type: "string", Help: "Where the console is served over HTTPS. Any hostname pointed at this machine that is not an app's shows the console; this is the one a certificate is issued for.", Placeholder: "pando.example.com"},
+			{Key: "console_hostname", Label: "Console hostname", Type: "string", Help: "Where the console is served over HTTPS.", Placeholder: "pando.example.com"},
 			{Key: "certificates", Label: "Certificates", Type: "select", Default: CertsNone,
 				Options: []api.Option{
 					{Value: CertsHTTP, Label: "One per hostname", Description: "Let's Encrypt checks each hostname over port 80, which has to be reachable from the internet."},
 					{Value: CertsDNS, Label: "One wildcard for the base domain", Description: "Covers every app before it exists. Needs your DNS provider's credentials."},
 					{Value: CertsNone, Label: "None", Description: "Apps are served over plain HTTP on port 80."},
 				}},
-			{Key: "acme_email", Label: "Certificate email", Type: "string", Help: "The address Let's Encrypt registers the certificates to.", Placeholder: "ops@example.com",
+			{Key: "acme_email", Label: "Certificate email", Type: "string", Help: "The address Let's Encrypt registers the account to.", Placeholder: "ops@example.com",
 				ShownWhen: &api.Condition{Key: "certificates", Values: []string{CertsHTTP, CertsDNS}}},
 			{Key: "dns_provider", Label: "DNS provider", Type: "select", Other: true, Options: providerOptions(),
-				Help:      "Who hosts the base domain's DNS. Choose Other for any provider Traefik supports, and enter its code, such as gcloud or ovh.",
+				Help:      "Who hosts the base domain's DNS. Another provider is entered as its code, such as gcloud or ovh.",
 				ShownWhen: &api.Condition{Key: "certificates", Values: []string{CertsDNS}}},
 			{Key: "dns_credentials", Label: "DNS provider credentials", Type: "string", Credential: true, Multiline: true, Help: credentialsHelp(),
 				ShownWhen: &api.Condition{Key: "certificates", Values: []string{CertsDNS}}},
-			{Key: "managed", Label: "Pando runs Traefik", Type: "bool", Default: "true", Help: "Off if this machine already runs a Traefik that should serve Pando's apps. Pando then only writes route files into the directory that Traefik watches."},
+			{Key: "managed", Label: "Pando runs Traefik", Type: "bool", Default: "true", Help: "Off for a Traefik already running on this machine."},
 			{Key: "http_port", Label: "HTTP port", Type: "int", Default: "80", Help: "The host port Traefik takes for HTTP.", ShownWhen: &api.Condition{Key: "managed", Values: []string{"true"}}, Advanced: true},
 			{Key: "https_port", Label: "HTTPS port", Type: "int", Default: "443", Help: "The host port Traefik takes for HTTPS.", ShownWhen: &api.Condition{Key: "managed", Values: []string{"true"}}, Advanced: true},
 			{Key: "image", Label: "Traefik image", Type: "string", Default: DefaultImage, Help: "Set to run a different Traefik release than this Pando ships with.", ShownWhen: &api.Condition{Key: "managed", Values: []string{"true"}}, Advanced: true},
@@ -505,7 +505,60 @@ func Info() api.KindInfo {
 				ShownWhen: &api.Condition{Key: "delivery", Values: []string{DeliveryKubernetesAPI}}},
 			{Key: "dir", Label: "Configuration directory", Type: "string", Help: "Where Pando writes Traefik's route files.", Default: "/etc/traefik/dynamic", Advanced: true},
 			{Key: "entrypoint", Label: "Entry point", Type: "string", Help: "The entry point of your Traefik that apps are served on.", Default: "websecure", ShownWhen: &api.Condition{Key: "managed", Values: []string{"false"}}, Advanced: true},
-			{Key: "cert_resolver", Label: "Certificate resolver", Type: "string", Help: "The certificate resolver your Traefik has configured.", Placeholder: "letsencrypt", ShownWhen: &api.Condition{Key: "managed", Values: []string{"false"}}},
+			{Key: "cert_resolver", Label: "Certificate resolver", Type: "string", Help: "The certificate resolver your Traefik has configured. Empty asks for no certificates.", Placeholder: "letsencrypt", ShownWhen: &api.Condition{Key: "managed", Values: []string{"false"}}},
 		},
+		Steps: steps(),
+	}
+}
+
+// steps asks who runs Traefik first, then branches: a Traefik somebody else
+// runs needs its file provider pointed at Pando's routes; the one Pando runs
+// needs certificates chosen, and for a wildcard, DNS provider credentials.
+func steps() []api.Step {
+	managed := &api.Condition{Key: "managed", Values: []string{"true"}}
+	return []api.Step{
+		{ID: "traefik", Label: "Traefik", Title: "Choose who runs Traefik",
+			Fields: []string{"managed"}},
+		{ID: "existing", Label: "Your Traefik", Title: "Point your Traefik at Pando's routes",
+			ShownWhen: &api.Condition{Key: "managed", Values: []string{"false"}},
+			Do: []api.Action{
+				{Text: "Start Traefik with `--providers.file.directory` set to a directory, and `--providers.file.watch=true`."},
+				{Text: "Mount that directory into Pando at `/etc/traefik/dynamic`."},
+				{Text: "Copy the name of a resolver under `certificatesResolvers` in Traefik's static configuration."},
+			},
+			Links:  []api.Link{{Label: "Open Traefik's certificate resolver docs", URL: "https://doc.traefik.io/traefik/reference/install-configuration/tls/certificate-resolvers/acme/"}},
+			Fields: []string{"cert_resolver"}},
+		{ID: "domain", Label: "Domain", Title: "Choose a domain",
+			Do: []api.Action{
+				{Text: "At your DNS provider, add **A** records for the base domain, `*.` plus the base domain, and the console hostname, pointing at this machine's public IP address."},
+			},
+			Fields: []string{"base_domain", "console_hostname"}},
+		{ID: "certificates", Label: "Certificates", Title: "Choose how certificates are issued", ShownWhen: managed,
+			Fields: []string{"certificates", "acme_email"}},
+		{ID: "dns", Label: "DNS provider", Title: "Create DNS provider credentials",
+			ShownWhen: &api.Condition{Key: "certificates", Values: []string{CertsDNS}},
+			Do: []api.Action{
+				{Text: "At the provider that hosts the base domain, create a credential with this access:", Table: &api.Table{
+					Columns: []string{"Provider", "Access", "Variables"},
+					Rows: [][]string{
+						{"Cloudflare", "API token with Zone / Zone / Read and Zone / DNS / Edit", "CF_DNS_API_TOKEN"},
+						{"Amazon Route 53", "IAM user access key allowed route53:GetChange, route53:ListHostedZonesByName, route53:ListResourceRecordSets and route53:ChangeResourceRecordSets", "AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION"},
+						{"DigitalOcean", "Personal access token with the domain:create, domain:read and domain:delete scopes", "DO_AUTH_TOKEN"},
+						{"Porkbun", "API key, with API Access turned on in the domain's details", "PORKBUN_API_KEY, PORKBUN_SECRET_API_KEY"},
+						{"Namecheap", "API access, with this machine's IPv4 address whitelisted", "NAMECHEAP_API_USER, NAMECHEAP_API_KEY"},
+					},
+				}},
+				{Text: "For another provider, find its code and variables in the lego DNS provider list."},
+				{Text: "Enter each variable below as `NAME=value`, one to a line. For Route 53, add `AWS_REGION=us-east-1`."},
+			},
+			Links: []api.Link{
+				{Label: "Open Cloudflare API tokens", URL: "https://dash.cloudflare.com/profile/api-tokens"},
+				{Label: "Open AWS IAM users", URL: "https://console.aws.amazon.com/iam/home#/users"},
+				{Label: "Open DigitalOcean tokens", URL: "https://cloud.digitalocean.com/account/api/tokens"},
+				{Label: "Open Porkbun API access", URL: "https://porkbun.com/account/api"},
+				{Label: "Open Namecheap API access", URL: "https://ap.www.namecheap.com/settings/tools/apiaccess/"},
+				{Label: "Open lego DNS providers", URL: "https://go-acme.github.io/lego/dns/"},
+			},
+			Fields: []string{"dns_provider", "dns_credentials"}},
 	}
 }
