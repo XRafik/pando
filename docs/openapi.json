@@ -7111,7 +7111,7 @@
       "get": {
         "operationId": "listIdentityProviders",
         "summary": "List identity providers",
-        "description": "Every identity provider, local accounts included: settings, which credentials are set (never their values), the callback URL and entity ID to register with the provider, the SCIM base URL, and its revocation — session lifetime, mode, and the window that results. `kinds` describes the kinds that can be added, with presets for known providers.\n\nNeeds `install.view`.",
+        "description": "Every identity provider, local accounts included: settings, which credentials are set (never their values), the callback URL and entity ID to register with the provider, the SCIM base URL, and its revocation — session lifetime, mode, and the window that results. `kinds` describes the kinds that can be added, with presets for known providers. `endpoints` gives a new provider's `callback_url` and `entity_id` with `{id}` for the ID it is created with, so they can be registered with the provider before it is saved.\n\nNeeds `install.view`.",
         "tags": [
           "Identity providers"
         ],
@@ -7140,11 +7140,27 @@
                       "items": {
                         "$ref": "#/components/schemas/KindInfo"
                       }
+                    },
+                    "endpoints": {
+                      "type": "object",
+                      "properties": {
+                        "callback_url": {
+                          "type": "string"
+                        },
+                        "entity_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "callback_url",
+                        "entity_id"
+                      ]
                     }
                   },
                   "required": [
                     "providers",
-                    "kinds"
+                    "kinds",
+                    "endpoints"
                   ]
                 }
               }
@@ -7159,7 +7175,7 @@
       "post": {
         "operationId": "createIdentityProvider",
         "summary": "Add an identity provider",
-        "description": "Add an identity provider: `kind` (oidc or saml), `name`, `config`, write-only `credentials`, `jit_provisioning`, `link_by_email`. Off until `enabled` is set, so it can be tested first. Needs every installation permission, because a provider decides who signs in as which account.\n\nNeeds `install.adapters.manage`.",
+        "description": "Add an identity provider: `kind` (oidc or saml), `name`, `config`, write-only `credentials`, `jit_provisioning`, `link_by_email`. Off until `enabled` is set, so it can be tested first. Needs every installation permission, because a provider decides who signs in as which account. `id` may be given, an `idp_` ULID not yet used, to create it with the ID its registered addresses were built from.\n\nNeeds `install.adapters.manage`.",
         "tags": [
           "Identity providers"
         ],
@@ -11752,6 +11768,12 @@
           "placeholder": {
             "type": "string"
           },
+          "presets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "suggest": {
             "type": "string"
           }
@@ -15341,6 +15363,9 @@
       "ProviderInput": {
         "type": "object",
         "properties": {
+          "id": {
+            "type": "string"
+          },
           "kind": {
             "type": "string"
           },
@@ -15386,6 +15411,7 @@
           }
         },
         "required": [
+          "id",
           "kind",
           "config",
           "credentials"

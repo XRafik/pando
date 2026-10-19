@@ -40,6 +40,8 @@ export interface KindField {
   multiline?: boolean;
   /** Any number of values typed into one field, sent comma-separated. */
   list?: boolean;
+  /** The providers it is for, by preset ID; absent is every one. */
+  presets?: string[];
   /** Shown only while another setting has one of these values. */
   shown_when?: { key: string; values: string[] };
   /** A setting most people never change, asked for under "Advanced
@@ -188,18 +190,56 @@ export function stepFields(kind: AdapterKind, step: KindStep, values: Record<str
 
 /**
  * A template with each {key} replaced by that setting's value as the adapter
- * will read it — pando.{zone}, https://{host}/settings/apps. Undefined while a
- * setting it names is empty.
+ * will read it — pando.{zone}, https://{host}/settings/apps — or by a value
+ * the form supplies, such as {callback_url}. Undefined while one it names is
+ * empty.
  */
-export function fillRefs(kind: AdapterKind, values: Record<string, string | boolean>, template: string): string | undefined {
+export function fillRefs(
+  kind: AdapterKind,
+  values: Record<string, string | boolean>,
+  template: string,
+  supplied: Record<string, string> = {},
+): string | undefined {
   let missing = false;
   const text = template.replace(/\{([a-z0-9_]+)\}/g, (_, key: string) => {
+    if (supplied[key]) return supplied[key];
     const on = (kind.fields ?? []).find((x) => x.key === key);
     const v = on ? effectiveText(on, values[key]) : '';
     if (!v) missing = true;
     return v;
   });
   return missing ? undefined : text;
+}
+
+/** Step text with its {key}s filled in where they can be; one still empty
+ *  stays as written, so the instruction still reads. */
+export function fillText(
+  kind: AdapterKind,
+  values: Record<string, string | boolean>,
+  text: string,
+  supplied: Record<string, string> = {},
+): string {
+  return text.replace(/\{[a-z0-9_]+\}/g, (whole) => fillRefs(kind, values, whole, supplied) ?? whole);
+}
+
+/** The settings a person on this way through is not asked on any step: a
+ *  provider's preset settled them, or they do not apply. Review shows them
+ *  with the advanced ones. */
+export function unasked(
+  kind: AdapterKind,
+  steps: KindStep[],
+  values: Record<string, string | boolean>,
+  preset?: string,
+): KindField[] {
+  if ((kind.steps ?? []).length === 0) return [];
+  const asked = new Set(steps.flatMap((st) => st.fields));
+  return (kind.fields ?? []).filter(
+    (f) =>
+      !f.advanced &&
+      !asked.has(f.key) &&
+      isShown(kind, f, values) &&
+      (!preset || !f.presets?.length || f.presets.includes(preset)),
+  );
 }
 
 /**

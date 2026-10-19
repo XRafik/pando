@@ -36,6 +36,7 @@
               "label": "Scopes",
               "help": "Space-separated. Add groups if your provider needs a scope to send them.",
               "type": "string",
+              "advanced": true,
               "default": "openid email profile"
             },
             {
@@ -50,6 +51,7 @@
               "label": "Subject claim",
               "help": "The claim that identifies a person and never changes. Microsoft Entra ID needs oid.",
               "type": "string",
+              "advanced": true,
               "default": "sub"
             },
             {
@@ -57,6 +59,7 @@
               "label": "Username claim",
               "help": "The claim holding the person's username in Pando.",
               "type": "string",
+              "advanced": true,
               "default": "preferred_username"
             },
             {
@@ -64,6 +67,7 @@
               "label": "Email claim",
               "help": "The claim holding the person's email address.",
               "type": "string",
+              "advanced": true,
               "default": "email"
             },
             {
@@ -71,6 +75,7 @@
               "label": "Name claim",
               "help": "The claim holding the person's display name. When it is empty, given_name and family_name are used.",
               "type": "string",
+              "advanced": true,
               "default": "name"
             },
             {
@@ -78,7 +83,10 @@
               "label": "Google Workspace domain",
               "help": "Only accept Google accounts from this domain. Without it, anyone with a Google account can sign in.",
               "type": "string",
-              "placeholder": "example.com"
+              "placeholder": "example.com",
+              "presets": [
+                "google"
+              ]
             },
             {
               "key": "prompt",
@@ -104,13 +112,15 @@
               "key": "disable_userinfo",
               "label": "Skip the userinfo endpoint",
               "help": "Use only the ID token's claims. By default Pando fills in missing claims from userinfo.",
-              "type": "bool"
+              "type": "bool",
+              "advanced": true
             },
             {
               "key": "session_max_lifetime",
               "label": "Session length",
               "help": "How long a sign-in lasts. Without SCIM this is also how long access can outlive its removal at the provider.",
               "type": "string",
+              "advanced": true,
               "default": "12h"
             }
           ],
@@ -119,7 +129,6 @@
             {
               "id": "okta",
               "label": "Okta",
-              "help": "In Okta, create an OIDC Web Application, set its sign-in redirect URI to the one Pando shows, and assign it to people. Add a groups claim (Filter: Matches regex .*) to send groups.",
               "values": {
                 "groups_claim": "groups",
                 "issuer": "https://{your-okta-domain}",
@@ -129,7 +138,7 @@
             {
               "id": "entra",
               "label": "Microsoft Entra ID",
-              "help": "In Entra, register an application with a Web redirect URI set to the one Pando shows, create a client secret, and add the groups claim under Token configuration. Entra does not vouch for email addresses, so accounts are never linked by email.",
+              "help": "Groups arrive as object IDs, and Entra does not vouch for email addresses, so accounts are never linked by email.",
               "values": {
                 "groups_claim": "groups",
                 "issuer": "https://login.microsoftonline.com/{tenant-id}/v2.0",
@@ -140,9 +149,8 @@
             {
               "id": "google",
               "label": "Google Workspace",
-              "help": "In Google Cloud, create an OAuth client of type Web application with the redirect URI Pando shows. Google sends no groups; use SCIM or Pando groups for access.",
+              "help": "Google sends no groups, so access is given through Pando's own groups.",
               "values": {
-                "hosted_domain": "{your-domain.com}",
                 "issuer": "https://accounts.google.com",
                 "scopes": "openid email profile"
               }
@@ -150,7 +158,6 @@
             {
               "id": "keycloak",
               "label": "Keycloak",
-              "help": "In the realm, create an OpenID Connect client with client authentication on and the redirect URI Pando shows. Add a Group Membership mapper named groups, with Full group path off.",
               "values": {
                 "groups_claim": "groups",
                 "issuer": "https://{keycloak-host}/realms/{realm}"
@@ -159,11 +166,383 @@
             {
               "id": "authentik",
               "label": "Authentik",
-              "help": "Create an OAuth2/OpenID Provider with a confidential client and the redirect URI Pando shows, and an application using it. Authentik sends groups in the profile scope.",
+              "help": "Authentik sends group names in the profile scope.",
               "values": {
                 "groups_claim": "groups",
                 "issuer": "https://{authentik-host}/application/o/{application-slug}/"
               }
+            }
+          ],
+          "other_preset": "Another provider",
+          "steps": [
+            {
+              "id": "okta_app",
+              "label": "Application",
+              "title": "Create an app integration",
+              "do": [
+                {
+                  "text": "In the Admin Console, open **Applications and Resources** → **Applications**."
+                },
+                {
+                  "text": "Choose **Create App Integration**, then **Classic experience**."
+                },
+                {
+                  "text": "Choose **OIDC - OpenID Connect**, then **Web Application**, then **Next**."
+                },
+                {
+                  "text": "Set **Sign-in redirect URIs** to `{callback_url}`."
+                },
+                {
+                  "text": "Under **Assignments**, choose who can sign in, then choose **Save**."
+                },
+                {
+                  "text": "On the **General** tab, copy the **Client ID** and the client secret."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Okta OIDC app integrations",
+                  "url": "https://help.okta.com/en-us/content/topics/apps/apps_app_integration_wizard_oidc.htm"
+                }
+              ],
+              "fields": [
+                "issuer",
+                "client_id",
+                "client_secret"
+              ],
+              "presets": [
+                "okta"
+              ]
+            },
+            {
+              "id": "okta_groups",
+              "label": "Groups",
+              "title": "Add a groups claim",
+              "do": [
+                {
+                  "text": "On the app's **Sign On** tab, choose **Edit** under **OpenID Connect ID Token**."
+                },
+                {
+                  "text": "Set **Group claims filter** to `groups`, **Matches regex** and `.*`, then choose **Save**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Okta groups claim",
+                  "url": "https://developer.okta.com/docs/guides/customize-tokens-groups-claim/main/"
+                }
+              ],
+              "fields": [
+                "groups_claim"
+              ],
+              "presets": [
+                "okta"
+              ]
+            },
+            {
+              "id": "entra_app",
+              "label": "App registration",
+              "title": "Register an application",
+              "do": [
+                {
+                  "text": "In the Microsoft Entra admin center, open **Entra ID** → **App registrations** and choose **New registration**."
+                },
+                {
+                  "text": "Under **Supported account types**, choose **Single tenant only**, then choose **Register**."
+                },
+                {
+                  "text": "Copy the **Application (client) ID** and **Directory (tenant) ID** from **Overview**."
+                },
+                {
+                  "text": "Under **Manage**, open **Authentication** and choose **Add Redirect URI**."
+                },
+                {
+                  "text": "Choose **Web**, set **Redirect URI** to `{callback_url}`, and choose **Configure**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Open App registrations",
+                  "url": "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
+                }
+              ],
+              "fields": [
+                "issuer",
+                "client_id"
+              ],
+              "presets": [
+                "entra"
+              ]
+            },
+            {
+              "id": "entra_secret",
+              "label": "Client secret",
+              "title": "Create a client secret",
+              "do": [
+                {
+                  "text": "Open **Certificates & secrets** → **Client secrets** and choose **New client secret**."
+                },
+                {
+                  "text": "Choose an expiry, then choose **Add**."
+                },
+                {
+                  "text": "Copy its **Value**, not its **Secret ID**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Entra client secrets",
+                  "url": "https://learn.microsoft.com/en-us/entra/identity-platform/how-to-add-credentials"
+                }
+              ],
+              "fields": [
+                "client_secret"
+              ],
+              "presets": [
+                "entra"
+              ]
+            },
+            {
+              "id": "entra_groups",
+              "label": "Groups",
+              "title": "Add a groups claim",
+              "do": [
+                {
+                  "text": "Under **Manage**, open **Token configuration** and choose **Add groups claim**."
+                },
+                {
+                  "text": "Choose **Groups assigned to the application**, then choose **Add**."
+                },
+                {
+                  "text": "In **Entra ID** → **Enterprise apps**, open the app and set **Assignment required?** to **Yes** under **Properties**."
+                },
+                {
+                  "text": "Under **Users and groups**, choose **Add user/group** and add the groups that use Pando."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Entra groups claim",
+                  "url": "https://learn.microsoft.com/en-us/entra/identity-platform/optional-claims#configure-groups-optional-claims"
+                }
+              ],
+              "fields": [
+                "groups_claim"
+              ],
+              "presets": [
+                "entra"
+              ]
+            },
+            {
+              "id": "google_client",
+              "label": "OAuth client",
+              "title": "Create an OAuth client",
+              "do": [
+                {
+                  "text": "In Google Cloud, open **Google Auth Platform** → **Clients** and choose **Create client**."
+                },
+                {
+                  "text": "Set **Application type** to **Web application**."
+                },
+                {
+                  "text": "Under **Authorized redirect URIs**, add `{callback_url}`, then choose **Create**."
+                },
+                {
+                  "text": "Copy the **Client ID** and **Client secret**. Google shows the secret once."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Open Google Auth Platform clients",
+                  "url": "https://console.cloud.google.com/auth/clients"
+                }
+              ],
+              "fields": [
+                "client_id",
+                "client_secret"
+              ],
+              "presets": [
+                "google"
+              ]
+            },
+            {
+              "id": "google_domain",
+              "label": "Domain",
+              "title": "Limit sign-in to your domain",
+              "do": [
+                {
+                  "text": "On **Audience**, set **User type** to **Internal**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Open Google Auth Platform audience",
+                  "url": "https://console.cloud.google.com/auth/audience"
+                }
+              ],
+              "fields": [
+                "hosted_domain"
+              ],
+              "presets": [
+                "google"
+              ]
+            },
+            {
+              "id": "keycloak_client",
+              "label": "Client",
+              "title": "Create a client",
+              "do": [
+                {
+                  "text": "In the Admin Console, choose your realm, then **Clients** → **Create client**."
+                },
+                {
+                  "text": "Set **Client type** to **OpenID Connect**, enter a **Client ID**, and choose **Next**."
+                },
+                {
+                  "text": "Turn on **Client authentication**, keep **Standard flow** on, and choose **Next**."
+                },
+                {
+                  "text": "Set **Valid redirect URIs** to `{callback_url}`, then choose **Save**."
+                },
+                {
+                  "text": "On the **Credentials** tab, copy the **Client Secret**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Keycloak OIDC clients",
+                  "url": "https://www.keycloak.org/docs/latest/server_admin/#proc-creating-oidc-client_server_administration_guide"
+                }
+              ],
+              "fields": [
+                "issuer",
+                "client_id",
+                "client_secret"
+              ],
+              "presets": [
+                "keycloak"
+              ]
+            },
+            {
+              "id": "keycloak_groups",
+              "label": "Groups",
+              "title": "Add a groups mapper",
+              "do": [
+                {
+                  "text": "On the client's **Client scopes** tab, open the scope ending `-dedicated`."
+                },
+                {
+                  "text": "Choose **Configure a new mapper**, or **Add mapper** → **By configuration**, then **Group Membership**."
+                },
+                {
+                  "text": "Set **Name** and **Token Claim Name** to `groups`, turn off **Full group path**, and choose **Save**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Keycloak protocol mappers",
+                  "url": "https://www.keycloak.org/docs/latest/server_admin/#_protocol-mappers"
+                }
+              ],
+              "fields": [
+                "groups_claim"
+              ],
+              "presets": [
+                "keycloak"
+              ]
+            },
+            {
+              "id": "authentik_app",
+              "label": "Application",
+              "title": "Create an application and provider",
+              "do": [
+                {
+                  "text": "In the Admin interface, open **Applications** → **Applications** and choose **New Application**."
+                },
+                {
+                  "text": "Name the application, note its **Slug**, and choose **Next**."
+                },
+                {
+                  "text": "Choose **OAuth2/OpenID Connect**, then choose **Next**."
+                },
+                {
+                  "text": "Set **Client type** to **Confidential**."
+                },
+                {
+                  "text": "Add a **Strict** redirect URI of `{callback_url}`."
+                },
+                {
+                  "text": "Choose a **Signing Key**."
+                },
+                {
+                  "text": "Copy the **Client ID** and **Client Secret**, then choose **Submit**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Authentik OAuth2 provider",
+                  "url": "https://docs.goauthentik.io/add-secure-apps/providers/oauth2/create-oauth2-provider/"
+                }
+              ],
+              "fields": [
+                "issuer",
+                "client_id",
+                "client_secret"
+              ],
+              "presets": [
+                "authentik"
+              ]
+            },
+            {
+              "id": "other_client",
+              "label": "Application",
+              "title": "Register Pando as a web application",
+              "do": [
+                {
+                  "text": "In your provider, create an OpenID Connect web application that uses the authorization code flow."
+                },
+                {
+                  "text": "Set its redirect URI to `{callback_url}`."
+                },
+                {
+                  "text": "Copy its issuer, client ID and client secret."
+                }
+              ],
+              "fields": [
+                "issuer",
+                "client_id",
+                "client_secret"
+              ],
+              "presets": [
+                "other"
+              ]
+            },
+            {
+              "id": "other_groups",
+              "label": "Groups",
+              "title": "Send groups",
+              "do": [
+                {
+                  "text": "Add a claim listing the person's groups to the ID token or userinfo."
+                }
+              ],
+              "fields": [
+                "groups_claim"
+              ],
+              "presets": [
+                "other"
+              ]
+            },
+            {
+              "id": "other_signin",
+              "label": "Sign-in",
+              "title": "Choose sign-in options",
+              "fields": [
+                "prompt"
+              ],
+              "presets": [
+                "other"
+              ]
             }
           ]
         },
@@ -249,13 +628,15 @@
               "key": "allow_idp_initiated",
               "label": "Allow sign-in from the provider's dashboard",
               "help": "Off is safer: a sign-in the provider starts is not tied to the browser that presents it.",
-              "type": "bool"
+              "type": "bool",
+              "advanced": true
             },
             {
               "key": "session_max_lifetime",
               "label": "Session length",
               "help": "How long a sign-in lasts. Without SCIM this is also how long access can outlive its removal at the provider.",
               "type": "string",
+              "advanced": true,
               "default": "12h"
             }
           ],
@@ -264,7 +645,7 @@
             {
               "id": "okta",
               "label": "Okta",
-              "help": "In Okta, create a SAML 2.0 app. Single sign-on URL is Pando's ACS URL; Audience URI is Pando's entity ID. Add attribute statements email, displayName, and a group attribute statement groups (Matches regex .*). Then paste the app's Metadata URL here.",
+              "help": "The Metadata URL is on the app's Sign On tab.",
               "values": {
                 "groups_attribute": "groups",
                 "name_id_format": "persistent",
@@ -274,7 +655,7 @@
             {
               "id": "entra",
               "label": "Microsoft Entra ID",
-              "help": "In Entra, create an enterprise application with SAML. Identifier is Pando's entity ID, Reply URL is the ACS URL. Add a group claim. Paste the App Federation Metadata Url here.",
+              "help": "The App Federation Metadata Url is under SAML Certificates on the app's Single sign-on page.",
               "values": {
                 "groups_attribute": "http://schemas.microsoft.com/ws/2008/06/identity/claims/groups"
               }
@@ -282,7 +663,7 @@
             {
               "id": "google",
               "label": "Google Workspace",
-              "help": "In the Admin console, add a custom SAML app. ACS URL and Entity ID are Pando's. Map Primary email to email and group membership to groups. Download the IdP metadata and paste it here.",
+              "help": "Google offers the IdP metadata as a download when you add the app, not as a URL.",
               "values": {
                 "groups_attribute": "groups",
                 "name_id_format": "email",
@@ -292,20 +673,506 @@
             {
               "id": "keycloak",
               "label": "Keycloak",
-              "help": "Create a SAML client whose Client ID is Pando's entity ID and whose valid redirect URI is the ACS URL. Add a Group list mapper named groups. The metadata is at /realms/<realm>/protocol/saml/descriptor.",
+              "help": "The metadata is at /realms/<realm>/protocol/saml/descriptor on your Keycloak host.",
               "values": {
                 "groups_attribute": "groups",
-                "idp_metadata_url": "https://{keycloak-host}/realms/{realm}/protocol/saml/descriptor",
+                "idp_metadata_url": "https://keycloak.example.com/realms/myrealm/protocol/saml/descriptor",
                 "name_id_format": "persistent"
               }
             },
             {
               "id": "authentik",
               "label": "Authentik",
-              "help": "Create a SAML Provider with Pando's ACS URL and entity ID as audience, and an application using it. Its metadata can be downloaded from the provider page.",
+              "help": "Copy download URL, under Related objects on the provider's page, gives the metadata URL.",
               "values": {
-                "groups_attribute": "http://schemas.xmlsoap.org/claims/Group"
+                "groups_attribute": "http://schemas.xmlsoap.org/claims/Group",
+                "name_attribute": "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name",
+                "name_id_format": "persistent",
+                "username_attribute": "http://schemas.goauthentik.io/2021/02/saml/username"
               }
+            }
+          ],
+          "other_preset": "Another provider",
+          "steps": [
+            {
+              "id": "okta_app",
+              "label": "App",
+              "title": "Create a SAML app in Okta",
+              "do": [
+                {
+                  "text": "In the Admin Console, open **Applications** → **Applications** and choose **Create App Integration**."
+                },
+                {
+                  "text": "Choose **SAML 2.0**, then **Next**, and name the app."
+                },
+                {
+                  "text": "Set **Single sign-on URL** to `{callback_url}`."
+                },
+                {
+                  "text": "Set **Audience URI (SP Entity ID)** to `{entity_id}`."
+                },
+                {
+                  "text": "Set **Name ID format** to **Persistent**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Okta SAML app integrations",
+                  "url": "https://help.okta.com/en-us/content/topics/apps/apps_app_integration_wizard_saml.htm"
+                }
+              ],
+              "fields": [
+                "name_id_format"
+              ],
+              "presets": [
+                "okta"
+              ]
+            },
+            {
+              "id": "okta_attributes",
+              "label": "Attributes",
+              "title": "Send email, name and groups",
+              "do": [
+                {
+                  "text": "Under **Attribute Statements**, add these:",
+                  "table": {
+                    "columns": [
+                      "Name",
+                      "Value"
+                    ],
+                    "rows": [
+                      [
+                        "email",
+                        "user.email"
+                      ],
+                      [
+                        "firstName",
+                        "user.firstName"
+                      ],
+                      [
+                        "lastName",
+                        "user.lastName"
+                      ]
+                    ]
+                  }
+                },
+                {
+                  "text": "Under **Group Attribute Statements**, add `groups` with the filter **Matches regex** `.*`."
+                },
+                {
+                  "text": "Choose **Next**, then **Finish**."
+                }
+              ],
+              "fields": [
+                "groups_attribute",
+                "trust_email"
+              ],
+              "presets": [
+                "okta"
+              ]
+            },
+            {
+              "id": "okta_metadata",
+              "label": "Metadata",
+              "title": "Copy the metadata URL",
+              "do": [
+                {
+                  "text": "On the **Assignments** tab, assign the people or groups who may sign in."
+                },
+                {
+                  "text": "On the **Sign On** tab, copy the **Metadata URL**."
+                }
+              ],
+              "fields": [
+                "idp_metadata_url"
+              ],
+              "presets": [
+                "okta"
+              ]
+            },
+            {
+              "id": "entra_app",
+              "label": "App",
+              "title": "Create an enterprise application",
+              "do": [
+                {
+                  "text": "In the Microsoft Entra admin center, open **Entra ID** → **Enterprise apps** → **All applications**."
+                },
+                {
+                  "text": "Choose **New application**, then **Create your own application**."
+                },
+                {
+                  "text": "Name it, choose **Integrate any other application you don't find in the gallery (Non-gallery)**, and choose **Create**."
+                },
+                {
+                  "text": "Open **Single sign-on** and choose **SAML**."
+                },
+                {
+                  "text": "In **Basic SAML Configuration**, choose **Edit**."
+                },
+                {
+                  "text": "Set **Identifier (Entity ID)** to `{entity_id}`."
+                },
+                {
+                  "text": "Set **Reply URL (Assertion Consumer Service URL)** to `{callback_url}`, then choose **Save**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Entra SAML single sign-on",
+                  "url": "https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/add-application-portal-setup-sso"
+                }
+              ],
+              "fields": [
+                "name_id_format"
+              ],
+              "presets": [
+                "entra"
+              ]
+            },
+            {
+              "id": "entra_groups",
+              "label": "Groups",
+              "title": "Add a group claim",
+              "do": [
+                {
+                  "text": "In **Attributes & Claims**, choose **Edit**, then **Add a group claim**."
+                },
+                {
+                  "text": "Choose **Groups assigned to the application**."
+                },
+                {
+                  "text": "Set **Source attribute** to **Cloud-only group display names**, then choose **Save**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Entra group claims",
+                  "url": "https://learn.microsoft.com/en-us/entra/identity/hybrid/connect/how-to-connect-fed-group-claims"
+                }
+              ],
+              "fields": [
+                "groups_attribute",
+                "trust_email"
+              ],
+              "presets": [
+                "entra"
+              ]
+            },
+            {
+              "id": "entra_metadata",
+              "label": "Metadata",
+              "title": "Copy the metadata URL",
+              "do": [
+                {
+                  "text": "Under **Users and groups**, choose **Add user/group** and assign the people or groups who may sign in."
+                },
+                {
+                  "text": "On **Single sign-on**, under **SAML Certificates**, copy the **App Federation Metadata Url**."
+                }
+              ],
+              "fields": [
+                "idp_metadata_url"
+              ],
+              "presets": [
+                "entra"
+              ]
+            },
+            {
+              "id": "google_app",
+              "label": "App",
+              "title": "Add a custom SAML app",
+              "do": [
+                {
+                  "text": "In the Admin console, open **Menu** → **Apps** → **Web and mobile apps**."
+                },
+                {
+                  "text": "Choose **Add App**, then **Add custom SAML app**, name it, and choose **Continue**."
+                },
+                {
+                  "text": "Download the **IDP metadata** and choose **Continue**."
+                },
+                {
+                  "text": "Open the downloaded file and paste its contents here."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Open Web and mobile apps",
+                  "url": "https://admin.google.com/ac/apps/unified"
+                },
+                {
+                  "label": "Google custom SAML apps",
+                  "url": "https://knowledge.workspace.google.com/admin/apps/set-up-your-own-custom-saml-app"
+                }
+              ],
+              "fields": [
+                "idp_metadata_xml"
+              ],
+              "presets": [
+                "google"
+              ]
+            },
+            {
+              "id": "google_sp",
+              "label": "Service provider",
+              "title": "Enter Pando's details",
+              "do": [
+                {
+                  "text": "Set **ACS URL** to `{callback_url}`."
+                },
+                {
+                  "text": "Set **Entity ID** to `{entity_id}`."
+                },
+                {
+                  "text": "Set **Name ID format** to **EMAIL** and **Name ID** to **Basic Information > Primary email**, then choose **Continue**."
+                }
+              ],
+              "fields": [
+                "name_id_format"
+              ],
+              "presets": [
+                "google"
+              ]
+            },
+            {
+              "id": "google_attributes",
+              "label": "Attributes",
+              "title": "Map the attributes",
+              "do": [
+                {
+                  "text": "Choose **Add mapping** for each of these:",
+                  "table": {
+                    "columns": [
+                      "Google Directory attribute",
+                      "App attribute"
+                    ],
+                    "rows": [
+                      [
+                        "Primary email",
+                        "email"
+                      ],
+                      [
+                        "First name",
+                        "firstName"
+                      ],
+                      [
+                        "Last name",
+                        "lastName"
+                      ]
+                    ]
+                  }
+                },
+                {
+                  "text": "Under **Group membership (optional)**, choose the groups to send and set **App attribute** to `groups`."
+                },
+                {
+                  "text": "Choose **Finish**."
+                },
+                {
+                  "text": "Open **User access**, choose **On for everyone**, and choose **Save**."
+                }
+              ],
+              "fields": [
+                "groups_attribute",
+                "trust_email"
+              ],
+              "presets": [
+                "google"
+              ]
+            },
+            {
+              "id": "keycloak_client",
+              "label": "Client",
+              "title": "Create a SAML client",
+              "do": [
+                {
+                  "text": "In the realm's admin console, open **Clients** and choose **Create client**."
+                },
+                {
+                  "text": "Set **Client type** to **SAML** and **Client ID** to `{entity_id}`, then choose **Next**."
+                },
+                {
+                  "text": "Set **Valid redirect URIs** to `{callback_url}`, then choose **Save**."
+                },
+                {
+                  "text": "On the **Settings** tab, set **Name ID format** to **persistent** and choose **Save**."
+                },
+                {
+                  "text": "On the **Keys** tab, turn off **Client signature required**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Keycloak SAML clients",
+                  "url": "https://www.keycloak.org/docs/latest/server_admin/index.html#_client-saml-configuration"
+                }
+              ],
+              "fields": [
+                "name_id_format"
+              ],
+              "presets": [
+                "keycloak"
+              ]
+            },
+            {
+              "id": "keycloak_mappers",
+              "label": "Attributes",
+              "title": "Send email, name and groups",
+              "do": [
+                {
+                  "text": "On the **Client scopes** tab, open the client's **-dedicated** scope."
+                },
+                {
+                  "text": "Choose **Add predefined mapper** and add **X500 email**, **X500 givenName** and **X500 surname**."
+                },
+                {
+                  "text": "Choose **Add mapper** → **By configuration** → **User Property**, with **Property** `username` and **SAML Attribute Name** `username`."
+                },
+                {
+                  "text": "Choose **Add mapper** → **By configuration** → **Group list**, with **Group attribute name** `groups`, and turn off **Full group path**."
+                }
+              ],
+              "fields": [
+                "groups_attribute",
+                "trust_email"
+              ],
+              "presets": [
+                "keycloak"
+              ]
+            },
+            {
+              "id": "keycloak_metadata",
+              "label": "Metadata",
+              "title": "Enter the realm's metadata URL",
+              "do": [
+                {
+                  "text": "Use your Keycloak host and realm in `https://<host>/realms/<realm>/protocol/saml/descriptor`."
+                }
+              ],
+              "fields": [
+                "idp_metadata_url"
+              ],
+              "presets": [
+                "keycloak"
+              ]
+            },
+            {
+              "id": "authentik_app",
+              "label": "Application",
+              "title": "Create an application",
+              "do": [
+                {
+                  "text": "In the Admin interface, open **Applications** → **Applications** and choose **New Application**."
+                },
+                {
+                  "text": "Name it and choose **Next**, then choose **SAML Provider** and **Next**."
+                },
+                {
+                  "text": "Set **ACS URL** to `{callback_url}` and **Audience** to `{entity_id}`."
+                },
+                {
+                  "text": "Under **Advanced protocol settings**, choose a **Signing Certificate** and leave **Sign assertions** on."
+                },
+                {
+                  "text": "Set **Service Provider Binding** to **Post**, then choose **Create Application**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Authentik SAML providers",
+                  "url": "https://docs.goauthentik.io/add-secure-apps/providers/saml/create-saml-provider/"
+                }
+              ],
+              "fields": [
+                "name_id_format"
+              ],
+              "presets": [
+                "authentik"
+              ]
+            },
+            {
+              "id": "authentik_metadata",
+              "label": "Metadata",
+              "title": "Copy the metadata URL",
+              "do": [
+                {
+                  "text": "Open **Applications** → **Providers** and choose the provider."
+                },
+                {
+                  "text": "Under **Related objects**, beside **Metadata**, choose **Copy download URL**."
+                }
+              ],
+              "fields": [
+                "idp_metadata_url"
+              ],
+              "presets": [
+                "authentik"
+              ]
+            },
+            {
+              "id": "other_app",
+              "label": "Application",
+              "title": "Register Pando with your provider",
+              "do": [
+                {
+                  "text": "Create a SAML 2.0 application."
+                },
+                {
+                  "text": "Set its ACS URL, or reply URL, to `{callback_url}`, with the HTTP-POST binding."
+                },
+                {
+                  "text": "Set its entity ID, or audience, to `{entity_id}`."
+                },
+                {
+                  "text": "Or import Pando's metadata from `{entity_id}`."
+                },
+                {
+                  "text": "Sign the response, the assertion, or both."
+                },
+                {
+                  "text": "Assign the people or groups who may sign in."
+                }
+              ],
+              "fields": [
+                "name_id_format"
+              ],
+              "presets": [
+                "other"
+              ]
+            },
+            {
+              "id": "other_attributes",
+              "label": "Attributes",
+              "title": "Map the attributes",
+              "do": [
+                {
+                  "text": "Send each person's email, name, username and groups as attributes."
+                }
+              ],
+              "fields": [
+                "email_attribute",
+                "name_attribute",
+                "username_attribute",
+                "groups_attribute",
+                "subject_attribute",
+                "trust_email"
+              ],
+              "presets": [
+                "other"
+              ]
+            },
+            {
+              "id": "other_metadata",
+              "label": "Metadata",
+              "title": "Enter the provider's metadata",
+              "fields": [
+                "idp_metadata_url",
+                "idp_metadata_xml"
+              ],
+              "presets": [
+                "other"
+              ]
             }
           ]
         }
@@ -2456,16 +3323,10 @@
             {
               "id": "server",
               "label": "Server",
-              "title": "Start a model server",
+              "title": "Connect to your model server",
               "do": [
                 {
-                  "text": "Start an OpenAI-compatible server: Ollama, LM Studio (**Developer** → **Start server**), `llama-server` or `vllm serve`."
-                },
-                {
-                  "text": "If Pando runs on Linux, have it listen beyond `127.0.0.1`: `OLLAMA_HOST=0.0.0.0:11434` for Ollama, **Serve on Local Network** in LM Studio, `--host 0.0.0.0` for `llama-server`."
-                },
-                {
-                  "text": "Enter its address as Pando's container reaches it:",
+                  "text": "Enter the address of the OpenAI-compatible server you run, ending `/v1`. On this machine, by its default port:",
                   "table": {
                     "columns": [
                       "Server",
@@ -2490,6 +3351,12 @@
                       ]
                     ]
                   }
+                },
+                {
+                  "text": "On another machine, use its address instead, such as `http://10.0.0.20:11434/v1`."
+                },
+                {
+                  "text": "On Linux, a server on this machine has to listen on an address other than `127.0.0.1`, and hosted apps can reach it there too."
                 },
                 {
                   "text": "Enter an API key only if the server requires one: `--api-key` for `llama-server` or `vllm serve`, **Require Authentication** in LM Studio."

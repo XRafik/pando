@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   PRESET_OTHER,
   fillRefs,
+  fillText,
   joinList,
   kindSteps,
   listItems,
@@ -10,6 +11,7 @@ import {
   runs,
   stepFields,
   stepProblems,
+  unasked,
   withPreset,
   withSuggestions,
 } from './adapters';
@@ -118,5 +120,24 @@ describe('step text and values', () => {
     expect(reviewText(token!, '')).toBe('Not entered');
     expect(reviewText(zone!, '')).toBe('None');
     expect(reviewText({ key: 'b', label: 'B', type: 'bool', default: 'true' }, undefined)).toBe('Yes');
+  });
+});
+
+describe('values the form supplies', () => {
+  it('fills an identity provider’s address into step text, and leaves an unknown one as written', () => {
+    const supplied = { callback_url: 'https://pando.example.com/api/v1/auth/providers/idp_1/callback' };
+    expect(fillText(kind, {}, 'Set **Redirect URI** to `{callback_url}`.', supplied)).toBe(
+      'Set **Redirect URI** to `https://pando.example.com/api/v1/auth/providers/idp_1/callback`.',
+    );
+    expect(fillText(kind, {}, 'Open https://{zone}/admin', supplied)).toBe('Open https://{zone}/admin');
+    expect(fillRefs(kind, {}, '{callback_url}', supplied)).toBe(supplied.callback_url);
+  });
+
+  it('lists what a provider’s way through asks on no step', () => {
+    const splunk = kindSteps(kind, {}, 'splunk');
+    expect(unasked(kind, splunk, {}).map((f) => f.key)).toEqual([]);
+    const other = kindSteps(kind, { method: 'key' }, PRESET_OTHER);
+    expect(unasked(kind, other, { method: 'key' }).map((f) => f.key)).toEqual(['zones']);
+    expect(unasked({ ...kind, steps: null }, [], {})).toEqual([]);
   });
 });

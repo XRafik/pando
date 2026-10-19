@@ -16,11 +16,13 @@ import { api, base } from '@api/client';
 import type { ProviderView, TestReport } from '@api/types.gen';
 import { Quiet, Screen, refusal } from './Accounts';
 import { FieldInput } from './AdapterDialog';
-import { isShown } from './adapters';
+import { AdapterGuide } from './AdapterGuide';
+import { isShown, kindKey } from './adapters';
 import { LineSkeleton, Loading } from '../ui/Loading';
 import { Term } from '../ui/Term';
 import {
   groupsText,
+  newProviderID,
   outcomeText,
   presetValues,
   problems,
@@ -33,6 +35,8 @@ import type { Outcome, ProviderKind, Values } from './signInForm';
 interface Listing {
   providers: ProviderView[] | null;
   kinds: ProviderKind[] | null;
+  /** A new provider's addresses, with {id} for the ID it is created with. */
+  endpoints?: { callback_url: string; entity_id: string };
 }
 
 const KIND_LABEL: Record<string, string> = { local: 'Username and password', oidc: 'OpenID Connect', saml: 'SAML 2.0' };
@@ -107,7 +111,7 @@ export function SignIn({
         )}
       </div>
 
-      {adding && <ProviderDialog kinds={kinds} onClose={() => setAdding(false)} />}
+      {adding && <ProviderDialog kinds={kinds} endpoints={listing.data?.endpoints} onClose={() => setAdding(false)} />}
       {editing && (
         <ProviderDialog kinds={kinds} existing={editing} onClose={() => setEditing(null)} />
       )}
@@ -329,10 +333,12 @@ function ProviderCard({
 function ProviderDialog({
   kinds,
   existing,
+  endpoints,
   onClose,
 }: {
   kinds: ProviderKind[];
   existing?: ProviderView;
+  endpoints?: Listing['endpoints'];
   onClose: () => void;
 }) {
   const queries = useQueryClient();
@@ -350,10 +356,18 @@ function ProviderDialog({
   const found = kind ? problems(kind, name, values, stored) : {};
   const shown = (key: string) => (tried ? found[key] : undefined);
 
+  // A new provider is added one step at a time, with every setting at once a
+  // click away. Its ID is chosen now, so the addresses the provider is told
+  // about while it is set up are the ones it is created with.
+  const [guided, setGuided] = useState(!existing);
+  const [providerID] = useState(() => newProviderID());
+
   const save = useMutation({
     mutationFn: () => {
       const body = providerRequest(kind!, name, values, { jit, linkByEmail }, !existing);
-      return existing ? api.patch(`/identity-providers/${existing.id}`, body) : api.post('/identity-providers', body);
+      return existing
+        ? api.patch(`/identity-providers/${existing.id}`, body)
+        : api.post('/identity-providers', endpoints ? { ...body, id: providerID } : body);
     },
     onSuccess: () => {
       void queries.invalidateQueries({ queryKey: ['identity-providers'] });
@@ -369,6 +383,103 @@ function ProviderDialog({
       if (!name) setName(p.label);
     }
   };
+
+  const options = (
+    <>
+      <Checkbox
+        label="Just-in-time provisioning"
+        description="New accounts start with no access. Policy can turn this off everywhere."
+        checked={jit}
+        onChange={(e) => setJIT(e.target.checked)}
+      />
+      <Checkbox
+        label="Link accounts by verified email"
+        description="Only when the provider verifies the address. Microsoft Entra ID doesn’t."
+        checked={linkByEmail}
+        onChange={(e) => setLinkByEmail(e.target.checked)}
+      />
+    </>
+  );
+
+  if (guided && !existing) {
+    const supplied: Record<string, string> = endpoints
+      ? { callback_url: endpoints.callback_url.replace('{id}', providerID), entity_id: endpoints.entity_id.replace('{id}', providerID) }
+      : {};
+    return (
+      <AdapterGuide
+        categories={[]}
+        category="identity"
+        askCategory={false}
+        onCategory={() => undefined}
+        inCategory={kinds}
+        chosen={kind ? kindKey(kind) : ''}
+        onPick={(key) => {
+          setKindName(key.slice(key.indexOf('/') + 1));
+          setValues({});
+        }}
+        skipChoose={false}
+        kind={kind}
+        form={{ id: providerID, name, isDefault: false, values }}
+        edit={(patch) => {
+          if (patch.values) setValues(patch.values as Values);
+          if (patch.name !== undefined) setName(patch.name);
+        }}
+        stored={[]}
+        renderField={(f, error, instructed) => (
+          <FieldInput
+            guided
+            instructed={instructed}
+            field={f}
+            value={values[f.key]}
+            error={error}
+            onChange={(v) => setValues({ ...values, [f.key]: v })}
+          />
+        )}
+        showDefault={false}
+        isAI={false}
+        saving={save.isPending}
+        saveError={save.isError ? save.error : undefined}
+        onSave={() => save.mutate()}
+        onShowAll={() => setGuided(false)}
+        onClose={onClose}
+        pickLabel="Protocol"
+        pickTitle="Add identity provider"
+        noun="provider"
+        addLabel="Add provider"
+        supplied={supplied}
+        checkFields={(v) => {
+          if (!kind) return {};
+          const { name: _name, ...rest } = problems(kind, 'named', v);
+          return rest;
+        }}
+        onProvider={(p) => {
+          if (p && !name) setName(p.label);
+        }}
+        reviewNote="It starts off. Test it with a real sign-in, then turn it on."
+        nameStep={{
+          content: (errors) => (
+            <>
+              <Input
+                label="Name (required)"
+                value={name}
+                helper="Shown on the sign-in page."
+                error={errors.name}
+                onChange={(e) => setName(e.target.value)}
+              />
+              {options}
+            </>
+          ),
+          problems: (): Record<string, string> =>
+            name.trim() ? {} : { name: 'A provider needs a name. People see it on the sign-in page.' },
+          rows: [
+            { label: 'Name', value: name.trim() },
+            { label: 'Just-in-time provisioning', value: jit ? 'On' : 'Off' },
+            { label: 'Link by verified email', value: linkByEmail ? 'On' : 'Off' },
+          ],
+        }}
+      />
+    );
+  }
 
   return (
     <Dialog
@@ -454,18 +565,7 @@ function ProviderDialog({
                 onChange={(v) => setValues({ ...values, [f.key]: v })}
               />
             ))}
-        <Checkbox
-          label="Just-in-time provisioning"
-          description="New accounts start with no access. Policy can turn this off everywhere."
-          checked={jit}
-          onChange={(e) => setJIT(e.target.checked)}
-        />
-        <Checkbox
-          label="Link accounts by verified email"
-          description="Only when the provider verifies the address. Microsoft Entra ID doesn’t."
-          checked={linkByEmail}
-          onChange={(e) => setLinkByEmail(e.target.checked)}
-        />
+        {options}
         {save.isError && <Banner tone="failed">{refusal(save.error)}</Banner>}
       </div>
     </Dialog>

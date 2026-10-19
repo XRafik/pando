@@ -115,6 +115,10 @@ func (s *IdentityProviders) BySCIMToken(ctx context.Context, digest string) (Ide
 // ProviderSettings are the fields an administrator sets. A nil field is left
 // as it is on update.
 type ProviderSettings struct {
+	// ID is a new provider's ID when the caller chose it, so the addresses
+	// built from it could be registered with the provider first. Empty is a
+	// fresh one. Not used by Update.
+	ID                    string
 	Name                  *string
 	Config                json.RawMessage
 	Enabled               *bool
@@ -125,7 +129,10 @@ type ProviderSettings struct {
 
 // Create adds a provider.
 func (s *IdentityProviders) Create(ctx context.Context, kind string, set ProviderSettings) (IdentityProvider, error) {
-	providerID := id.New(id.IdentityAdpt)
+	providerID := set.ID
+	if providerID == "" {
+		providerID = id.New(id.IdentityAdpt)
+	}
 	cfg := set.Config
 	if len(cfg) == 0 {
 		cfg = json.RawMessage(`{}`)

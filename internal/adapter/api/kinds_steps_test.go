@@ -76,9 +76,12 @@ func TestStepsAreCheckedForEachProvider(t *testing.T) {
 		}}
 	require.NoError(t, k.Validate())
 
-	// Another SIEM is asked everything.
+	// Any provider may leave out what is not required, but never what is.
 	k.Steps[1].Fields = []string{"token"}
+	require.NoError(t, k.Validate())
+	k.Fields[2].Required = true
 	require.ErrorContains(t, k.Validate(), `for provider "other" setting "body" is on no step`)
+	k.Fields[2].Required = false
 
 	// A step for the other choice needs a kind that offers one.
 	k.Steps[1].Fields = []string{"token", "body"}

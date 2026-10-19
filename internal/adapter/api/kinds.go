@@ -74,7 +74,8 @@ type Step struct {
 	// Do is what to do outside Pando, in order, one action to an item, in the
 	// provider's own words. **Bold** marks the name of something on the
 	// provider's screen and `backticks` a command, path or value typed
-	// exactly; nothing else is markup.
+	// exactly; nothing else is markup. {key} stands for a setting's value, or
+	// for one of the Refs the form supplies, such as {callback_url}.
 	Do []Action `json:"do,omitempty"`
 
 	// Links open the provider's pages the step starts on: usually one, and
@@ -94,6 +95,14 @@ type Step struct {
 	// instructions for Splunk only. Empty is every provider.
 	Presets []string `json:"presets,omitempty"`
 }
+
+// Refs a form supplies for a step's text and links, beside the settings: an
+// identity provider's addresses, which the person registers with the
+// provider before Pando has saved it.
+const (
+	RefCallbackURL = "callback_url" // where the provider sends the browser back: the OIDC redirect URI, the SAML ACS URL
+	RefEntityID    = "entity_id"    // the SAML service provider's entity ID, also its metadata URL
+)
 
 // PresetOther stands, in a step's Presets, for a provider none of the kind's
 // presets names.
@@ -190,6 +199,11 @@ type Field struct {
 	// Placeholder is an example value, for a setting with no default.
 	Placeholder string `json:"placeholder,omitempty"`
 
+	// Presets are the providers the setting is for, by preset ID — a Google
+	// Workspace domain for Google only. Guided setup shows it to no one else.
+	// Empty is every provider.
+	Presets []string `json:"presets,omitempty"`
+
 	// Suggest is the value a form starts a new adapter's setting at, with
 	// {key} standing for another setting's value: "pando.{zone}". It follows
 	// that setting until the setting is edited, and is then the person's own.
@@ -227,6 +241,11 @@ func (k KindInfo) Validate() error {
 			return fmt.Errorf("%s/%s has two settings named %q", k.Category, k.Kind, f.Key)
 		}
 		seen[f.Key] = true
+		for _, id := range f.Presets {
+			if !slices.ContainsFunc(k.Presets, func(p Preset) bool { return p.ID == id }) {
+				return fmt.Errorf("%s/%s setting %q is for provider %q, which is not one of its presets", k.Category, k.Kind, f.Key, id)
+			}
+		}
 		if f.List && (f.Type != "string" || f.Credential || f.Multiline) {
 			return fmt.Errorf("%s/%s setting %q is a list: a list is a plain string setting, neither a credential nor multiline", k.Category, k.Kind, f.Key)
 		}
@@ -296,7 +315,7 @@ func (k KindInfo) validateSteps() error {
 				return fmt.Errorf("%s step %q has a link without both a label and an address", where, st.ID)
 			}
 			for _, m := range suggestRef.FindAllStringSubmatch(l.URL, -1) {
-				if !k.hasField(m[1]) {
+				if !k.hasField(m[1]) && m[1] != RefCallbackURL && m[1] != RefEntityID {
 					return fmt.Errorf("%s step %q links with {%s}, which is not one of its settings", where, st.ID, m[1])
 				}
 			}
@@ -304,6 +323,11 @@ func (k KindInfo) validateSteps() error {
 		for _, a := range st.Do {
 			if a.Text == "" {
 				return fmt.Errorf("%s step %q has an empty instruction", where, st.ID)
+			}
+			for _, m := range suggestRef.FindAllStringSubmatch(a.Text, -1) {
+				if !k.hasField(m[1]) && m[1] != RefCallbackURL && m[1] != RefEntityID {
+					return fmt.Errorf("%s step %q says {%s}, which is not one of its settings", where, st.ID, m[1])
+				}
 			}
 		}
 		for _, id := range st.Presets {
@@ -380,10 +404,11 @@ func (k KindInfo) validatePath(where, path string, steps []Step) error {
 			askedOn[key] = i
 		}
 	}
-	// A named provider's steps may leave out a setting that is not required:
-	// its preset settles it, or it does not apply. Review shows it with the
-	// advanced ones. Anyone else is asked every setting.
-	named := path != "" && path != PresetOther
+	// A provider's steps may leave out a setting that is not required: its
+	// preset settles it, or it does not apply — a Google Workspace domain to
+	// anyone else. Review shows it with the advanced ones. A kind without
+	// presets asks every setting.
+	named := path != ""
 	var values map[string]string
 	for _, p := range k.Presets {
 		if p.ID == path {
@@ -391,7 +416,7 @@ func (k KindInfo) validatePath(where, path string, steps []Step) error {
 		}
 	}
 	for _, f := range k.Fields {
-		if _, ok := askedOn[f.Key]; ok || f.Advanced {
+		if _, ok := askedOn[f.Key]; ok || f.Advanced || (path != "" && len(f.Presets) > 0 && !slices.Contains(f.Presets, path)) {
 			continue
 		}
 		if _, given := values[f.Key]; named && (!f.Required || given) {

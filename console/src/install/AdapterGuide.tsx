@@ -13,9 +13,9 @@ import { refusal } from './Accounts';
 import { Disclosure } from '../ui/Disclosure';
 import {
   advancedCount,
-  advancedChanged,
   categoryLabel,
   fillRefs,
+  fillText,
   formProblems,
   isShown,
   kindKey,
@@ -25,9 +25,9 @@ import {
   reviewText,
   runs,
   stepFields,
-  stepProblems,
+  unasked,
 } from './adapters';
-import type { AdapterForm, AdapterKind, KindField, KindStep } from './adapters';
+import type { AdapterForm, AdapterKind, KindField, KindPreset, KindStep } from './adapters';
 
 /** One screen of the walk-through. */
 type Screen =
@@ -62,6 +62,15 @@ export function AdapterGuide({
   onSave,
   onShowAll,
   onClose,
+  pickLabel = 'Adapter',
+  pickTitle,
+  noun = '',
+  addLabel = 'Add adapter',
+  supplied = {},
+  checkFields,
+  nameStep,
+  onProvider,
+  reviewNote,
 }: {
   categories: string[];
   category: string;
@@ -85,6 +94,29 @@ export function AdapterGuide({
   onSave: () => void;
   onShowAll: () => void;
   onClose: () => void;
+  /** What the first screen picks, for its tiles and the step list. */
+  pickLabel?: string;
+  /** The first screen's title, when not "Add <category> adapter". */
+  pickTitle?: string;
+  /** Said after the kind's name in the title: "Add OpenID Connect provider". */
+  noun?: string;
+  /** The last screen's button. */
+  addLabel?: string;
+  /** Values the form supplies for step text and links, such as an identity
+   *  provider's {callback_url}. */
+  supplied?: Record<string, string>;
+  /** What is wrong with the settings, by key, when not the adapter rules. */
+  checkFields?: (values: Record<string, string | boolean>) => Record<string, string>;
+  /** Pando's Name screen, when not an adapter's name, ID and default. */
+  nameStep?: {
+    content: (errors: Record<string, string>) => React.ReactNode;
+    problems: () => Record<string, string>;
+    rows: { label: string; value: string }[];
+  };
+  /** Told the provider chosen, for a kind with presets. */
+  onProvider?: (preset: KindPreset | undefined) => void;
+  /** One line on the review, above the button that saves. */
+  reviewNote?: string;
 }) {
   const [at, setAt] = useState(0);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -108,6 +140,21 @@ export function AdapterGuide({
   const screen: Screen = screens[index] ?? { kind: 'choose' };
   const last = index === screens.length - 1 && screen.kind === 'review';
 
+  // The settings' problems, whole or for one step.
+  const fieldProblems = (): Record<string, string> => {
+    if (!kind || !form) return {};
+    const all = checkFields ? checkFields(form.values) : formProblems(kind, form, stored);
+    const { id: _id, ...rest } = all;
+    return rest;
+  };
+  const problemsOn = (step: KindStep): Record<string, string> => {
+    if (!kind || !form) return {};
+    const all = fieldProblems();
+    const out: Record<string, string> = {};
+    for (const f of stepFields(kind, step, form.values)) if (all[f.key]) out[f.key] = all[f.key]!;
+    return out;
+  };
+
   const go = (i: number) => {
     setErrors({});
     setAt(i);
@@ -126,27 +173,27 @@ export function AdapterGuide({
         return;
       }
     } else if (screen.kind === 'step' && kind && form) {
-      const problems = stepProblems(kind, screen.step, form, stored);
+      const problems = problemsOn(screen.step);
       if (Object.keys(problems).length > 0) {
         setErrors(problems);
         return;
       }
     } else if (screen.kind === 'name' && kind && form) {
-      const id = formProblems(kind, form, stored).id;
-      if (id) {
-        setErrors({ id });
+      const named = nameStep ? nameStep.problems() : { ...(formProblems(kind, form, stored).id ? { id: formProblems(kind, form, stored).id! } : {}) };
+      if (Object.keys(named).length > 0) {
+        setErrors(named);
         return;
       }
     } else if (screen.kind === 'review' && kind && form) {
       // Each step was checked on the way; one changed since is sent back to.
-      const problems = formProblems(kind, form, stored);
+      const problems = fieldProblems();
       const back = screens.findIndex(
         (s) => s.kind === 'step' && stepFields(kind, s.step, form.values).some((f) => problems[f.key]),
       );
       const target = screens[back];
       if (target?.kind === 'step') {
         setAt(back);
-        setErrors(stepProblems(kind, target.step, form, stored));
+        setErrors(problemsOn(target.step));
         return;
       }
       onSave();
@@ -164,14 +211,15 @@ export function AdapterGuide({
     const was = presets.find((p) => p.id === preset);
     edit({ values: withPreset(form.values, was, presets.find((p) => p.id === id)) });
     setProvider({ kind: chosen, id });
+    onProvider?.(presets.find((p) => p.id === id));
     setErrors({});
   };
   const categoryWord = category === 'ai' ? 'AI' : categoryLabel(category).toLowerCase();
   // The kind is named once it is chosen and the walk-through has moved past
   // choosing it: on the first screen, a pick can still change.
-  let title = 'Add adapter';
-  if (kind && !choosing) title = `Add ${kind.name}`;
-  else if (category) title = `Add ${categoryWord} adapter`;
+  let title = pickTitle ?? 'Add adapter';
+  if (kind && !choosing) title = `Add ${kind.name}${noun ? ` ${noun}` : ''}`;
+  else if (category && !pickTitle) title = `Add ${categoryWord} adapter`;
 
   return (
     <Dialog
@@ -192,7 +240,7 @@ export function AdapterGuide({
             Cancel
           </Button>
           <Button variant="primary" disabled={saving} onClick={next}>
-            {last ? (saving ? 'Adding' : 'Add adapter') : 'Continue'}
+            {last ? (saving ? 'Adding' : addLabel) : 'Continue'}
           </Button>
         </>
       }
@@ -208,7 +256,7 @@ export function AdapterGuide({
           alignItems: 'start',
         }}
       >
-        {!picking && <StepRail screens={screens} index={index} onGo={go} onShowAll={onShowAll} />}
+        {!picking && <StepRail screens={screens} index={index} pickLabel={pickLabel} onGo={go} onShowAll={onShowAll} />}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)', minWidth: 0 }}>
           {screen.kind === 'choose' && (
@@ -231,7 +279,7 @@ export function AdapterGuide({
               )}
               {category && (
                 <TilePicker
-                  label="Adapter"
+                  label={pickLabel}
                   items={inCategory.map((k) => ({ key: kindKey(k), name: k.name, description: k.description }))}
                   chosen={chosen}
                   onPick={(key) => {
@@ -263,8 +311,9 @@ export function AdapterGuide({
           {screen.kind === 'step' && kind && form && (
             <StepBody
               step={screen.step}
+              fill={(text) => fillText(kind, form.values, text, supplied)}
               links={(screen.step.links ?? []).flatMap((l) => {
-                const url = fillRefs(kind, form.values, l.url);
+                const url = fillRefs(kind, form.values, l.url, supplied);
                 return url ? [{ label: l.label, url }] : [];
               })}
             >
@@ -274,7 +323,14 @@ export function AdapterGuide({
             </StepBody>
           )}
 
-          {screen.kind === 'name' && kind && form && (
+          {screen.kind === 'name' && kind && form && nameStep && (
+            <>
+              <h4 style={{ font: 'var(--type-h4)', margin: 0 }}>Name</h4>
+              {nameStep.content(errors)}
+            </>
+          )}
+
+          {screen.kind === 'name' && kind && form && !nameStep && (
             <>
               <h4 style={{ font: 'var(--type-h4)', margin: 0 }}>Name</h4>
               <NameFields form={form} edit={edit} error={errors.id} />
@@ -294,13 +350,16 @@ export function AdapterGuide({
               kind={kind}
               form={form}
               steps={steps}
+              preset={preset}
               provider={
                 preset === PRESET_OTHER ? kind.other_preset : presets.find((p) => p.id === preset)?.label
               }
               showDefault={showDefault}
+              nameRows={nameStep?.rows}
               renderField={renderField}
               onChange={goTo}
             >
+              {reviewNote && <p style={caption}>{reviewNote}</p>}
               {saveError ? <Banner tone="failed">{refusal(saveError)}</Banner> : null}
             </Review>
           )}
@@ -311,8 +370,8 @@ export function AdapterGuide({
 }
 
 /** A screen's name in the list of steps. */
-function screenLabel(s: Screen): string {
-  if (s.kind === 'choose') return 'Adapter';
+function screenLabel(s: Screen, pickLabel: string): string {
+  if (s.kind === 'choose') return pickLabel;
   if (s.kind === 'provider') return 'Provider';
   if (s.kind === 'step') return s.step.label;
   if (s.kind === 'name') return 'Name';
@@ -338,16 +397,18 @@ const quietLink = {
 function StepRail({
   screens,
   index,
+  pickLabel,
   onGo,
   onShowAll,
 }: {
   screens: Screen[];
   index: number;
+  pickLabel: string;
   onGo: (i: number) => void;
   onShowAll: () => void;
 }) {
   const items: { label: string; state: 'done' | 'current' | 'next'; at: number }[] = screens.map((s, i) => ({
-    label: screenLabel(s),
+    label: screenLabel(s, pickLabel),
     state: i < index ? 'done' : i === index ? 'current' : 'next',
     at: i,
   }));
@@ -523,10 +584,13 @@ export function Marked({ text }: { text: string }) {
 /** A kind's step: its title, what to do, its links with any {key} filled in, and its settings. */
 function StepBody({
   step,
+  fill,
   links,
   children,
 }: {
   step: KindStep;
+  /** Step text with its {key}s filled in. */
+  fill: (text: string) => string;
   links: { label: string; url: string }[];
   children: React.ReactNode;
 }) {
@@ -536,7 +600,7 @@ function StepBody({
         <h4 style={{ font: 'var(--type-h4)', margin: 0 }}>{step.title}</h4>
         {step.lede && (
           <p style={{ font: 'var(--type-body-ui)', color: 'var(--ink-secondary)', margin: 0 }}>
-            <Marked text={step.lede} />
+            <Marked text={fill(step.lede)} />
           </p>
         )}
       </div>
@@ -553,7 +617,7 @@ function StepBody({
         >
           {step.do.map((a, i) => (
             <li key={i}>
-              <Marked text={a.text} />
+              <Marked text={fill(a.text)} />
               {a.table && <StepTable table={a.table} />}
             </li>
           ))}
@@ -649,8 +713,10 @@ function Review({
   kind,
   form,
   steps,
+  preset,
   provider,
   showDefault,
+  nameRows,
   renderField,
   onChange,
   children,
@@ -658,8 +724,11 @@ function Review({
   kind: AdapterKind;
   form: AdapterForm;
   steps: KindStep[];
-  /** The provider chosen, for a kind with presets. */
+  /** The provider chosen, by preset ID and by name, for a kind with presets. */
+  preset?: string;
   provider?: string;
+  /** The Name screen's answers, when it is not an adapter's. */
+  nameRows?: { label: string; value: string }[];
   showDefault: boolean;
   renderField: (f: KindField, error?: string, instructed?: boolean) => React.ReactNode;
   onChange: (screenID: string) => void;
@@ -674,12 +743,18 @@ function Review({
       rows.push({ label: f.label, value, mono: typed && !f.credential && f.type === 'string', to: `step:${st.id}` });
     }
   }
-  rows.push({ label: 'Name', value: form.name.trim() || kind.name, mono: false, to: 'name' });
-  rows.push({ label: 'ID', value: form.id.trim(), mono: true, to: 'name' });
-  if (showDefault) rows.push({ label: 'Default', value: form.isDefault ? 'Yes' : 'No', mono: false, to: 'name' });
+  if (nameRows) {
+    for (const r of nameRows) rows.push({ ...r, mono: false, to: 'name' });
+  } else {
+    rows.push({ label: 'Name', value: form.name.trim() || kind.name, mono: false, to: 'name' });
+    rows.push({ label: 'ID', value: form.id.trim(), mono: true, to: 'name' });
+    if (showDefault) rows.push({ label: 'Default', value: form.isDefault ? 'Yes' : 'No', mono: false, to: 'name' });
+  }
 
-  const advanced = (kind.fields ?? []).filter((f) => f.advanced);
-  const { total } = advancedCount(kind, form.values);
+  // The advanced settings, and those this way through asks on no step.
+  const left = unasked(kind, steps, form.values, preset);
+  const advanced = [...left, ...(kind.fields ?? []).filter((f) => f.advanced)];
+  const total = advancedCount(kind, form.values).total + left.length;
 
   return (
     <>
@@ -721,7 +796,7 @@ function Review({
         show="Advanced settings"
         hide="Advanced settings"
         hidden={total === 0}
-        initiallyOpen={advancedChanged(kind, form.values)}
+        initiallyOpen={false}
       >
         {advanced.filter((f) => isShown(kind, f, form.values)).map((f) => (
           <div key={f.key}>{renderField(f)}</div>
