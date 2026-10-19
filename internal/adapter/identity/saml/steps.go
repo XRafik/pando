@@ -26,12 +26,13 @@ func steps() []api.Step {
 			Do: []api.Action{
 				{Text: "Under **Attribute Statements**, add these:", Table: &api.Table{
 					Columns: []string{"Name", "Value"},
-					Rows:    [][]string{{"email", "user.email"}, {"firstName", "user.firstName"}, {"lastName", "user.lastName"}},
+					Rows: [][]string{{"okta_user_id", "`user.getInternalProperty(\"id\")`"}, {"email", "user.email"},
+						{"firstName", "user.firstName"}, {"lastName", "user.lastName"}},
 				}},
 				{Text: "Under **Group Attribute Statements**, add `groups` with the filter **Matches regex** `.*`."},
 				{Text: "Choose **Next**, then **Finish**."},
 			},
-			Fields: []string{"groups_attribute", "trust_email"}},
+			Fields: []string{"groups_attribute"}},
 		{ID: "okta_metadata", Label: "Metadata", Title: copyMetadataURL, Presets: okta,
 			Do: []api.Action{
 				{Text: "On the **Assignments** tab, assign the people or groups who may sign in."},

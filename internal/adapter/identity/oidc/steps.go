@@ -53,6 +53,7 @@ func steps() []api.Step {
 				{Text: "Choose **Groups assigned to the application**, then choose **Add**."},
 				{Text: "In **Entra ID** → **Enterprise apps**, open the app and set **Assignment required?** to **Yes** under **Properties**."},
 				{Text: "Under **Users and groups**, choose **Add user/group** and add the groups that use Pando."},
+				{Text: "Under **API permissions**, keep **Microsoft Graph** → **User.Read**."},
 			},
 			Links:  []api.Link{{Label: "Entra groups claim", URL: "https://learn.microsoft.com/en-us/entra/identity-platform/optional-claims#configure-groups-optional-claims"}},
 			Fields: []string{"groups_claim"}},

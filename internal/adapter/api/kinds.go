@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"slices"
 	"strconv"
+
+	"github.com/trypando/pando/internal/secret"
 )
 
 // KindInfo describes a kind of adapter this build of Pando can run: what it is
@@ -32,6 +34,18 @@ type KindInfo struct {
 	// same ones Fields describes.
 	Presets []Preset `json:"presets,omitempty"`
 
+	// Check refuses a configuration as it is saved, in the words Configure
+	// would refuse it at startup — a kind that needs no connection to know.
+	// It is given the settings, the credentials sent, and the names of those
+	// already stored and not sent again. Nil when a kind is only checked at
+	// startup.
+	Check func(config json.RawMessage, credentials map[string]secret.Value, stored []string) error `json:"-"`
+
+	// Managed marks a kind Pando sets up itself, from its install topology,
+	// such as the BuildKit it runs builds on. A form does not offer to add
+	// one or to edit the one there is; its settings, all advanced, are set
+	// through the API or the CLI.
+	Managed bool `json:"managed,omitempty"`
 	// OtherPreset names the choice, beside the presets, of a provider none of
 	// them is — "Another provider", "Another SIEM". Guided setup asks which
 	// provider first when a kind has presets; empty means the presets cover

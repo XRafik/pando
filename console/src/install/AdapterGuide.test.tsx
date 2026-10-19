@@ -166,9 +166,12 @@ describe('adding an adapter one step at a time', () => {
       vi.fn(async () => reply({ code: 'INTERNAL', message: 'Pando couldn’t list adapter kinds.' }, 500)),
     );
     screen = mount(<AdapterDialog adapters={[]} onClose={() => undefined} onSaved={() => undefined} />);
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 0));
-    });
+    // The refusal arrives after the request settles, a few ticks in under load.
+    for (let i = 0; i < 50 && !screen.text().includes('couldn’t'); i++) {
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 10));
+      });
+    }
     expect(screen.text()).toContain('Pando couldn’t list adapter kinds.');
     expect(screen.text()).not.toContain('Choose a category');
   });

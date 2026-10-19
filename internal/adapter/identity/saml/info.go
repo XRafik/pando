@@ -53,7 +53,7 @@ func Info() api.KindInfo {
 		Presets: []api.Preset{
 			{ID: "okta", Label: "Okta",
 				Help:   "The Metadata URL is on the app's Sign On tab.",
-				Values: map[string]string{"name_id_format": "persistent", "groups_attribute": "groups", "trust_email": "true"}},
+				Values: map[string]string{"subject_attribute": "okta_user_id", "groups_attribute": "groups"}},
 			{ID: "entra", Label: "Microsoft Entra ID",
 				Help:   "The App Federation Metadata Url is under SAML Certificates on the app's Single sign-on page.",
 				Values: map[string]string{"groups_attribute": entraGroups}},

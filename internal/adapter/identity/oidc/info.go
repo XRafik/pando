@@ -57,7 +57,7 @@ func Info() api.KindInfo {
 			{ID: "entra", Label: "Microsoft Entra ID",
 				Help: "Groups arrive as object IDs, and Entra does not vouch for email addresses, so accounts are never linked by email.",
 				Values: map[string]string{"issuer": "https://login.microsoftonline.com/{tenant-id}/v2.0",
-					"subject_claim": "oid", "groups_claim": "groups", "scopes": "openid email profile"}},
+					"subject_claim": "oid", "groups_claim": "groups", "scopes": "openid email profile User.Read"}},
 			{ID: "google", Label: "Google Workspace",
 				Help: "Google sends no groups, so access is given through Pando's own groups.",
 				Values: map[string]string{"issuer": "https://accounts.google.com",

@@ -32,7 +32,7 @@ import type { SourceConnection } from './Sources';
 import { Capacity } from './Capacity';
 import { useAIFunctionOn } from './AIFunctions';
 import { RestartButton } from './Restart';
-import { categoryLabel, categoryNote, orderCategories } from './adapters';
+import { addableKinds, categoryLabel, categoryNote, isManaged, orderCategories } from './adapters';
 import type { AdapterKind } from './adapters';
 import type { ConfiguredAdapter } from './AdapterDialog';
 import { Quiet, Screen, messageOf } from './Accounts';
@@ -153,10 +153,13 @@ export function Installation({ query }: { query?: string } = {}) {
         first: i === 0,
         kindName: catalog.find((k) => k.category === r.category && k.kind === r.kind)?.name ?? r.kind,
         connection: r.category === 'source' ? connections.get(r.id) : undefined,
+        managed: isManaged(catalog, r),
       })),
   );
-  // Categories this build can run that nothing here is set up for.
-  const missing = order.filter((c) => catalog.some((k) => k.category === c) && !rows.some((r) => r.category === c));
+  // Categories a person could set up that nothing here is set up for.
+  const missing = order.filter(
+    (c) => addableKinds(catalog).some((k) => k.category === c) && !rows.some((r) => r.category === c),
+  );
 
   return (
     <Screen
@@ -2199,7 +2202,7 @@ function Field({ children }: { children: React.ReactNode }) {
   return <div style={{ flex: '1 1 18ch', minWidth: '18ch', maxWidth: '28ch' }}>{children}</div>;
 }
 
-type GroupedRow = AdapterRow & { first?: boolean; kindName?: string; connection?: SourceConnection };
+type GroupedRow = AdapterRow & { first?: boolean; kindName?: string; connection?: SourceConnection; managed?: boolean };
 
 /** Reachable or not — or, saved since Pando started, not running yet. */
 function AdapterStatus({ row }: { row: AdapterRow }) {
@@ -2345,9 +2348,13 @@ function GroupedAdapters({
                           {row.connection.capabilities.authorized ? 'Authorize again' : 'Authorize'}
                         </Button>
                       )}
-                    <Button variant="secondary" onClick={() => onChange(row)}>
-                      Edit
-                    </Button>
+                    {/* Pando sets a managed kind up itself: shown, with
+                        its status, and not edited. */}
+                    {!row.managed && (
+                      <Button variant="secondary" onClick={() => onChange(row)}>
+                        Edit
+                      </Button>
+                    )}
                     {row.connection && (
                       <Button variant="ghost" onClick={() => onDisconnect(row.connection!)}>
                         Disconnect

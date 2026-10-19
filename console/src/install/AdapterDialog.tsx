@@ -32,6 +32,7 @@ import {
   withSuggestions,
   orderCategories,
   sortKinds,
+  addableKinds,
 } from './adapters';
 import type { AdapterForm, AdapterKind, KindField } from './adapters';
 import { AdapterFunctions, choiceChanges, currentChoice } from './AdapterFunctions';
@@ -88,7 +89,8 @@ export function AdapterDialog({
     queryKey: ['adapter-kinds'],
     queryFn: () => api.get<{ kinds: AdapterKind[] | null }>('/adapters/kinds'),
   });
-  const catalog = sortKinds(kinds.data?.kinds ?? []);
+  // A kind Pando sets up itself is never offered for adding.
+  const catalog = sortKinds(addableKinds(kinds.data?.kinds ?? []));
 
   const [category, setCategory] = useState(existing?.category ?? startCategory ?? '');
   const [picked, setPicked] = useState(existing ? kindKey(existing) : '');

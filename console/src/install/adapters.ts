@@ -99,6 +99,9 @@ export interface AdapterKind {
   description: string;
   id_prefix: string;
   fields: KindField[] | null;
+  /** Pando sets this kind up itself, from its install topology: no form
+   *  offers to add one, and the one there is has no Edit. */
+  managed?: boolean;
   /** Guided setup: one screen per step, each asking for some of `fields`. */
   steps?: KindStep[] | null;
   /** Known providers of this kind, each a starting set of values. */
@@ -318,6 +321,17 @@ export function advancedCount(kind: AdapterKind, values: Record<string, FieldVal
   const adv = (kind.fields ?? []).filter((f) => f.advanced && isShown(kind, f, values));
   const changed = adv.filter((f) => advancedChanged({ ...kind, fields: [f] }, values)).length;
   return { total: adv.length, changed };
+}
+
+/** The kinds a person may add: every kind but those Pando sets up itself. */
+export function addableKinds(kinds: AdapterKind[]): AdapterKind[] {
+  return kinds.filter((k) => !k.managed);
+}
+
+/** Whether an adapter's kind is one Pando sets up itself, so the adapters
+ *  screen shows it, and whether it is reachable, but offers no Edit. */
+export function isManaged(kinds: AdapterKind[], row: { category: string; kind: string }): boolean {
+  return kinds.some((k) => k.category === row.category && k.kind === row.kind && k.managed === true);
 }
 
 /** What the form holds: text for every field, whatever its type, and a

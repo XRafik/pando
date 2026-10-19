@@ -31,11 +31,25 @@ Unreleased above it. -->
 - Saving an adapter can return **warnings** about something that saved but may not work as wanted;
   the console shows them and `pando adapter add` prints them. Cloudflare Tunnel warns of a console
   hostname more than one level below its zone, which its included certificate does not cover.
+- The Anthropic adapter takes an optional workspace ID (#275).
+- The HTTPS audit sink can send Datadog's log format, and caps each batch by size (#275).
+- Trivy takes mirrors for its vulnerability database, Java database and checks bundle (#275).
+- Image registry health notes, such as a missing delete permission, show on the adapters screen and in
+  plans (#275). GHCR images are deleted through GitHub's Packages API.
 
 ### Changed
 
 - Cloudflare Tunnel's settings are a **primary zone** and **secondary zones**, typed into one field,
   and a new adapter's console hostname starts at `pando.<primary zone>`.
+- Saving an adapter now refuses settings that could never start, with a message saying what to change
+  (#275). SMTP refuses a username without a password, a username with no encryption to a remote host,
+  and a port that doesn't match the security setting; Teams refuses a retired Office 365 webhook.
+- The bundled Traefik is v3.7.15, and the Route 53 DNS challenge requires `AWS_REGION` (#275).
+- BuildKit is no longer offered under **Add adapter**: Pando sets it up itself (#275).
+- The Docker services adapter takes one image setting per service type (#275). An existing `images`
+  map is carried over by migration 000076.
+- Okta SAML sign-in identifies people by `okta_user_id` and no longer trusts the email Okta sends
+  (#275).
 
 ### Fixed
 
@@ -45,6 +59,15 @@ Unreleased above it. -->
   that had changed, among them Cloudflare's account ID, the GitHub App private key, the Incus server
   certificate and BuildKit's default address (#268).
 - An Authentik SAML provider read the person's full name as their username (#268).
+- A registry cleanup that fails no longer blocks app teardown (#275). Once 20 were stuck, every later
+  teardown waited behind them.
+- Entra sign-in syncs the groups of a person in more than 200 of them instead of none (#275).
+- An Authentik provider with no signing key is refused with a remedy instead of failing every sign-in
+  (#275).
+- ECR dual-stack registry addresses are accepted (#275).
+- The built-in routing adapter no longer shows a base URL setting that did nothing (#275).
+- Local backups warn at startup when the backup directory isn't on a mounted volume, so backups
+  don't vanish with the container (#275).
 
 ## [0.9.0] - 2026-10-18
 

@@ -28,7 +28,30 @@ var Teams = Platform{
 	Placeholder: "https://….environment.api.powerplatform.com/powerautomate/automations/direct/workflows/…",
 	Help:        "The webhook URL of a Send webhook alerts to a channel workflow.",
 	Steps:       teamsSteps(),
-	Format:      teamsMessage,
+	// The hosts Microsoft lists for the "When an HTTP request is received"
+	// trigger a Teams webhook workflow starts with, per cloud: commercial,
+	// GCC, GCC High, DoD, and 21Vianet (learn.microsoft.com/power-automate/
+	// ip-address-configuration). Each is a suffix, so the per-environment
+	// host (<id>.environment.api.powerplatform.com) matches. The sovereign
+	// clouds' logic.azure.us and logic.azure.cn stay: Microsoft still lists
+	// them and has not said their trigger URLs moved.
+	Hosts: []string{
+		"api.powerplatform.com",
+		"api.gov.powerplatform.microsoft.us",
+		"api.high.powerplatform.microsoft.us",
+		"api.appsplatform.us",
+		"api.powerplatform.partner.microsoftonline.cn",
+		"logic.azure.us",
+		"logic.azure.cn",
+	},
+	// Commercial-cloud trigger URLs on logic.azure.com stopped working on
+	// November 30, 2025, and Office 365 connector webhooks on
+	// webhook.office.com on May 22, 2026; a URL on either can only fail.
+	Retired: map[string]string{
+		"webhook.office.com": "Microsoft retired Office 365 connector webhooks in Teams on May 22, 2026. Create a workflow from the Send webhook alerts to a channel template and copy its URL.",
+		"logic.azure.com":    "Microsoft retired Teams workflow URLs on logic.azure.com on November 30, 2025. Open the workflow in Power Automate and copy the new URL from its trigger.",
+	},
+	Format: teamsMessage,
 }
 
 // Discord posts to a Discord channel webhook.
