@@ -122,7 +122,7 @@ type ProviderInput struct {
 	// ID is a new provider's ID, chosen ahead so the addresses Endpoints
 	// builds from it can be registered with the provider before it is saved.
 	// Optional; ignored on update.
-	ID                    string            `json:"id"`
+	ID                    string            `json:"id,omitempty"`
 	Kind                  string            `json:"kind"`
 	Name                  *string           `json:"name"`
 	Config                json.RawMessage   `json:"config"`
@@ -266,8 +266,7 @@ func (s *Service) checkNewID(ctx context.Context, providerID string) error {
 		return err
 	}
 	if taken {
-		return errs.Newf(errs.ValidInvalid, "Another identity provider has the ID %s.", providerID).
-			WithRemedy("Leave id out and Pando chooses one, or choose another.")
+		return state.ProviderIDTaken(providerID)
 	}
 	return nil
 }

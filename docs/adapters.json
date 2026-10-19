@@ -3487,6 +3487,10 @@
                       [
                         "Model capabilities",
                         "Request"
+                      ],
+                      [
+                        "Responses API",
+                        "Write"
                       ]
                     ]
                   }

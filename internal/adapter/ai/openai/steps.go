@@ -15,6 +15,7 @@ func steps() []api.Step {
 				Rows: [][]string{
 					{"Models", "Read"},
 					{"Model capabilities", "Request"},
+					{"Responses API", "Write"},
 				},
 			}},
 			api.Action{Text: "Create the key and copy it."},

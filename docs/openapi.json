@@ -15411,7 +15411,6 @@
           }
         },
         "required": [
-          "id",
           "kind",
           "config",
           "credentials"

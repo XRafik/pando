@@ -238,6 +238,21 @@ export function AdapterDialog({
     setTried(false);
   };
 
+  // Until the kinds are known there is nothing to choose from.
+  if (guided && !existing && !kinds.isSuccess) {
+    return (
+      <Dialog open title="Add adapter" onClose={onClose}>
+        {kinds.isError ? (
+          <Banner tone="failed">{refusal(kinds.error)}</Banner>
+        ) : (
+          <Loading gap="var(--space-4)">
+            <FieldSkeleton />
+            <FieldSkeleton />
+          </Loading>
+        )}
+      </Dialog>
+    );
+  }
   if (guided && !existing) {
     return (
       <AdapterGuide

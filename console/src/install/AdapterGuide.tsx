@@ -190,6 +190,12 @@ export function AdapterGuide({
       setErrors(problemsOn(target.step));
       return;
     }
+    // A setting no step asks is on Review itself, and shown there.
+    const left = nonEmpty(problems);
+    if (left) {
+      setErrors(left);
+      return;
+    }
     onSave();
   };
   const next = () => {
@@ -315,6 +321,7 @@ export function AdapterGuide({
               showDefault={showDefault}
               nameRows={nameStep?.rows}
               renderField={renderField}
+              errors={errors}
               onChange={goTo}
             >
               {reviewNote && <p style={caption}>{reviewNote}</p>}
@@ -830,6 +837,7 @@ function Review({
   showDefault,
   nameRows,
   renderField,
+  errors,
   onChange,
   children,
 }: Readonly<{
@@ -843,6 +851,8 @@ function Review({
   nameRows?: { label: string; value: string }[];
   showDefault: boolean;
   renderField: (f: KindField, error?: string, instructed?: boolean) => React.ReactNode;
+  /** Problems with the settings shown here, found as it was saved. */
+  errors: Record<string, string>;
   onChange: (screenID: string) => void;
   children: React.ReactNode;
 }>) {
@@ -869,6 +879,7 @@ function Review({
   const left = unasked(kind, steps, form.values, preset);
   const advanced = [...left, ...(kind.fields ?? []).filter((f) => f.advanced)];
   const total = advancedCount(kind, form.values).total + left.length;
+  const shownAdvanced = advanced.filter((f) => isShown(kind, f, form.values));
 
   return (
     <>
@@ -911,9 +922,10 @@ function Review({
         hide="Advanced settings"
         hidden={total === 0}
         initiallyOpen={false}
+        forceOpen={shownAdvanced.some((f) => errors[f.key])}
       >
-        {advanced.filter((f) => isShown(kind, f, form.values)).map((f) => (
-          <div key={f.key}>{renderField(f)}</div>
+        {shownAdvanced.map((f) => (
+          <div key={f.key}>{renderField(f, errors[f.key])}</div>
         ))}
       </Disclosure>
       {children}

@@ -133,7 +133,7 @@ func askProvider(cmd *cobra.Command, info *kindInfo, values map[string]string) (
 // give, showing the step's instructions first. A kind with presets asks which
 // provider first, unless --preset said, and shows that provider's steps.
 // Answers go into values, and secrets into credentials; it returns the keys
-// it asked for.
+// it asked for or ruled out, which nothing asks for again.
 func walkSteps(cmd *cobra.Command, info *kindInfo, preset string, values, credentials map[string]string) (map[string]bool, error) {
 	out := cmd.ErrOrStderr()
 	if preset == "" && len(info.Presets) > 0 {
@@ -162,7 +162,19 @@ func walkSteps(cmd *cobra.Command, info *kindInfo, preset string, values, creden
 			}
 		}
 	}
+	ruleOut(info, asked)
 	return asked, nil
+}
+
+// ruleOut marks every field on any step as handled: one on a step the walk
+// skipped, or hidden by a choice made in it, was ruled out and is not asked
+// for afterwards either.
+func ruleOut(info *kindInfo, asked map[string]bool) {
+	for _, st := range info.Steps {
+		for _, key := range st.Fields {
+			asked[key] = true
+		}
+	}
 }
 
 // stepsFor is the steps someone who chose the preset sees; a step that names

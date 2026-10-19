@@ -160,6 +160,38 @@ describe('adding an adapter one step at a time', () => {
     expect(onSaved).toHaveBeenCalledWith('Tunnel', 'routing', ['Check the hostname.']);
   });
 
+  it('says why there is nothing to choose when the kinds can’t be read', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => reply({ code: 'INTERNAL', message: 'Pando couldn’t list adapter kinds.' }, 500)),
+    );
+    screen = mount(<AdapterDialog adapters={[]} onClose={() => undefined} onSaved={() => undefined} />);
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(screen.text()).toContain('Pando couldn’t list adapter kinds.');
+    expect(screen.text()).not.toContain('Choose a category');
+  });
+
+  it('shows a problem with a setting no step asks on Review, and saves nothing', async () => {
+    const fetch = vi.fn(async () => reply({ id: 'rte_tunnel' }, 201));
+    vi.stubGlobal('fetch', fetch);
+    const regional: AdapterKind = {
+      ...tunnel,
+      fields: [...(tunnel.fields ?? []), { key: 'region', label: 'Region', type: 'string', required: true }],
+    };
+    const { s } = open([regional], 'routing');
+    await s.fill('API token (required)', 'tok');
+    await s.press('Continue');
+    await s.fill('Zone (required)', 'example.com');
+    await s.press('Continue');
+    await s.press('Continue');
+    await s.press('Add adapter');
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(s.text()).toContain('Region is required.');
+  });
+
   it('switches to every setting at once, keeping what was entered, and back', async () => {
     const { s } = open([tunnel], 'routing');
     expect(s.text()).not.toContain('Choose an adapter');

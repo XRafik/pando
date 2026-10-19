@@ -54,8 +54,7 @@ func TestR261_TheCLIWalksAKindsSteps(t *testing.T) {
 	require.Equal(t, map[string]string{"account": "given", "zone": "example.com", "console": "pando.example.com"}, values)
 	require.Equal(t, map[string]string{"token": "s3cret"}, credentials)
 	require.True(t, asked["token"])
-	require.False(t, asked["ssh_key"], "the key step is for the other method")
-	require.False(t, asked["account"], "--set gave it")
+	require.True(t, asked["ssh_key"], "the key step is for the other method, so nothing asks for it afterwards")
 
 	out := stderr.String()
 	require.Contains(t, out, "Create a token (step 2 of 4)")
