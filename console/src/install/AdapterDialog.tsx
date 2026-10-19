@@ -8,7 +8,7 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Banner, Button, Checkbox, Dialog, Icon, IconButton, Input, Radio, Select } from '@design';
+import { Banner, Button, Checkbox, Dialog, Icon, Input, Radio, Select, Tag } from '@design';
 
 import { api } from '@api/client';
 import { Quiet, refusal } from './Accounts';
@@ -494,10 +494,11 @@ export function FieldInput({
   /** Asked on a guided step: a choice is a list of radio buttons, each with
    *  what it means. */
   guided?: boolean;
-  /** The step says how to get this credential, so its caption need not. */
+  /** On a step whose instructions already say what to enter: no caption. */
   instructed?: boolean;
 }) {
   const label = field.required ? `${field.label} (required)` : field.label;
+  if (instructed) field = { ...field, help: undefined };
 
   if (field.type === 'bool') {
     return (
@@ -531,7 +532,7 @@ export function FieldInput({
   // the key is read from when none is stored.
   let helper = field.help;
   if (field.credential && instructed) {
-    helper = CREDENTIAL;
+    helper = undefined;
   } else if (field.credential) {
     if (stored === true) helper = 'One is stored. Leave empty to keep the current one.';
     else if (stored === false) helper = `None is stored. ${field.help ?? CREDENTIAL}`;
@@ -574,9 +575,10 @@ export function FieldInput({
 }
 
 /**
- * A list setting: one field per value, an add button reading the kind's
- * `list_add`, and a remove beside each. The rows are kept as typed, an empty
- * one included, and sent as one comma-separated string.
+ * A list setting: one field that keeps each value typed as a chip. Enter, a
+ * comma or leaving the field adds what is typed; pasting several adds each.
+ * Backspace in an empty field takes the last one back to edit. Sent as one
+ * comma-separated string, the way the adapter reads it.
  */
 function ListInput({
   field,
@@ -591,39 +593,96 @@ function ListInput({
   error?: string;
   onChange: (v: string) => void;
 }) {
-  const [rows, setRows] = useState<string[]>(() => listItems(value));
-  const set = (next: string[]) => {
-    setRows(next);
-    onChange(joinList(next));
+  const items = listItems(value);
+  const [typing, setTyping] = useState('');
+  // The field inside draws no outline of its own; the box it sits in does,
+  // so the focus ring is around everything that belongs to the setting.
+  const [focused, setFocused] = useState(false);
+  const id = `list-${field.key}`;
+  const add = (text: string) => {
+    const more = listItems(text).filter((v) => !items.includes(v));
+    if (more.length > 0) onChange(joinList([...items, ...more]));
+    setTyping('');
   };
+  const remove = (v: string) => onChange(joinList(items.filter((x) => x !== v)));
   return (
-    <fieldset style={{ border: 0, margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-      <legend style={{ font: 'var(--type-label)', color: 'var(--ink)', padding: 0, marginBottom: 'var(--space-1)' }}>{label}</legend>
-      {field.help && <p style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)', margin: 0 }}>{field.help}</p>}
-      {rows.map((row, i) => (
-        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-          <div style={{ flex: 1 }}>
-            <Input
-              aria-label={`${field.label}, value ${i + 1} of ${rows.length}`}
-              autoComplete="off"
-              spellCheck={false}
-              value={row}
-              placeholder={field.placeholder}
-              onChange={(e) => set(rows.map((r, j) => (j === i ? e.target.value : r)))}
-            />
-          </div>
-          <IconButton label={row.trim() ? `Remove ${row.trim()}` : 'Remove this empty value'} onClick={() => set(rows.filter((_, j) => j !== i))}>
-            <Icon name="x" size={16} />
-          </IconButton>
-        </div>
-      ))}
-      <span>
-        <Button variant="secondary" onClick={() => setRows([...rows, ''])}>
-          {field.list_add || 'Add another'}
-        </Button>
-      </span>
-      {error && <p style={{ font: 'var(--type-caption)', color: 'var(--marker-deep)', margin: 0 }}>{error}</p>}
-    </fieldset>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
+      <label htmlFor={id} style={{ font: 'var(--type-label)', color: 'var(--ink)' }}>
+        {label}
+      </label>
+      <div
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          gap: 'var(--space-1)',
+          minHeight: 'var(--control-input)',
+          padding: 'var(--space-1) var(--space-2)',
+          background: 'var(--paper-raised)',
+          border: `var(--border-width) solid ${error ? 'var(--marker)' : 'var(--field-border)'}`,
+          borderRadius: 'var(--radius-sm)',
+          outline: focused ? 'var(--focus-outline-width) solid var(--ink)' : 'none',
+          outlineOffset: 'var(--focus-outline-offset)',
+        }}
+      >
+        {items.map((v) => (
+          <Tag key={v} mono>
+            {v}
+            <button
+              type="button"
+              aria-label={`Remove ${v}`}
+              onClick={() => remove(v)}
+              style={{ display: 'inline-flex', border: 0, background: 'transparent', padding: 0, cursor: 'pointer', color: 'inherit' }}
+            >
+              <Icon name="x" size={12} />
+            </button>
+          </Tag>
+        ))}
+        <input
+          id={id}
+          value={typing}
+          autoComplete="off"
+          spellCheck={false}
+          placeholder={items.length === 0 ? field.placeholder : undefined}
+          onChange={(e) => {
+            const v = e.target.value;
+            if (/[,\s]/.test(v)) add(v);
+            else setTyping(v);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              add(typing);
+            } else if (e.key === 'Backspace' && typing === '' && items.length > 0) {
+              e.preventDefault();
+              const last = items[items.length - 1] ?? '';
+              onChange(joinList(items.slice(0, -1)));
+              setTyping(last);
+            }
+          }}
+          onFocus={() => setFocused(true)}
+          onBlur={() => {
+            setFocused(false);
+            add(typing);
+          }}
+          style={{
+            flex: '1 1 auto',
+            minWidth: 'var(--space-10)',
+            border: 0,
+            outline: 'none',
+            background: 'transparent',
+            padding: 'var(--space-1)',
+            font: 'var(--type-body-ui)',
+            color: 'var(--ink)',
+          }}
+        />
+      </div>
+      {(error || field.help) && (
+        <span style={{ font: 'var(--type-caption)', color: error ? 'var(--marker-deep)' : 'var(--ink-secondary)' }}>
+          {error || field.help}
+        </span>
+      )}
+    </div>
   );
 }
 

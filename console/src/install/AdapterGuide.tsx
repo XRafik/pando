@@ -15,7 +15,6 @@ import {
   advancedCount,
   advancedChanged,
   categoryLabel,
-  categoryNote,
   formProblems,
   isShown,
   kindKey,
@@ -187,9 +186,6 @@ export function AdapterGuide({
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)', minWidth: 0 }}>
           {screen.kind === 'choose' && (
             <>
-              <h4 style={{ font: 'var(--type-h4)', margin: 0 }}>
-                {askCategory && !category ? 'What do you want to add?' : 'Choose an adapter'}
-              </h4>
               {askCategory && (
                 <div>
                   <Select
@@ -204,9 +200,6 @@ export function AdapterGuide({
                       onCategory(e.target.value);
                     }}
                   />
-                  {category && categoryNote(category) && (
-                    <p style={{ ...caption, marginTop: 'var(--space-1)' }}>{categoryNote(category)}</p>
-                  )}
                 </div>
               )}
               {category && (
@@ -233,17 +226,16 @@ export function AdapterGuide({
 
           {screen.kind === 'name' && kind && form && (
             <>
-              <h4 style={{ font: 'var(--type-h4)', margin: 0 }}>Name this adapter</h4>
+              <h4 style={{ font: 'var(--type-h4)', margin: 0 }}>Name</h4>
               <NameFields form={form} edit={edit} error={errors.id} />
               {showDefault && (
                 <Checkbox
                   label={`Default ${categoryWord} adapter`}
-                  description="Used wherever no adapter is named."
                   checked={form.isDefault}
                   onChange={(e) => edit({ isDefault: e.target.checked })}
                 />
               )}
-              {isAI && <p style={caption}>After Pando restarts, open this adapter again to choose its functions.</p>}
+              {isAI && <p style={caption}>Choose its functions after Pando restarts.</p>}
             </>
           )}
 
@@ -558,12 +550,12 @@ function StepTable({ table }: { table: NonNullable<NonNullable<KindStep['do']>[n
 function NameFields({ form, edit, error }: { form: AdapterForm; edit: (p: Partial<AdapterForm>) => void; error?: string }) {
   return (
     <>
-      <Input label="Name" value={form.name} helper="Shown in the console and the CLI." onChange={(e) => edit({ name: e.target.value })} />
+      <Input label="Name" value={form.name} onChange={(e) => edit({ name: e.target.value })} />
       <Input
         label="ID"
         mono
         value={form.id}
-        helper="Used by specs and the CLI. Can’t be changed later."
+        helper="Can’t be changed later."
         error={error}
         onChange={(e) => edit({ id: e.target.value })}
       />
@@ -602,8 +594,7 @@ function Review({
   if (showDefault) rows.push({ label: 'Default', value: form.isDefault ? 'Yes' : 'No', mono: false, to: 'name' });
 
   const advanced = (kind.fields ?? []).filter((f) => f.advanced);
-  const { total, changed } = advancedCount(kind, form.values);
-  const summary = changed === 0 ? `${total}, all at their defaults` : `${total}, ${changed} changed`;
+  const { total } = advancedCount(kind, form.values);
 
   return (
     <>
@@ -642,7 +633,7 @@ function Review({
         ))}
       </dl>
       <Disclosure
-        show={`Advanced settings (${summary})`}
+        show="Advanced settings"
         hide="Advanced settings"
         hidden={total === 0}
         initiallyOpen={advancedChanged(kind, form.values)}

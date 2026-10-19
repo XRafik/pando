@@ -331,7 +331,7 @@
             {
               "key": "account_id",
               "label": "Account ID",
-              "help": "Shown on the account's overview page in Cloudflare's dashboard.",
+              "help": "On the account's Overview page in Cloudflare.",
               "type": "string",
               "required": true,
               "placeholder": "0123456789abcdef0123456789abcdef"
@@ -339,7 +339,7 @@
             {
               "key": "zone",
               "label": "Primary zone",
-              "help": "Your domain in Cloudflare that new apps are served under, at <app>.<zone>.",
+              "help": "New apps are served at <app>.<zone>.",
               "type": "string",
               "required": true,
               "placeholder": "example.com"
@@ -347,16 +347,15 @@
             {
               "key": "other_zones",
               "label": "Secondary zones",
-              "help": "More of your domains in Cloudflare that apps can be named in. An app moves to one by changing its address; new apps still use the primary zone.",
+              "help": "More zones apps can be named in.",
               "type": "string",
               "list": true,
-              "list_add": "Add a secondary zone",
               "placeholder": "example.org"
             },
             {
               "key": "console_hostname",
               "label": "Console hostname",
-              "help": "Where the console is served, and the hostname apps on a path are served under. Empty is the primary zone itself.",
+              "help": "Where the console is served. Empty is the primary zone.",
               "type": "string",
               "placeholder": "pando.example.com"
             },
@@ -384,16 +383,12 @@
               "id": "token",
               "label": "API token",
               "title": "Create an API token",
-              "lede": "Pando uses it to create the tunnel and to point each app's hostname at it.",
               "do": [
                 {
-                  "text": "In Cloudflare, open **My Profile** → **API Tokens**."
+                  "text": "In Cloudflare, open **My Profile** → **API Tokens** → **Create Token** → **Create Custom Token**."
                 },
                 {
-                  "text": "Choose **Create Token**, then **Create Custom Token**."
-                },
-                {
-                  "text": "Add these three permissions:",
+                  "text": "Add these permissions:",
                   "table": {
                     "columns": [
                       "Scope",
@@ -420,14 +415,11 @@
                   }
                 },
                 {
-                  "text": "Under **Account Resources**, include your account. Under **Zone Resources**, include each domain apps will use."
-                },
-                {
-                  "text": "Create the token and copy it."
+                  "text": "Include your account and each zone apps will use."
                 }
               ],
               "link": {
-                "label": "Open API Tokens in Cloudflare",
+                "label": "Open API Tokens",
                 "url": "https://dash.cloudflare.com/profile/api-tokens"
               },
               "fields": [
@@ -440,14 +432,11 @@
               "title": "Find your account ID",
               "do": [
                 {
-                  "text": "In Cloudflare, open your account's **Overview** page."
-                },
-                {
-                  "text": "Copy **Account ID** from the **API** section."
+                  "text": "Copy **Account ID** from your account's **Overview** page."
                 }
               ],
               "link": {
-                "label": "Open the Cloudflare dashboard",
+                "label": "Open Cloudflare",
                 "url": "https://dash.cloudflare.com/"
               },
               "fields": [
@@ -457,8 +446,7 @@
             {
               "id": "domain",
               "label": "Zones",
-              "title": "Which domains should apps use?",
-              "lede": "Domains you've added to Cloudflare. New apps are served under the primary zone, at `<app>.<zone>`; add secondary zones to name apps in others too.",
+              "title": "Choose zones",
               "fields": [
                 "zone",
                 "other_zones",
@@ -2680,8 +2668,7 @@
             {
               "id": "method",
               "label": "Sign-in method",
-              "title": "How should Pando sign in to GitHub?",
-              "lede": "A GitHub App suits most installations. The host changes only for GitHub Enterprise Server.",
+              "title": "Choose how Pando signs in",
               "fields": [
                 "method",
                 "host"
@@ -2693,19 +2680,13 @@
               "title": "Create a GitHub App",
               "do": [
                 {
-                  "text": "In GitHub, open **Settings** → **Developer settings** → **GitHub Apps** and choose **New GitHub App**. For an organization, start from the organization's settings instead."
+                  "text": "In GitHub, open **Settings** → **Developer settings** → **GitHub Apps** → **New GitHub App**."
                 },
                 {
-                  "text": "Give it a name and a homepage URL, such as your Pando address. Under **Webhook**, clear **Active**."
+                  "text": "Under **Webhook**, clear **Active**. Set **Contents** to **Read-only**."
                 },
                 {
-                  "text": "Under **Repository permissions**, set **Contents** to **Read-only**. Metadata is read-only already."
-                },
-                {
-                  "text": "Choose **Create GitHub App**. Copy the **App ID** at the top of its settings page."
-                },
-                {
-                  "text": "Under **Private keys**, choose **Generate a private key**. GitHub downloads a `.pem` file."
+                  "text": "Create it, copy the **App ID**, and choose **Generate a private key**."
                 }
               ],
               "link": {
@@ -2729,13 +2710,7 @@
               "title": "Install the App",
               "do": [
                 {
-                  "text": "On the App's settings page, choose **Install App**."
-                },
-                {
-                  "text": "Pick the organization or user whose repositories Pando should read."
-                },
-                {
-                  "text": "Choose **All repositories**, or only the ones you'll deploy, then **Install**."
+                  "text": "Choose **Install App**, then the owner and repositories."
                 }
               ],
               "fields": [
@@ -2754,16 +2729,13 @@
               "title": "Register an OAuth application",
               "do": [
                 {
-                  "text": "In GitHub, open **Settings** → **Developer settings** → **OAuth Apps** and choose **New OAuth App**."
+                  "text": "In GitHub, open **Settings** → **Developer settings** → **OAuth Apps** → **New OAuth App**."
                 },
                 {
-                  "text": "Set **Authorization callback URL** to your Pando address followed by `/api/v1/sources/callback`."
+                  "text": "Set **Authorization callback URL** to your Pando address plus `/api/v1/sources/callback`."
                 },
                 {
-                  "text": "Choose **Register application**, then check **Enable Device Flow** and save."
-                },
-                {
-                  "text": "Copy the **Client ID**. For authorizing in the browser, choose **Generate a new client secret** and copy it too."
+                  "text": "Check **Enable Device Flow**. Copy the **Client ID** and generate a client secret."
                 }
               ],
               "link": {
@@ -2787,16 +2759,10 @@
               "title": "Create a personal access token",
               "do": [
                 {
-                  "text": "In GitHub, open **Settings** → **Developer settings** → **Personal access tokens** → **Fine-grained tokens** and choose **Generate new token**."
+                  "text": "In GitHub, open **Settings** → **Developer settings** → **Fine-grained tokens** → **Generate new token**."
                 },
                 {
-                  "text": "Under **Repository access**, choose the repositories Pando should read."
-                },
-                {
-                  "text": "Under **Repository permissions**, set **Contents** to **Read-only**."
-                },
-                {
-                  "text": "Choose **Generate token** and copy it."
+                  "text": "Pick the repositories. Set **Contents** to **Read-only**."
                 }
               ],
               "link": {
@@ -2819,16 +2785,10 @@
               "title": "Add a deploy key",
               "do": [
                 {
-                  "text": "Make a key pair: `ssh-keygen -t ed25519 -f pando-deploy -N \"\"`"
+                  "text": "Run `ssh-keygen -t ed25519 -f pando-deploy -N \"\"`."
                 },
                 {
-                  "text": "In the repository on GitHub, open **Settings** → **Deploy keys** and choose **Add deploy key**."
-                },
-                {
-                  "text": "Paste the contents of `pando-deploy.pub`. Leave **Allow write access** cleared."
-                },
-                {
-                  "text": "Paste the contents of `pando-deploy`, the private half, below."
+                  "text": "Add `pando-deploy.pub` under the repository's **Settings** → **Deploy keys**, without write access."
                 }
               ],
               "fields": [
@@ -2846,7 +2806,7 @@
             {
               "id": "scope",
               "label": "Repositories",
-              "title": "Whose repositories should Pando list?",
+              "title": "Choose an owner",
               "fields": [
                 "scope"
               ]

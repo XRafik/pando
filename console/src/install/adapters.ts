@@ -35,10 +35,8 @@ export interface KindField {
   other?: boolean;
   /** Asks for a text area, such as credentials given as NAME=value lines. */
   multiline?: boolean;
-  /** Any number of values, each in its own field, sent comma-separated. */
+  /** Any number of values typed into one field, sent comma-separated. */
   list?: boolean;
-  /** What the button adding one more value reads. */
-  list_add?: string;
   /** Shown only while another setting has one of these values. */
   shown_when?: { key: string; values: string[] };
   /** A setting most people never change, asked for under "Advanced

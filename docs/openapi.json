@@ -11725,9 +11725,6 @@
           "list": {
             "type": "boolean"
           },
-          "list_add": {
-            "type": "string"
-          },
           "shown_when": {
             "$ref": "#/components/schemas/Condition"
           },
