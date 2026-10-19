@@ -429,7 +429,13 @@ func prepareDockerfile(req api.BuildRequest, contextDir string) (dir, name strin
 			return "", "", nil, err
 		}
 	}
-	return dir, name, func() {}, nil
+	return dir, name, keepDockerfile, nil
+}
+
+// keepDockerfile is the cleanup for a Dockerfile the repository already has:
+// it is the app's own file, so there is nothing of Pando's to remove.
+func keepDockerfile() {
+	// Nothing to undo: the file is the repository's.
 }
 
 // solve runs one build of the plan or Dockerfile named, from contextDir.
