@@ -60,8 +60,10 @@ type Step struct {
 	// exactly; nothing else is markup.
 	Do []Action `json:"do,omitempty"`
 
-	// Link opens the provider's page the step starts on.
-	Link *Link `json:"link,omitempty"`
+	// Links open the provider's pages the step starts on: usually one, and
+	// one per way when there is more than one way to do it, as there is to
+	// make a Cloudflare token.
+	Links []Link `json:"links,omitempty"`
 
 	// Fields are the keys of the settings asked on this step, in order.
 	Fields []string `json:"fields"`
@@ -260,12 +262,15 @@ func (k KindInfo) validateSteps() error {
 			return fmt.Errorf("%s step %q has no title: say what to do, or ask a question", where, st.ID)
 		case len(st.Fields) == 0:
 			return fmt.Errorf("%s step %q asks for no settings: fold its instructions into the step that uses them", where, st.ID)
-		case st.Link != nil && (st.Link.Label == "" || st.Link.URL == ""):
-			return fmt.Errorf("%s step %q has a link without both a label and an address", where, st.ID)
+		}
+		for _, l := range st.Links {
+			if l.Label == "" || l.URL == "" {
+				return fmt.Errorf("%s step %q has a link without both a label and an address", where, st.ID)
+			}
 		}
 		stepIDs[st.ID] = true
-		if st.Link != nil {
-			for _, m := range suggestRef.FindAllStringSubmatch(st.Link.URL, -1) {
+		for _, l := range st.Links {
+			for _, m := range suggestRef.FindAllStringSubmatch(l.URL, -1) {
 				if !k.hasField(m[1]) {
 					return fmt.Errorf("%s step %q links with {%s}, which is not one of its settings", where, st.ID, m[1])
 				}

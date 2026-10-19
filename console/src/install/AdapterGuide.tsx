@@ -218,7 +218,13 @@ export function AdapterGuide({
           )}
 
           {screen.kind === 'step' && kind && form && (
-            <StepBody step={screen.step} url={screen.step.link && fillRefs(kind, form.values, screen.step.link.url)}>
+            <StepBody
+              step={screen.step}
+              links={(screen.step.links ?? []).flatMap((l) => {
+                const url = fillRefs(kind, form.values, l.url);
+                return url ? [{ label: l.label, url }] : [];
+              })}
+            >
               {stepFields(kind, screen.step, form.values).map((f) => (
                 <div key={f.key}>{renderField(f, errors[f.key], (screen.step.do?.length ?? 0) > 0)}</div>
               ))}
@@ -452,8 +458,16 @@ export function Marked({ text }: { text: string }) {
   );
 }
 
-/** A kind's step: its title, what to do, its link with any {key} filled in, and its settings. */
-function StepBody({ step, url, children }: { step: KindStep; url?: string; children: React.ReactNode }) {
+/** A kind's step: its title, what to do, its links with any {key} filled in, and its settings. */
+function StepBody({
+  step,
+  links,
+  children,
+}: {
+  step: KindStep;
+  links: { label: string; url: string }[];
+  children: React.ReactNode;
+}) {
   return (
     <>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
@@ -483,29 +497,33 @@ function StepBody({ step, url, children }: { step: KindStep; url?: string; child
           ))}
         </ol>
       )}
-      {step.link && url && (
-        <a
-          href={url}
-          target="_blank"
-          rel="noreferrer"
-          style={{
-            alignSelf: 'flex-start',
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 'var(--space-2)',
-            height: 'var(--control-console)',
-            padding: '0 var(--button-padding-console)',
-            font: 'var(--type-label)',
-            color: 'var(--ink)',
-            textDecoration: 'none',
-            background: 'var(--paper-raised)',
-            border: 'var(--border-width) solid var(--rule-strong)',
-            borderRadius: 'var(--radius-sm)',
-          }}
-        >
-          <Icon name="external-link" size={16} />
-          {step.link.label}
-        </a>
+      {links.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-2)' }}>
+          {links.map((l) => (
+            <a
+              key={l.url}
+              href={l.url}
+              target="_blank"
+              rel="noreferrer"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 'var(--space-2)',
+                height: 'var(--control-console)',
+                padding: '0 var(--button-padding-console)',
+                font: 'var(--type-label)',
+                color: 'var(--ink)',
+                textDecoration: 'none',
+                background: 'var(--paper-raised)',
+                border: 'var(--border-width) solid var(--rule-strong)',
+                borderRadius: 'var(--radius-sm)',
+              }}
+            >
+              <Icon name="external-link" size={16} />
+              {l.label}
+            </a>
+          ))}
+        </div>
       )}
       {children}
     </>

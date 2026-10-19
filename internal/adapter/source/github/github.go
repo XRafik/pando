@@ -406,7 +406,7 @@ func steps() []api.Step {
 				{Text: "Under **Repository permissions**, set **Contents** to **Read-only**."},
 				{Text: "Choose **Create GitHub App** and copy the **App ID**. Under **Credentials** → **Key pairs**, choose **New key**."},
 			},
-			Link:   &api.Link{Label: "Open GitHub Apps", URL: "https://{host}/settings/apps"},
+			Links:  []api.Link{{Label: "Open GitHub Apps", URL: "https://{host}/settings/apps"}},
 			Fields: []string{"app_id", FieldAppPrivateKey}},
 		{ID: "install", Label: "Install it", Title: "Install the App", ShownWhen: when(forgekit.MethodApp),
 			Do: []api.Action{
@@ -421,7 +421,7 @@ func steps() []api.Step {
 				{Text: "Check **Enable Device Flow** and choose **Register application**."},
 				{Text: "Copy the **Client ID**. For browser sign-in, choose **Generate a new client secret**."},
 			},
-			Link:   &api.Link{Label: "Open OAuth apps", URL: "https://{host}/settings/developers"},
+			Links:  []api.Link{{Label: "Open OAuth apps", URL: "https://{host}/settings/developers"}},
 			Fields: []string{"client_id", forgekit.FieldClientSecret}},
 		{ID: "token", Label: "Access token", Title: "Create a personal access token", ShownWhen: when(forgekit.MethodToken),
 			Do: []api.Action{
@@ -429,7 +429,7 @@ func steps() []api.Step {
 				{Text: "Set **Resource owner** to the owner. Under **Repository access**, pick the repositories."},
 				{Text: "Set **Contents** to **Read-only** and choose **Generate token**."},
 			},
-			Link:   &api.Link{Label: "Open fine-grained tokens", URL: "https://{host}/settings/personal-access-tokens/new"},
+			Links:  []api.Link{{Label: "Open fine-grained tokens", URL: "https://{host}/settings/personal-access-tokens/new"}},
 			Fields: []string{forgekit.FieldToken}},
 		{ID: "ssh", Label: "Deploy key", Title: "Add a deploy key", ShownWhen: when(forgekit.MethodSSH),
 			Do: []api.Action{

@@ -108,7 +108,8 @@ export interface KindStep {
   lede?: string;
   /** What to do outside Pando, in order. */
   do?: { text: string; table?: { columns: string[]; rows: string[][] } }[];
-  link?: { label: string; url: string };
+  /** Pages the step starts on: one, or one per way of doing it. */
+  links?: { label: string; url: string }[];
   /** The keys of the settings asked on this step. */
   fields: string[];
   shown_when?: { key: string; values: string[] };
