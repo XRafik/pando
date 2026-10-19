@@ -15,6 +15,7 @@ import {
   advancedCount,
   advancedChanged,
   categoryLabel,
+  fillRefs,
   formProblems,
   isShown,
   kindKey,
@@ -217,7 +218,7 @@ export function AdapterGuide({
           )}
 
           {screen.kind === 'step' && kind && form && (
-            <StepBody step={screen.step}>
+            <StepBody step={screen.step} url={screen.step.link && fillRefs(kind, form.values, screen.step.link.url)}>
               {stepFields(kind, screen.step, form.values).map((f) => (
                 <div key={f.key}>{renderField(f, errors[f.key], (screen.step.do?.length ?? 0) > 0)}</div>
               ))}
@@ -451,8 +452,8 @@ export function Marked({ text }: { text: string }) {
   );
 }
 
-/** A kind's step: its title, why it is asked, what to do, and its settings. */
-function StepBody({ step, children }: { step: KindStep; children: React.ReactNode }) {
+/** A kind's step: its title, what to do, its link with any {key} filled in, and its settings. */
+function StepBody({ step, url, children }: { step: KindStep; url?: string; children: React.ReactNode }) {
   return (
     <>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
@@ -482,9 +483,9 @@ function StepBody({ step, children }: { step: KindStep; children: React.ReactNod
           ))}
         </ol>
       )}
-      {step.link && (
+      {step.link && url && (
         <a
-          href={step.link.url}
+          href={url}
           target="_blank"
           rel="noreferrer"
           style={{

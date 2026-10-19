@@ -323,7 +323,7 @@
             {
               "key": "api_token",
               "label": "API token",
-              "help": "In Cloudflare, go to My Profile, API Tokens, Create Token, Create Custom Token. Permissions: Account / Cloudflare Tunnel / Edit; Zone / DNS / Edit; Zone / Zone / Read. Account Resources: your account. Zone Resources: the primary zone, and each secondary zone. Pando uses it to create the tunnel and to point each app's hostname at it.",
+              "help": "In Cloudflare, go to My Profile, API Tokens, Create Token, then Get started beside Create Custom Token. Permissions: Account / Cloudflare Tunnel / Edit; Zone / DNS / Edit; Zone / Zone / Read. Account Resources: your account. Zone Resources: the primary zone, and each secondary zone. Pando uses it to create the tunnel and to point each app's hostname at it.",
               "type": "string",
               "required": true,
               "credential": true
@@ -331,7 +331,7 @@
             {
               "key": "account_id",
               "label": "Account ID",
-              "help": "On the account's Overview page in Cloudflare.",
+              "help": "On your domain's Overview page in Cloudflare, under API.",
               "type": "string",
               "required": true,
               "placeholder": "0123456789abcdef0123456789abcdef"
@@ -339,7 +339,7 @@
             {
               "key": "zone",
               "label": "Primary zone",
-              "help": "New apps are served at <app>.<zone>.",
+              "help": "A domain on your Cloudflare account. New apps are served at <app>.<zone>.",
               "type": "string",
               "required": true,
               "placeholder": "example.com"
@@ -363,7 +363,7 @@
             {
               "key": "tunnel_id",
               "label": "Existing tunnel",
-              "help": "Leave empty and Pando creates a tunnel of its own. Or give a tunnel's ID to use that one: Pando adds its rules and leaves the rest alone.",
+              "help": "Leave empty and Pando creates a tunnel of its own. Or give a remotely managed tunnel's ID to use that one: Pando adds its rules and leaves the rest alone.",
               "type": "string",
               "advanced": true,
               "default": "A tunnel of Pando's own",
@@ -386,7 +386,7 @@
               "title": "Create an API token",
               "do": [
                 {
-                  "text": "In Cloudflare, open **My Profile** → **API Tokens** → **Create Token** → **Create Custom Token**."
+                  "text": "In Cloudflare, open **My Profile** → **API Tokens** → **Create Token**, then **Get started** beside **Create Custom Token**."
                 },
                 {
                   "text": "Add these permissions:",
@@ -416,7 +416,7 @@
                   }
                 },
                 {
-                  "text": "Include your account and each zone apps will use."
+                  "text": "Under **Account Resources**, include your account. Under **Zone Resources**, include each zone apps will use."
                 }
               ],
               "link": {
@@ -433,7 +433,7 @@
               "title": "Find your account ID",
               "do": [
                 {
-                  "text": "Copy **Account ID** from your account's **Overview** page."
+                  "text": "Open one of your domains and copy **Account ID** from the **API** section of its **Overview** page."
                 }
               ],
               "link": {
@@ -2509,7 +2509,7 @@
             {
               "key": "scope",
               "label": "Owner",
-              "help": "The organization or user on GitHub. Empty is every repository the credential can read.",
+              "help": "The organization or user on GitHub. Empty is every repository the credential can read; a GitHub App without an installation ID needs one.",
               "type": "string",
               "placeholder": "acme"
             },
@@ -2542,7 +2542,7 @@
             {
               "key": "app_private_key",
               "label": "App private key",
-              "help": "The PEM private key generated on the App's settings page, beginning -----BEGIN RSA PRIVATE KEY-----.",
+              "help": "The contents of the .pem file GitHub downloads under the App's Credentials, Key pairs.",
               "type": "string",
               "multiline": true,
               "shown_when": {
@@ -2681,18 +2681,21 @@
               "title": "Create a GitHub App",
               "do": [
                 {
-                  "text": "In GitHub, open **Settings** → **Developer settings** → **GitHub Apps** → **New GitHub App**."
+                  "text": "In GitHub, open **Settings** → **Developer settings** → **GitHub Apps** → **New GitHub App**. For an organization, start from its settings."
                 },
                 {
-                  "text": "Under **Webhook**, clear **Active**. Set **Contents** to **Read-only**."
+                  "text": "Enter a **GitHub App name** and **Homepage URL**. Under **Webhook**, clear **Active**."
                 },
                 {
-                  "text": "Create it, copy the **App ID**, and choose **Generate a private key**."
+                  "text": "Under **Repository permissions**, set **Contents** to **Read-only**."
+                },
+                {
+                  "text": "Choose **Create GitHub App** and copy the **App ID**. Under **Credentials** → **Key pairs**, choose **New key**."
                 }
               ],
               "link": {
                 "label": "Open GitHub Apps",
-                "url": "https://github.com/settings/apps"
+                "url": "https://{host}/settings/apps"
               },
               "fields": [
                 "app_id",
@@ -2711,7 +2714,10 @@
               "title": "Install the App",
               "do": [
                 {
-                  "text": "Choose **Install App**, then the owner and repositories."
+                  "text": "Choose **Install App**, then **Install** beside the owner."
+                },
+                {
+                  "text": "Pick the repositories and choose **Install**."
                 }
               ],
               "fields": [
@@ -2730,18 +2736,21 @@
               "title": "Register an OAuth application",
               "do": [
                 {
-                  "text": "In GitHub, open **Settings** → **Developer settings** → **OAuth Apps** → **New OAuth App**."
+                  "text": "In GitHub, open **Settings** → **Developer settings** → **OAuth apps** → **New OAuth App**."
                 },
                 {
-                  "text": "Set **Authorization callback URL** to your Pando address plus `/api/v1/sources/callback`."
+                  "text": "Enter an **Application name** and **Homepage URL**. Set **Authorization callback URL** to your Pando address plus `/api/v1/sources/callback`."
                 },
                 {
-                  "text": "Check **Enable Device Flow**. Copy the **Client ID** and generate a client secret."
+                  "text": "Check **Enable Device Flow** and choose **Register application**."
+                },
+                {
+                  "text": "Copy the **Client ID**. For browser sign-in, choose **Generate a new client secret**."
                 }
               ],
               "link": {
-                "label": "Open OAuth Apps",
-                "url": "https://github.com/settings/developers"
+                "label": "Open OAuth apps",
+                "url": "https://{host}/settings/developers"
               },
               "fields": [
                 "client_id",
@@ -2760,15 +2769,18 @@
               "title": "Create a personal access token",
               "do": [
                 {
-                  "text": "In GitHub, open **Settings** → **Developer settings** → **Fine-grained tokens** → **Generate new token**."
+                  "text": "In GitHub, open **Settings** → **Developer settings** → **Personal access tokens** → **Fine-grained tokens** → **Generate new token**."
                 },
                 {
-                  "text": "Pick the repositories. Set **Contents** to **Read-only**."
+                  "text": "Set **Resource owner** to the owner. Under **Repository access**, pick the repositories."
+                },
+                {
+                  "text": "Set **Contents** to **Read-only** and choose **Generate token**."
                 }
               ],
               "link": {
                 "label": "Open fine-grained tokens",
-                "url": "https://github.com/settings/personal-access-tokens"
+                "url": "https://{host}/settings/personal-access-tokens/new"
               },
               "fields": [
                 "token"
@@ -2789,7 +2801,10 @@
                   "text": "Run `ssh-keygen -t ed25519 -f pando-deploy -N \"\"`."
                 },
                 {
-                  "text": "Add `pando-deploy.pub` under the repository's **Settings** → **Deploy keys**, without write access."
+                  "text": "In the repository, open **Settings** → **Deploy keys** → **Add deploy key**. Paste `pando-deploy.pub` into **Key** and choose **Add key**."
+                },
+                {
+                  "text": "Paste `pando-deploy` below."
                 }
               ],
               "fields": [

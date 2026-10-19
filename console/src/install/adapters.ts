@@ -164,6 +164,22 @@ export function stepFields(kind: AdapterKind, step: KindStep, values: Record<str
 }
 
 /**
+ * A template with each {key} replaced by that setting's value as the adapter
+ * will read it — pando.{zone}, https://{host}/settings/apps. Undefined while a
+ * setting it names is empty.
+ */
+export function fillRefs(kind: AdapterKind, values: Record<string, string | boolean>, template: string): string | undefined {
+  let missing = false;
+  const text = template.replace(/\{([a-z0-9_]+)\}/g, (_, key: string) => {
+    const on = (kind.fields ?? []).find((x) => x.key === key);
+    const v = on ? effectiveText(on, values[key]) : '';
+    if (!v) missing = true;
+    return v;
+  });
+  return missing ? undefined : text;
+}
+
+/**
  * The values with each untouched setting that suggests one filled in from
  * the settings it names: pando.{zone} reads pando.example.com while the zone
  * is example.com, and follows it until the setting itself is edited. One
@@ -173,14 +189,8 @@ export function withSuggestions(kind: AdapterKind, values: Record<string, string
   const out = { ...values };
   for (const f of kind.fields ?? []) {
     if (!f.suggest || f.key in values) continue;
-    let missing = false;
-    const text = f.suggest.replace(/\{([a-z0-9_]+)\}/g, (_, key: string) => {
-      const on = (kind.fields ?? []).find((x) => x.key === key);
-      const v = on ? effectiveText(on, values[key]) : '';
-      if (!v) missing = true;
-      return v;
-    });
-    if (!missing) out[f.key] = text;
+    const text = fillRefs(kind, values, f.suggest);
+    if (text !== undefined) out[f.key] = text;
   }
   return out;
 }

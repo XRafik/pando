@@ -86,7 +86,9 @@ type Table struct {
 	Rows    [][]string `json:"rows"`
 }
 
-// Link is a page on the provider's site.
+// Link is a page on the provider's site. Its URL may hold {key} for a
+// setting's value, as Suggest does — https://{host}/settings/apps — so a link
+// follows a self-managed host.
 type Link struct {
 	Label string `json:"label"`
 	URL   string `json:"url"`
@@ -262,6 +264,13 @@ func (k KindInfo) validateSteps() error {
 			return fmt.Errorf("%s step %q has a link without both a label and an address", where, st.ID)
 		}
 		stepIDs[st.ID] = true
+		if st.Link != nil {
+			for _, m := range suggestRef.FindAllStringSubmatch(st.Link.URL, -1) {
+				if !k.hasField(m[1]) {
+					return fmt.Errorf("%s step %q links with {%s}, which is not one of its settings", where, st.ID, m[1])
+				}
+			}
+		}
 		if c := st.ShownWhen; c != nil {
 			if j, ok := askedOn[c.Key]; !ok || j >= i {
 				return fmt.Errorf("%s step %q is shown for setting %q, which no earlier step asks for", where, st.ID, c.Key)

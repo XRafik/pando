@@ -132,7 +132,7 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 		return errs.New(errs.ValidInvalid, "Cloudflare routing needs an API token, and none is set.").
 			WithRemedy(tokenRemedy)
 	case !accountPattern.MatchString(cfg.AccountID):
-		return errs.New(errs.ValidInvalid, "Cloudflare routing needs the account ID, a 32-character code shown on the account's overview page in Cloudflare's dashboard.")
+		return errs.New(errs.ValidInvalid, "Cloudflare routing needs the account ID, a 32-character code shown under API on any of your domains' Overview pages in Cloudflare.")
 	case cfg.Zone == "" || !strings.Contains(cfg.Zone, "."):
 		return errs.New(errs.ValidInvalid, "Cloudflare routing needs a primary zone, the domain new apps are named in, such as example.com.")
 	case cfg.TunnelID != "" && !uuidPattern.MatchString(cfg.TunnelID):
@@ -609,7 +609,7 @@ var _ api.RoutingAdapter = (*Adapter)(nil)
 //   - Zone, Zone, Read: find the zone's ID from its name.
 const tokenPermissions = "Account / Cloudflare Tunnel / Edit; Zone / DNS / Edit; Zone / Zone / Read"
 
-const tokenHelp = "In Cloudflare, go to My Profile, API Tokens, Create Token, Create Custom Token. " +
+const tokenHelp = "In Cloudflare, go to My Profile, API Tokens, Create Token, then Get started beside Create Custom Token. " +
 	"Permissions: " + tokenPermissions + ". " +
 	"Account Resources: your account. Zone Resources: the primary zone, and each secondary zone. " +
 	"Pando uses it to create the tunnel and to point each app's hostname at it."
@@ -631,16 +631,16 @@ func Info() api.KindInfo {
 			{Key: "api_token", Label: "API token", Type: "string", Credential: true, Required: true,
 				Help: tokenHelp},
 			{Key: "account_id", Label: "Account ID", Type: "string", Required: true,
-				Help: "On the account's Overview page in Cloudflare.", Placeholder: "0123456789abcdef0123456789abcdef"},
+				Help: "On your domain's Overview page in Cloudflare, under API.", Placeholder: "0123456789abcdef0123456789abcdef"},
 			{Key: "zone", Label: "Primary zone", Type: "string", Required: true,
-				Help: "New apps are served at <app>.<zone>.", Placeholder: "example.com"},
+				Help: "A domain on your Cloudflare account. New apps are served at <app>.<zone>.", Placeholder: "example.com"},
 			{Key: "other_zones", Label: "Secondary zones", Type: "string", List: true,
 				Help:        "More zones apps can be named in.",
 				Placeholder: "example.org"},
 			{Key: "console_hostname", Label: "Console hostname", Type: "string",
 				Help: "Where the console is served. Empty is the primary zone.", Placeholder: "pando.example.com", Suggest: "pando.{zone}"},
 			{Key: "tunnel_id", Label: "Existing tunnel", Type: "string",
-				Help:    "Leave empty and Pando creates a tunnel of its own. Or give a tunnel's ID to use that one: Pando adds its rules and leaves the rest alone.",
+				Help:    "Leave empty and Pando creates a tunnel of its own. Or give a remotely managed tunnel's ID to use that one: Pando adds its rules and leaves the rest alone.",
 				Default: "A tunnel of Pando's own", Placeholder: "6ff42ae2-765d-4adf-8112-31c55c1551ef", Advanced: true},
 			{Key: "image", Label: "cloudflared image", Type: "string", Default: DefaultImage,
 				Help: "Set to run a different cloudflared release than this Pando ships with.", Advanced: true},
@@ -648,7 +648,7 @@ func Info() api.KindInfo {
 		Steps: []api.Step{
 			{ID: "token", Label: "API token", Title: "Create an API token",
 				Do: []api.Action{
-					{Text: "In Cloudflare, open **My Profile** → **API Tokens** → **Create Token** → **Create Custom Token**."},
+					{Text: "In Cloudflare, open **My Profile** → **API Tokens** → **Create Token**, then **Get started** beside **Create Custom Token**."},
 					{Text: "Add these permissions:", Table: &api.Table{
 						Columns: []string{"Scope", "Resource", "Access"},
 						Rows: [][]string{
@@ -657,12 +657,12 @@ func Info() api.KindInfo {
 							{"Zone", "Zone", "Read"},
 						},
 					}},
-					{Text: "Include your account and each zone apps will use."},
+					{Text: "Under **Account Resources**, include your account. Under **Zone Resources**, include each zone apps will use."},
 				},
 				Link:   &api.Link{Label: "Open API Tokens", URL: "https://dash.cloudflare.com/profile/api-tokens"},
 				Fields: []string{"api_token"}},
 			{ID: "account", Label: "Account", Title: "Find your account ID",
-				Do:     []api.Action{{Text: "Copy **Account ID** from your account's **Overview** page."}},
+				Do:     []api.Action{{Text: "Open one of your domains and copy **Account ID** from the **API** section of its **Overview** page."}},
 				Link:   &api.Link{Label: "Open Cloudflare", URL: "https://dash.cloudflare.com/"},
 				Fields: []string{"account_id"}},
 			{ID: "domain", Label: "Zones", Title: "Choose zones",
