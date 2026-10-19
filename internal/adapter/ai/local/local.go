@@ -220,11 +220,9 @@ func Info() api.KindInfo {
 			{Key: "timeout_seconds", Label: "Timeout, in seconds", Type: "int", Help: "How long one request may take. Local models are slower than hosted ones.", Default: "300", Advanced: true},
 		},
 		Steps: []api.Step{
-			{ID: "server", Label: "Server", Title: "Start a model server",
+			{ID: "server", Label: "Server", Title: "Connect to your model server",
 				Do: []api.Action{
-					{Text: "Start an OpenAI-compatible server: Ollama, LM Studio (**Developer** → **Start server**), `llama-server` or `vllm serve`."},
-					{Text: "If Pando runs on Linux, have it listen beyond `127.0.0.1`: `OLLAMA_HOST=0.0.0.0:11434` for Ollama, **Serve on Local Network** in LM Studio, `--host 0.0.0.0` for `llama-server`."},
-					{Text: "Enter its address as Pando's container reaches it:", Table: &api.Table{
+					{Text: "Enter the address of the OpenAI-compatible server you run, ending `/v1`. On this machine, by its default port:", Table: &api.Table{
 						Columns: []string{"Server", "Address"},
 						Rows: [][]string{
 							{"Ollama", "http://host.docker.internal:11434/v1"},
@@ -233,6 +231,8 @@ func Info() api.KindInfo {
 							{"vLLM", "http://host.docker.internal:8000/v1"},
 						},
 					}},
+					{Text: "On another machine, use its address instead, such as `http://10.0.0.20:11434/v1`."},
+					{Text: "On Linux, a server on this machine has to listen on an address other than `127.0.0.1`, and hosted apps can reach it there too."},
 					{Text: "Enter an API key only if the server requires one: `--api-key` for `llama-server` or `vllm serve`, **Require Authentication** in LM Studio."},
 				},
 				Links: []api.Link{
