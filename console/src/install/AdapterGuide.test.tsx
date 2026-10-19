@@ -4,7 +4,7 @@ import { act } from 'react';
 
 import { AdapterDialog } from './AdapterDialog';
 import type { AdapterKind } from './adapters';
-import { mount, reply } from '../ui/testing';
+import { mount, reply, serverRender } from '../ui/testing';
 import type { Mounted } from '../ui/testing';
 
 const tunnel: AdapterKind = {
@@ -205,6 +205,28 @@ describe('adding an adapter one step at a time', () => {
     expect((document.getElementById('f-api-token-required-') as HTMLInputElement).value).toBe('tok');
     await s.press('Set up step by step');
     expect(s.text()).toContain('Create an API token');
+  });
+
+  it('counts the steps above the one being answered at phone width, instead of a rail beside it', async () => {
+    vi.stubGlobal(
+      'matchMedia',
+      (query: string) =>
+        ({ matches: true, media: query, addEventListener: () => {}, removeEventListener: () => {} }) as unknown as MediaQueryList,
+    );
+    const html = serverRender(
+      <AdapterDialog category="routing" adapters={[]} onClose={() => undefined} onSaved={() => undefined} />,
+      [[['adapter-kinds'], { kinds: [tunnel] }]],
+    );
+    expect(html).toContain('Step 1 of 4');
+    expect(html).not.toContain('aria-label="Steps"');
+    const { s } = open([tunnel], 'routing');
+    expect(document.querySelector('nav[aria-label="Steps"]')).toBeNull();
+    expect(s.text()).toContain('Step 1 of 4');
+    await s.fill('API token (required)', 'tok');
+    await s.press('Continue');
+    expect(s.text()).toContain('Step 2 of 4');
+    await s.press('Show all settings');
+    expect(s.text()).toContain('Set up step by step');
   });
 
   it('can search a long list of adapters', async () => {
