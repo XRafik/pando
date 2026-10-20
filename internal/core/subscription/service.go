@@ -480,20 +480,9 @@ func (s *Service) Update(ctx context.Context, p authz.Principal, subscriptionID 
 		detail["url"] = target
 	}
 	if req.AdapterID != nil || req.Channel != nil {
-		if sub.Destination != state.DestinationNotify {
-			return state.Subscription{}, errs.New(errs.ValidInvalid,
-				"This subscription is a webhook, so it has no notification adapter or channel to change. Change url instead.")
-		}
-		adapterID, channel := or(req.AdapterID, sub.AdapterID), or(req.Channel, sub.Channel)
-		caps, _, err := s.checkTarget(ctx, sub.Destination, "", adapterID, sub.OwnerTokenID != "")
-		if err != nil {
+		if err := s.retarget(ctx, sub, req, &patch, detail); err != nil {
 			return state.Subscription{}, err
 		}
-		if channel, err = checkChannel(adapterID, channel, caps); err != nil {
-			return state.Subscription{}, err
-		}
-		patch.AdapterID, patch.Channel = &adapterID, &channel
-		detail["adapter_id"], detail["channel"] = adapterID, channel
 	}
 
 	var headers map[string]secret.Value
@@ -729,4 +718,25 @@ func checkChannel(adapterID, channel string, caps api.NotifyCapabilities) (strin
 		return "", errs.New(errs.ValidInvalid, "That channel is longer than any Slack channel ID or name.")
 	}
 	return channel, nil
+}
+
+// retarget changes where a notify subscription sends: its adapter, its
+// channel, or both, checked together, since a new adapter may need a channel
+// or refuse one.
+func (s *Service) retarget(ctx context.Context, sub state.Subscription, req UpdateRequest, patch *state.SubscriptionPatch, detail map[string]any) error {
+	if sub.Destination != state.DestinationNotify {
+		return errs.New(errs.ValidInvalid,
+			"This subscription is a webhook, so it has no notification adapter or channel to change. Change url instead.")
+	}
+	adapterID, channel := or(req.AdapterID, sub.AdapterID), or(req.Channel, sub.Channel)
+	caps, _, err := s.checkTarget(ctx, sub.Destination, "", adapterID, sub.OwnerTokenID != "")
+	if err != nil {
+		return err
+	}
+	if channel, err = checkChannel(adapterID, channel, caps); err != nil {
+		return err
+	}
+	patch.AdapterID, patch.Channel = &adapterID, &channel
+	detail["adapter_id"], detail["channel"] = adapterID, channel
+	return nil
 }

@@ -662,12 +662,7 @@ function SubscriptionDetail({
             </dd>
             <dt style={{ color: 'var(--ink-secondary)' }}>Destination</dt>
             <dd style={{ margin: 0, overflowWrap: 'anywhere' }}>
-              {s.destination === 'webhook'
-                ? s.url
-                : destinationName(
-                    destinations.find((d) => d.id === s.adapter_id),
-                    s.adapter_id ?? '',
-                  ) + (s.channel ? `, channel ${s.channel}` : '')}
+              {s.destination === 'webhook' ? s.url : notifyDestination(s, destinations)}
             </dd>
             {s.destination === 'webhook' && (
               <>
@@ -1009,4 +1004,13 @@ function ChannelPicker({
       onChange={(e) => onChange(e.target.value)}
     />
   );
+}
+
+/** Where a notify subscription sends: its adapter, and the channel it chose. */
+function notifyDestination(s: Subscription, destinations: Destination[]): string {
+  const name = destinationName(
+    destinations.find((d) => d.id === s.adapter_id),
+    s.adapter_id ?? '',
+  );
+  return s.channel ? `${name}, channel ${s.channel}` : name;
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/core/authz"
 	"github.com/trypando/pando/internal/core/notifyconn"
+	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/secret"
 )
@@ -146,4 +147,34 @@ func TestConnectingANotificationAdapterIsRefusedWhereItShouldBe(t *testing.T) {
 		requireCode(t, asSystem(h, http.MethodGet, "/api/v1/notify", "", slackID), errs.StateInvalid)
 	}
 	requireCode(t, asSystem(bare.handleAuthorizeNotify, http.MethodPost, "/api/v1/notify/ntf_slack/authorize", `{}`, slackID), errs.StateInvalid)
+}
+
+// TestNotifyRoutesPassOnWhatTheServiceRefuses asserts a refusal from the
+// adapter or the store reaches the caller as the error envelope, and a
+// callback that cannot finish lands on the console saying why.
+func TestNotifyRoutesPassOnWhatTheServiceRefuses(t *testing.T) {
+	srv, _ := notifyFixture()
+	gone := map[string]string{"adapterID": "ntf_gone"}
+
+	w := asSystem(srv.handleListNotifyChannels, http.MethodGet, "/api/v1/notify/ntf_gone/channels", "", gone)
+	requireCode(t, w, errs.NotFound)
+	w = asSystem(srv.handleAuthorizeNotify, http.MethodPost, "/api/v1/notify/ntf_slack/authorize", `{"mode":"manual","token":"xoxb-wrong"}`, slackID)
+	requireCode(t, w, errs.ValidInvalid)
+
+	w = asSystem(srv.handleAuthorizeNotify, http.MethodPost, "/api/v1/notify/ntf_slack/authorize", `{"mode":"web","token":"xoxe-good"}`, slackID)
+	authorize, err := url.Parse(body(t, w)["authorize_url"].(string))
+	require.NoError(t, err)
+	w = asSystem(srv.handleNotifyCallback, http.MethodGet,
+		"/api/v1/notify/callback?"+url.Values{"state": {authorize.Query().Get("state")}, "code": {"bad"}}.Encode(), "", nil)
+	require.Equal(t, http.StatusFound, w.Code)
+	require.Contains(t, w.Header().Get("Location"), url.QueryEscape("That code was refused."))
+
+	srv.NotifyConnections.Configs = failingSrcConfigs{}
+	requireCode(t, asSystem(srv.handleListNotify, http.MethodGet, "/api/v1/notify", "", nil), errs.Internal)
+}
+
+type failingSrcConfigs struct{}
+
+func (failingSrcConfigs) List(context.Context) ([]state.AdapterConfig, error) {
+	return nil, errs.New(errs.Internal, "the database is down")
 }

@@ -39,6 +39,15 @@ const Kind = "slack"
 // slackAPI is where Slack's Web API is.
 const slackAPI = "https://slack.com/api/"
 
+const (
+	headerContentType = "Content-Type"
+	bearer            = "Bearer "
+	remedyReconnect   = "Connect the Slack adapter again under Adapters in the console."
+)
+
+// unreadable is Slack answering with something Pando cannot read.
+func unreadable() error { return errs.New(errs.AdapterFailed, "Slack's answer could not be read.") }
+
 // The credential fields the adapter keeps, all written by Pando when it
 // connects except a webhook URL from before it did.
 const (
@@ -234,8 +243,8 @@ func (a *Adapter) call(ctx context.Context, method string, token secret.Value, b
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/json; charset=utf-8")
-	req.Header.Set("Authorization", "Bearer "+token.Reveal())
+	req.Header.Set(headerContentType, "application/json; charset=utf-8")
+	req.Header.Set("Authorization", bearer+token.Reveal())
 	return a.do(req, out)
 }
 
@@ -245,9 +254,9 @@ func (a *Adapter) form(ctx context.Context, method string, token secret.Value, f
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set(headerContentType, "application/x-www-form-urlencoded")
 	if !token.IsZero() {
-		req.Header.Set("Authorization", "Bearer "+token.Reveal())
+		req.Header.Set("Authorization", bearer+token.Reveal())
 	}
 	return a.do(req, out)
 }
@@ -275,8 +284,8 @@ func (a *Adapter) upload(ctx context.Context, method string, token secret.Value,
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", w.FormDataContentType())
-	req.Header.Set("Authorization", "Bearer "+token.Reveal())
+	req.Header.Set(headerContentType, w.FormDataContentType())
+	req.Header.Set("Authorization", bearer+token.Reveal())
 	var out struct{}
 	return a.do(req, &out)
 }
@@ -297,7 +306,7 @@ func (a *Adapter) do(req *http.Request, out any) error {
 	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {
-		return errs.New(errs.AdapterFailed, "Slack's answer could not be read.")
+		return unreadable()
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return errs.Newf(errs.AdapterFailed, "Slack answered %d.", resp.StatusCode)
@@ -307,13 +316,13 @@ func (a *Adapter) do(req *http.Request, out any) error {
 		Error string `json:"error"`
 	}
 	if err := json.Unmarshal(body, &status); err != nil {
-		return errs.New(errs.AdapterFailed, "Slack's answer could not be read.")
+		return unreadable()
 	}
 	if !status.OK {
 		return apiError{code: status.Error}
 	}
 	if err := json.Unmarshal(body, out); err != nil {
-		return errs.New(errs.AdapterFailed, "Slack's answer could not be read.")
+		return unreadable()
 	}
 	return nil
 }
@@ -331,7 +340,7 @@ func tokenErr(err error) error {
 	switch code(err) {
 	case "invalid_auth", "token_revoked", "account_inactive", "not_authed", "token_expired":
 		return errs.New(errs.AdapterFailed, "Slack no longer accepts Pando's bot token: the app was removed from the workspace, or its token was revoked. Connect the Slack adapter again under Adapters.").
-			WithRemedy("Connect the Slack adapter again under Adapters in the console.")
+			WithRemedy(remedyReconnect)
 	case "missing_scope":
 		return errs.New(errs.AdapterFailed, "Pando's Slack app is missing a permission it needs. Connect the Slack adapter again under Adapters.").
 			WithRemedy("Connect the Slack adapter again under Adapters in the console, so the app is installed with every permission.")

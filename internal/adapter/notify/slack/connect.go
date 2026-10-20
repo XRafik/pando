@@ -168,18 +168,18 @@ func (a *Adapter) exchange(ctx context.Context, req api.AuthorizationCompletion)
 	var f flow
 	if err := json.Unmarshal([]byte(req.Flow.Reveal()), &f); err != nil || f.ClientID == "" {
 		return api.AuthorizationResult{}, errs.New(errs.ValidInvalid, "This is not a Slack connection Pando started.").
-			WithRemedy("Connect the Slack adapter again under Adapters in the console.")
+			WithRemedy(remedyReconnect)
 	}
 	if req.Code == "" {
 		return api.AuthorizationResult{}, errs.New(errs.ValidInvalid, "Slack returned without a code.").
-			WithRemedy("Connect the Slack adapter again under Adapters in the console.")
+			WithRemedy(remedyReconnect)
 	}
 	form := url.Values{"code": {req.Code}, "redirect_uri": {req.RedirectURL}}
 	hreq, err := http.NewRequestWithContext(ctx, http.MethodPost, a.api+"oauth.v2.access", strings.NewReader(form.Encode()))
 	if err != nil {
 		return api.AuthorizationResult{}, err
 	}
-	hreq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	hreq.Header.Set(headerContentType, "application/x-www-form-urlencoded")
 	hreq.SetBasicAuth(f.ClientID, f.ClientSecret)
 	var got struct {
 		AccessToken string `json:"access_token"`
@@ -192,7 +192,7 @@ func (a *Adapter) exchange(ctx context.Context, req api.AuthorizationCompletion)
 	if err := a.do(hreq, &got); err != nil {
 		if code(err) == "invalid_code" || code(err) == "code_already_used" {
 			return api.AuthorizationResult{}, errs.New(errs.ValidInvalid, "Slack no longer accepts the code it returned. A code is good for a few minutes, and once.").
-				WithRemedy("Connect the Slack adapter again under Adapters in the console.")
+				WithRemedy(remedyReconnect)
 		}
 		return api.AuthorizationResult{}, tokenErr(err)
 	}

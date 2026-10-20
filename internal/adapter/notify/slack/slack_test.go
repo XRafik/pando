@@ -35,73 +35,92 @@ func (f *fakeSlack) serve(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
-	answer := func(v any) { _ = json.NewEncoder(w).Encode(v) }
-	refuse := func(code string) { answer(map[string]any{"ok": false, "error": code}) }
-	switch strings.TrimPrefix(r.URL.Path, "/") {
-	case "apps.manifest.create":
-		_ = r.ParseForm()
-		if r.Form.Get("token") != "xoxe-good" {
-			refuse("invalid_auth")
-			return
-		}
-		require.NoError(f.t, json.Unmarshal([]byte(r.Form.Get("manifest")), &f.manifest))
-		answer(map[string]any{"ok": true, "app_id": "A123",
-			"credentials":         map[string]string{"client_id": "1.2", "client_secret": "shh", "signing_secret": "sig"},
-			"oauth_authorize_url": "https://slack.com/oauth/v2/authorize?client_id=1.2&scope=chat:write"})
-	case "apps.icon.set":
-		if f.iconFail {
-			refuse("not_allowed")
-			return
-		}
-		require.Equal(f.t, "Bearer xoxe-good", r.Header.Get("Authorization"))
-		require.NoError(f.t, r.ParseMultipartForm(4<<20))
-		require.Equal(f.t, "A123", r.FormValue("app_id"))
-		file, _, err := r.FormFile("file")
-		require.NoError(f.t, err)
-		f.icon, _ = io.ReadAll(file)
-		answer(map[string]any{"ok": true})
-	case "oauth.v2.access":
-		id, secretPart, _ := r.BasicAuth()
-		_ = r.ParseForm()
-		if id != "1.2" || secretPart != "shh" || r.Form.Get("code") != "good" {
-			refuse("invalid_code")
-			return
-		}
-		require.Equal(f.t, "https://pando.example/api/v1/notify/callback", r.Form.Get("redirect_uri"))
-		answer(map[string]any{"ok": true, "access_token": "xoxb-1", "token_type": "bot", "app_id": "A123",
-			"team": map[string]string{"name": "Acme"}})
-	case "auth.test":
-		if r.Header.Get("Authorization") != "Bearer xoxb-1" {
-			refuse("invalid_auth")
-			return
-		}
-		answer(map[string]any{"ok": true, "team": "Acme"})
-	case "conversations.list":
-		_ = r.ParseForm()
-		if r.Form.Get("cursor") == "" {
-			answer(map[string]any{"ok": true,
-				"channels":          []map[string]any{{"id": "C1", "name": "deploys"}, {"id": "C2", "name": "general"}},
-				"response_metadata": map[string]string{"next_cursor": "page2"}})
-			return
-		}
-		answer(map[string]any{"ok": true, "channels": []map[string]any{{"id": "G1", "name": "ops-deploys", "is_private": true}},
-			"response_metadata": map[string]string{"next_cursor": ""}})
-	case "chat.postMessage":
-		var msg map[string]any
-		require.NoError(f.t, json.NewDecoder(r.Body).Decode(&msg))
-		if r.Header.Get("Authorization") == "Bearer xoxb-revoked" {
-			refuse("token_revoked")
-			return
-		}
-		if msg["channel"] == "private-one" {
-			refuse("not_in_channel")
-			return
-		}
-		f.posted = append(f.posted, msg)
-		answer(map[string]any{"ok": true})
-	default:
-		w.WriteHeader(http.StatusNotFound)
+	methods := map[string]func(*http.Request) any{
+		"apps.manifest.create": f.createApp,
+		"apps.icon.set":        f.setIcon,
+		"oauth.v2.access":      f.exchange,
+		"auth.test":            f.authTest,
+		"conversations.list":   f.channels,
+		"chat.postMessage":     f.post,
 	}
+	method, ok := methods[strings.TrimPrefix(r.URL.Path, "/")]
+	if !ok {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(method(r))
+}
+
+func refused(code string) map[string]any { return map[string]any{"ok": false, "error": code} }
+
+func (f *fakeSlack) createApp(r *http.Request) any {
+	_ = r.ParseForm()
+	if r.Form.Get("token") != "xoxe-good" {
+		return refused("invalid_auth")
+	}
+	require.NoError(f.t, json.Unmarshal([]byte(r.Form.Get("manifest")), &f.manifest))
+	return map[string]any{"ok": true, "app_id": "A123",
+		"credentials":         map[string]string{"client_id": "1.2", "client_secret": "shh", "signing_secret": "sig"},
+		"oauth_authorize_url": "https://slack.com/oauth/v2/authorize?client_id=1.2&scope=chat:write"}
+}
+
+func (f *fakeSlack) setIcon(r *http.Request) any {
+	if f.iconFail {
+		return refused("not_allowed")
+	}
+	require.Equal(f.t, "Bearer xoxe-good", r.Header.Get("Authorization"))
+	require.NoError(f.t, r.ParseMultipartForm(4<<20))
+	require.Equal(f.t, "A123", r.FormValue("app_id"))
+	file, _, err := r.FormFile("file")
+	require.NoError(f.t, err)
+	f.icon, _ = io.ReadAll(file)
+	return map[string]any{"ok": true}
+}
+
+func (f *fakeSlack) exchange(r *http.Request) any {
+	id, secretPart, _ := r.BasicAuth()
+	_ = r.ParseForm()
+	if id != "1.2" || secretPart != "shh" || r.Form.Get("code") != "good" {
+		return refused("invalid_code")
+	}
+	require.Equal(f.t, "https://pando.example/api/v1/notify/callback", r.Form.Get("redirect_uri"))
+	return map[string]any{"ok": true, "access_token": "xoxb-1", "token_type": "bot", "app_id": "A123",
+		"team": map[string]string{"name": "Acme"}}
+}
+
+func (f *fakeSlack) authTest(r *http.Request) any {
+	if r.Header.Get("Authorization") != "Bearer xoxb-1" {
+		return refused("invalid_auth")
+	}
+	return map[string]any{"ok": true, "team": "Acme"}
+}
+
+func (f *fakeSlack) channels(r *http.Request) any {
+	_ = r.ParseForm()
+	if r.Form.Get("cursor") == "" {
+		return map[string]any{"ok": true,
+			"channels":          []map[string]any{{"id": "C1", "name": "deploys"}, {"id": "C2", "name": "general"}},
+			"response_metadata": map[string]string{"next_cursor": "page2"}}
+	}
+	return map[string]any{"ok": true, "channels": []map[string]any{{"id": "G1", "name": "ops-deploys", "is_private": true}},
+		"response_metadata": map[string]string{"next_cursor": ""}}
+}
+
+func (f *fakeSlack) post(r *http.Request) any {
+	var msg map[string]any
+	require.NoError(f.t, json.NewDecoder(r.Body).Decode(&msg))
+	switch {
+	case r.Header.Get("Authorization") == "Bearer xoxb-revoked":
+		return refused("token_revoked")
+	case msg["channel"] == "private-one":
+		return refused("not_in_channel")
+	case msg["channel"] == "gone":
+		return refused("channel_not_found")
+	case msg["channel"] == "old":
+		return refused("is_archived")
+	}
+	f.posted = append(f.posted, msg)
+	return map[string]any{"ok": true}
 }
 
 func newFake(t *testing.T) (*fakeSlack, string) {

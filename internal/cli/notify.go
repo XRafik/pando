@@ -21,7 +21,13 @@ func notifyCmd(client func() (*Client, error)) *cobra.Command {
 			"`pando subscriptions create --adapter <id> --channel <channel>`.",
 	}
 
-	cmd.AddCommand(&cobra.Command{
+	cmd.AddCommand(notifyListCmd(client), notifyConnectCmd(client), notifyChannelsCmd(client))
+	return cmd
+}
+
+// notifyListCmd shows the notification adapters and whether each can send.
+func notifyListCmd(client func() (*Client, error)) *cobra.Command {
+	return &cobra.Command{
 		Use:   "list",
 		Short: "Show the notification adapters and whether each can send",
 		Args:  cobra.NoArgs,
@@ -60,8 +66,11 @@ func notifyCmd(client func() (*Client, error)) *cobra.Command {
 			}
 			return w.Flush()
 		},
-	})
+	}
+}
 
+// notifyConnectCmd connects an adapter, such as Slack, to its provider.
+func notifyConnectCmd(client func() (*Client, error)) *cobra.Command {
 	var token, botToken string
 	var manual bool
 	connect := &cobra.Command{
@@ -110,8 +119,11 @@ func notifyCmd(client func() (*Client, error)) *cobra.Command {
 	connect.Flags().StringVar(&token, "token", "", "A Slack configuration token, used once to create Pando's app")
 	connect.Flags().BoolVar(&manual, "manual", false, "Print a link that creates the app in Slack, for a Pando without an https address")
 	connect.Flags().StringVar(&botToken, "bot-token", "", "The bot token of an app created with --manual")
-	cmd.AddCommand(connect)
+	return connect
+}
 
+// notifyChannelsCmd lists the channels a subscription to an adapter can name.
+func notifyChannelsCmd(client func() (*Client, error)) *cobra.Command {
 	var query string
 	channels := &cobra.Command{
 		Use:   "channels <adapter>",
@@ -153,6 +165,5 @@ func notifyCmd(client func() (*Client, error)) *cobra.Command {
 		},
 	}
 	channels.Flags().StringVar(&query, "query", "", "Only channels whose names contain this")
-	cmd.AddCommand(channels)
-	return cmd
+	return channels
 }

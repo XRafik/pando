@@ -23,8 +23,8 @@ import (
 	"github.com/trypando/pando/internal/secret"
 )
 
-// ConfigStore reads configured adapters (state.Adapters).
-type ConfigStore interface {
+// ConfigLister reads configured adapters (state.Adapters).
+type ConfigLister interface {
 	List(ctx context.Context) ([]state.AdapterConfig, error)
 }
 
@@ -38,7 +38,7 @@ type CredentialStore interface {
 
 // Service is the install's notification adapters.
 type Service struct {
-	Configs     ConfigStore
+	Configs     ConfigLister
 	Credentials CredentialStore
 
 	// Authorizations holds connections in progress
@@ -88,31 +88,10 @@ func (s *Service) List(ctx context.Context) ([]Adapter, error) {
 	if s == nil {
 		return nil, nil
 	}
-	declared := map[string]api.NotifyAdapter{}
-	if s.Declared != nil {
-		for _, ref := range s.Declared.ByCategory(api.CategoryNotify) {
-			if a, ok := s.Declared.Notify(ref); ok {
-				declared[ref] = a
-			}
-		}
-	}
-	var out []Adapter
-	if s.Configs != nil {
-		rows, err := s.Configs.List(ctx)
-		if err != nil {
-			return nil, err
-		}
-		for _, row := range rows {
-			if row.Category != string(api.CategoryNotify) || !row.Enabled {
-				continue
-			}
-			if a, ok := declared[row.ID]; ok {
-				out = append(out, built(row.ID, row.Name, row.Kind, a, "", true))
-				delete(declared, row.ID)
-				continue
-			}
-			out = append(out, s.build(ctx, row))
-		}
+	declared := s.declared()
+	out, err := s.stored(ctx, declared)
+	if err != nil {
+		return nil, err
 	}
 	for id, a := range declared {
 		out = append(out, built(id, id, a.Kind(), a, "", true))
@@ -123,6 +102,45 @@ func (s *Service) List(ctx context.Context) ([]Adapter, error) {
 		}
 		return out[i].ID < out[j].ID
 	})
+	return out, nil
+}
+
+// declared is the adapters the configuration file declares, by ID.
+func (s *Service) declared() map[string]api.NotifyAdapter {
+	out := map[string]api.NotifyAdapter{}
+	if s.Declared == nil {
+		return out
+	}
+	for _, ref := range s.Declared.ByCategory(api.CategoryNotify) {
+		if a, ok := s.Declared.Notify(ref); ok {
+			out[ref] = a
+		}
+	}
+	return out
+}
+
+// stored builds the enabled rows. A row a declaration overrides is the
+// declared adapter, under the row's name, and is taken out of declared.
+func (s *Service) stored(ctx context.Context, declared map[string]api.NotifyAdapter) ([]Adapter, error) {
+	if s.Configs == nil {
+		return nil, nil
+	}
+	rows, err := s.Configs.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []Adapter
+	for _, row := range rows {
+		if row.Category != string(api.CategoryNotify) || !row.Enabled {
+			continue
+		}
+		if a, ok := declared[row.ID]; ok {
+			out = append(out, built(row.ID, row.Name, row.Kind, a, "", true))
+			delete(declared, row.ID)
+			continue
+		}
+		out = append(out, s.build(ctx, row))
+	}
 	return out, nil
 }
 

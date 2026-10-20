@@ -74,4 +74,18 @@ describe('a Slack adapter on the Adapters screen', () => {
     expect(screen.text()).not.toContain("Add Pando's logo");
     expect(screen.text()).toContain('ntf_slack is authorized and ready.');
   });
+
+  it('connects by hand, says so, and offers the icon Slack has not got', async () => {
+    const connected = slack({ authorized: true, icon_set: false, manage_url: 'https://api.slack.com/apps' });
+    vi.stubGlobal(
+      'fetch',
+      answering({ '/notify/ntf_slack/authorize': { status: 'authorized' }, '/notify': { adapters: [connected] } }),
+    );
+    screen = mount(<Installation />, seed([slack({})]));
+    await screen.press('Connect');
+    await screen.fill('Bot token', 'xoxb-1');
+    await screen.press('Connect');
+    expect(screen.text()).toContain('Slack is connected and ready.');
+    expect(screen.text()).toContain("Add Pando's logo to the app");
+  });
 });

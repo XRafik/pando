@@ -6,7 +6,7 @@ ALTER TABLE subscriptions ADD COLUMN channel text;
 ALTER TABLE subscriptions ADD CONSTRAINT subscriptions_channel_is_notify
     CHECK (channel IS NULL OR destination = 'notify');
 ALTER TABLE subscriptions ADD CONSTRAINT subscriptions_channel_shape
-    CHECK (channel IS NULL OR (channel <> '' AND length(channel) <= 200));
+    CHECK (channel IS NULL OR length(channel) BETWEEN 1 AND 200);
 
 -- Every replica keeps the enabled subscriptions in memory (000061) and sends
 -- with what it holds, so where one sends is what routing reads too: a changed
