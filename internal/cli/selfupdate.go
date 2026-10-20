@@ -247,7 +247,7 @@ func replaceExecutable(exe string, bin []byte, goos string) error {
 	}
 	if err := os.Rename(tmp.Name(), exe); err != nil {
 		if restoreErr := os.Rename(aside, exe); restoreErr != nil {
-			return fmt.Errorf("%w; the previous pando is at %s and could not be moved back (%v): rename it to %s",
+			return fmt.Errorf("%w; the previous pando is at %s and could not be moved back (%w): rename it to %s",
 				err, aside, restoreErr, filepath.Base(exe))
 		}
 		return err
