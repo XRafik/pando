@@ -10,9 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strconv"
 	"time"
@@ -43,11 +41,7 @@ var openBrowser = func(address string) error {
 	case "darwin":
 		c = exec.Command("/usr/bin/open", address)
 	case "windows":
-		root := os.Getenv("SystemRoot")
-		if root == "" {
-			root = `C:\Windows`
-		}
-		c = exec.Command(filepath.Join(root, "System32", "rundll32.exe"), "url.dll,FileProtocolHandler", address)
+		c = exec.Command(`C:\Windows\System32\rundll32.exe`, "url.dll,FileProtocolHandler", address)
 	default:
 		c = exec.Command("/usr/bin/xdg-open", address)
 	}
