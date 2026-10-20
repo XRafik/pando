@@ -18,21 +18,20 @@ ALTER TABLE apps
 -- Apps already orphaned are marked and not stopped: an upgrade does not take
 -- apps down (R-407). orphan_announced_at stays NULL, so the first pass tells
 -- administrators about them.
-UPDATE apps a SET orphaned_at = now()
-WHERE a.deleted_at IS NULL
-  AND NOT EXISTS (SELECT 1 FROM grants g
-                  WHERE g.app_id = a.id AND g.plane = 'control' AND g.role_id = 'role_owner'
-                    AND g.principal_kind = 'group')
-  AND NOT EXISTS (SELECT 1 FROM users u
-                  WHERE u.status = 'active' AND u.deleted_at IS NULL
-                    AND (u.id = a.owner_user_id
-                         OR u.id IN (SELECT g.principal_id FROM grants g
-                                     WHERE g.app_id = a.id AND g.plane = 'control'
-                                       AND g.role_id = 'role_owner' AND g.principal_kind = 'user')))
-  AND (a.owner_user_id IS NOT NULL
-       OR EXISTS (SELECT 1 FROM grants g
-                  WHERE g.app_id = a.id AND g.plane = 'control' AND g.role_id = 'role_owner'
-                    AND g.principal_kind = 'user'));
+UPDATE apps SET orphaned_at = now()
+FROM (
+    SELECT a.id
+    FROM apps a
+    LEFT JOIN grants g ON g.app_id = a.id AND g.plane = 'control' AND g.role_id = 'role_owner'
+    LEFT JOIN users u ON u.id = a.owner_user_id
+                      OR (g.principal_kind = 'user' AND u.id = g.principal_id)
+    WHERE a.deleted_at IS NULL
+    GROUP BY a.id, a.owner_user_id
+    HAVING count(g.id) FILTER (WHERE g.principal_kind = 'group') = 0
+       AND count(u.id) FILTER (WHERE u.status = 'active' AND u.deleted_at IS NULL) = 0
+       AND (a.owner_user_id IS NOT NULL OR count(g.id) FILTER (WHERE g.principal_kind = 'user') > 0)
+) orphaned
+WHERE apps.id = orphaned.id;
 
 -- Starting an app clears what Pando recorded about why it stopped it, in the
 -- same write (migrations 69 and 71), now including a stop for having no owner.

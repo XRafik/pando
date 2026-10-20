@@ -5,6 +5,8 @@ package state_test
 import (
 	"context"
 	"errors"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -216,4 +218,55 @@ func TestR408_LinkingAwayAnAppsLastOwnerNeedsConfirming(t *testing.T) {
 	aliased, err := identities.Link(ctx, target.ID, "idp_okta", "00u1", "test", true, true)
 	require.NoError(t, err)
 	assert.Equal(t, old.ID, aliased, "confirmed, the identity moves and the account it left is an alias")
+}
+
+// TestR407_TheUpgradeMarksAppsAlreadyOrphanedWithoutStoppingThem asserts
+// migration 78's upgrade step, run as written against apps made after the
+// fact: an app already without an active owner is marked and left running,
+// to be announced; one with an active owner, a group owner or no owner at all
+// is left alone.
+func TestR407_TheUpgradeMarksAppsAlreadyOrphanedWithoutStoppingThem(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db := connected(t)
+	users := state.NewUsers(db)
+	grants := state.NewGrants(db)
+	groups := state.NewGroups(db)
+	apps := state.NewApps(db)
+
+	gone := seedUser(t, db, "upgrade-gone")
+	here := seedUser(t, db, "upgrade-here")
+	orphaned := runningApp(t, db, "orphaned", gone.ID)
+	coOwned := runningApp(t, db, "co-owned", gone.ID)
+	_, err := grants.Create(ctx, coOwned.ID, "control", "user", here.ID, authz.RoleOwner, gone.ID)
+	require.NoError(t, err)
+	teamOwned := runningApp(t, db, "team-owned", gone.ID)
+	team, err := groups.Create(ctx, "upgrade-team")
+	require.NoError(t, err)
+	_, err = grants.Create(ctx, teamOwned.ID, "control", "group", team.ID, authz.RoleOwner, gone.ID)
+	require.NoError(t, err)
+	require.NoError(t, users.SetStatusBy(ctx, gone.ID, "suspended", "test"))
+
+	up, err := os.ReadFile("../../../migrations/000078_orphaned_apps.up.sql")
+	require.NoError(t, err)
+	sql := string(up)
+	start := strings.Index(sql, "UPDATE apps SET orphaned_at = now()")
+	require.GreaterOrEqual(t, start, 0)
+	end := strings.Index(sql[start:], ";")
+	_, err = db.Exec(ctx, sql[start:start+end])
+	require.NoError(t, err)
+
+	for _, c := range []struct {
+		app      state.App
+		orphaned bool
+	}{{orphaned, true}, {coOwned, false}, {teamOwned, false}} {
+		got, _, err := apps.ByID(ctx, c.app.ID)
+		require.NoError(t, err)
+		assert.Equal(t, c.orphaned, got.Orphaned, c.app.Name)
+		assert.Equal(t, state.StateRunning, got.DesiredState, "%s is not stopped by the upgrade", c.app.Name)
+		assert.False(t, got.StoppedForOrphan, c.app.Name)
+	}
+	unannounced, err := state.NewOrphans(db).Unannounced(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, []string{orphaned.ID}, orphanIDs(t, unannounced), "and administrators are told of it")
 }

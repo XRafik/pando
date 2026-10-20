@@ -103,6 +103,8 @@ function LinkDialog({ userID, onClose }: { userID: string; onClose: () => void }
   // R-408: moving the identity would suspend the last active owner of these
   // apps. Asked once; linking again goes ahead.
   const orphans = link.error instanceof RequestFailed && link.error.envelope?.details?.orphaned_apps !== undefined;
+  let action = orphans ? 'Link anyway' : 'Link identity';
+  if (link.isPending) action = 'Linking';
 
   return (
     <Dialog
@@ -120,7 +122,7 @@ function LinkDialog({ userID, onClose }: { userID: string; onClose: () => void }
             disabled={!chosen || !externalID.trim() || link.isPending}
             onClick={() => link.mutate(orphans)}
           >
-            {link.isPending ? 'Linking' : orphans ? 'Link anyway' : 'Link identity'}
+            {action}
           </Button>
         </>
       }
