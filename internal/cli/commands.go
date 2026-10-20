@@ -50,6 +50,7 @@ func Commands() []*cobra.Command {
 		withServer(groupCmd(client)),
 		withServer(adapterCmd(client)),
 		withServer(sourceCmd(client)),
+		withServer(notifyCmd(client)),
 		withServer(identityCmd(client)),
 		withServer(aiCmd(client)),
 		withServer(restartCmd(client)),

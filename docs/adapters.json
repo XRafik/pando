@@ -2931,17 +2931,8 @@
           "category": "notify",
           "kind": "slack",
           "name": "Slack",
-          "description": "Posts the events a subscription chooses to a Slack channel, through an incoming webhook.",
+          "description": "Posts the events a subscription chooses to the Slack channel it chooses, as Pando's own Slack app. Pando creates the app when you connect.",
           "fields": [
-            {
-              "key": "webhook_url",
-              "label": "Webhook URL",
-              "help": "The incoming webhook URL Slack gives you for the channel. Stored encrypted and never shown again.",
-              "type": "string",
-              "required": true,
-              "credential": true,
-              "placeholder": "https://hooks.slack.com/services/…"
-            },
             {
               "key": "timeout_seconds",
               "label": "Timeout",
@@ -2951,37 +2942,7 @@
               "default": "10"
             }
           ],
-          "id_prefix": "ntf_",
-          "steps": [
-            {
-              "id": "webhook",
-              "label": "Webhook",
-              "title": "Create an incoming webhook",
-              "do": [
-                {
-                  "text": "In Slack's app settings, choose **Create an app**, then **Blank app**, and pick your workspace."
-                },
-                {
-                  "text": "Open **Incoming Webhooks** and turn on **Activate Incoming Webhooks**."
-                },
-                {
-                  "text": "Choose **Add New Webhook to Workspace**, pick the channel, then **Allow**."
-                },
-                {
-                  "text": "Copy the URL under **Webhook URLs for Your Workspace**."
-                }
-              ],
-              "links": [
-                {
-                  "label": "Open Slack apps",
-                  "url": "https://api.slack.com/apps"
-                }
-              ],
-              "fields": [
-                "webhook_url"
-              ]
-            }
-          ]
+          "id_prefix": "ntf_"
         },
         {
           "category": "notify",

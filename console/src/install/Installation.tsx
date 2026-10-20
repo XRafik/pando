@@ -27,7 +27,16 @@ import { api, base } from '@api/client';
 import { InstallVerb, useInstallVerb } from '../app/principal';
 import { AdapterDialog } from './AdapterDialog';
 import { InlineWarning } from '../ui/InlineWarning';
-import { AppLogoDialog, AuthorizeDialog, covers, needsAuthorizing, useSources } from './Sources';
+import { AppLogoDialog, AuthorizeDialog, covers, githubLogoPlace, needsAuthorizing, useSources } from './Sources';
+import {
+  ConnectNotifyDialog,
+  connectable,
+  needsConnecting,
+  NotifyStatus,
+  SlackLogoDialog,
+  useNotifyAdapters,
+  type NotifyAdapter,
+} from './Notify';
 import type { SourceConnection } from './Sources';
 import { Capacity } from './Capacity';
 import { useAIFunctionOn } from './AIFunctions';
@@ -106,6 +115,10 @@ export function Installation({ query }: { query?: string } = {}) {
   const [warnings, setWarnings] = useState<string[]>([]);
   const [authorizing, setAuthorizing] = useState<SourceConnection | null>(null);
   const [disconnecting, setDisconnecting] = useState<SourceConnection | null>(null);
+  const [connecting, setConnecting] = useState<NotifyAdapter | null>(null);
+  // A notification adapter just saved that connects, such as Slack, opens
+  // its connection straight away.
+  const [toConnect, setToConnect] = useState<string | null>(null);
 
   // A browser authorization of a source comes back here with its outcome.
   const back = new URLSearchParams(query ?? '');
@@ -130,6 +143,19 @@ export function Installation({ query }: { query?: string } = {}) {
     setToAuthorize(null);
     if (c && needsAuthorizing(c)) setAuthorizing(c);
   }, [toAuthorize, sources.data]);
+
+  // Each notification adapter's state: ready, not connected, or why not.
+  const notify = useNotifyAdapters();
+  const notifiers = new Map((notify.data?.adapters ?? []).map((a) => [a.id, a]));
+  useEffect(() => {
+    if (!toConnect || !notify.data) return;
+    const a = (notify.data.adapters ?? []).find((n) => n.id === toConnect);
+    setToConnect(null);
+    if (a && needsConnecting(a)) setConnecting(a);
+  }, [toConnect, notify.data]);
+  // A Slack app Pando could not give its icon, or one made by hand, has the
+  // icon to upload left.
+  const logoNotifier = logoFor ? notifiers.get(logoFor) : undefined;
   const disconnect = useMutation({
     mutationFn: (id: string) => api.del<void>(`/sources/${encodeURIComponent(id)}`),
     onSuccess: (_, id) => {
@@ -167,6 +193,7 @@ export function Installation({ query }: { query?: string } = {}) {
         first: i === 0,
         kindName: catalog.find((k) => k.category === r.category && k.kind === r.kind)?.name ?? r.kind,
         connection: r.category === 'source' ? connections.get(r.id) : undefined,
+        notify: r.category === 'notify' ? notifiers.get(r.id) : undefined,
         managed: isManaged(catalog, r),
       })),
   );
@@ -232,6 +259,7 @@ export function Installation({ query }: { query?: string } = {}) {
           canManage={canManage}
           onChange={(row) => setEditing({ existing: row })}
           onAuthorize={setAuthorizing}
+          onConnect={setConnecting}
           onDisconnect={setDisconnecting}
         />
       )}
@@ -266,10 +294,13 @@ export function Installation({ query }: { query?: string } = {}) {
           onSaved={(name, category, saveWarnings, id) => {
             setEditing(null);
             setWarnings(saveWarnings ?? []);
-            if (category === 'source' || category === 'image_registry') {
+            if (category === 'source' || category === 'image_registry' || category === 'notify') {
               setNotice(`${name} is saved and in use. No restart is needed.`);
               if (category === 'source') {
                 void queries.invalidateQueries({ queryKey: ['sources'] }).then(() => setToAuthorize(id ?? null));
+              }
+              if (category === 'notify') {
+                void queries.invalidateQueries({ queryKey: ['notify'] }).then(() => setToConnect(id ?? null));
               }
             } else {
               setSaved(name);
@@ -291,8 +322,29 @@ export function Installation({ query }: { query?: string } = {}) {
         />
       )}
 
+      {connecting && (
+        <ConnectNotifyDialog
+          adapter={connecting}
+          onClose={() => setConnecting(null)}
+          onConnected={() => {
+            setNotice(`${connecting.name} is connected and ready.`);
+            setLogoFor(connecting.id);
+            setConnecting(null);
+            void queries.invalidateQueries({ queryKey: ['notify'] });
+          }}
+        />
+      )}
+
+      {logoNotifier?.capabilities.authorized && !logoNotifier.capabilities.icon_set && (
+        <SlackLogoDialog adapter={logoNotifier} onClose={() => setLogoFor(null)} />
+      )}
+
       {logoFor && connections.get(logoFor)?.capabilities.manage_url && (
-        <AppLogoDialog source={connections.get(logoFor)!} onClose={() => setLogoFor(null)} />
+        <AppLogoDialog
+          manageURL={connections.get(logoFor)!.capabilities.manage_url!}
+          where={githubLogoPlace}
+          onClose={() => setLogoFor(null)}
+        />
       )}
 
       {disconnecting && (
@@ -2222,7 +2274,13 @@ function Field({ children }: { children: React.ReactNode }) {
   return <div style={{ flex: '1 1 18ch', minWidth: '18ch', maxWidth: '28ch' }}>{children}</div>;
 }
 
-type GroupedRow = AdapterRow & { first?: boolean; kindName?: string; connection?: SourceConnection; managed?: boolean };
+type GroupedRow = AdapterRow & {
+  first?: boolean;
+  kindName?: string;
+  connection?: SourceConnection;
+  notify?: NotifyAdapter;
+  managed?: boolean;
+};
 
 /** Reachable or not — or, saved since Pando started, not running yet. */
 function AdapterStatus({ row }: { row: AdapterRow }) {
@@ -2267,12 +2325,14 @@ function GroupedAdapters({
   canManage,
   onChange,
   onAuthorize,
+  onConnect,
   onDisconnect,
 }: {
   rows: GroupedRow[];
   canManage: boolean;
   onChange: (row: AdapterRow) => void;
   onAuthorize: (c: SourceConnection) => void;
+  onConnect: (a: NotifyAdapter) => void;
   onDisconnect: (c: SourceConnection) => void;
 }) {
   const cell = { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } as const;
@@ -2346,7 +2406,9 @@ function GroupedAdapters({
             <span style={cell}>
               {/* Live, not stored: an adapter that was reachable at startup and
                   is not now is exactly what this column exists to show. */}
-              {row.connection ? <ConnectionStatus connection={row.connection} /> : <AdapterStatus row={row} />}
+              {row.connection && <ConnectionStatus connection={row.connection} />}
+              {row.notify && <NotifyStatus adapter={row.notify} />}
+              {!row.connection && !row.notify && <AdapterStatus row={row} />}
             </span>
             <span style={{ justifySelf: 'end' }}>
               {/* Declared in the config file, so read-only here while it is
@@ -2368,6 +2430,11 @@ function GroupedAdapters({
                           {row.connection.capabilities.authorized ? 'Authorize again' : 'Authorize'}
                         </Button>
                       )}
+                    {row.notify && connectable(row.notify) && (
+                      <Button variant="secondary" onClick={() => onConnect(row.notify!)}>
+                        {row.notify.capabilities.authorized ? 'Connect again' : 'Connect'}
+                      </Button>
+                    )}
                     {/* Pando sets a managed kind up itself: shown, with
                         its status, and not edited. */}
                     {!row.managed && (

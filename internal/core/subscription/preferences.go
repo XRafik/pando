@@ -5,6 +5,7 @@ import (
 
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/core/authz"
+	"github.com/trypando/pando/internal/core/notifyconn"
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/errs"
 )
@@ -25,40 +26,47 @@ type PreferencesView struct {
 	Choices  []state.NotificationPreference `json:"choices"`
 }
 
-func (s *Service) channels() []Channel {
+func (s *Service) channels(ctx context.Context) []Channel {
 	out := []Channel{}
-	if s.Registry == nil {
-		return out
-	}
-	for _, ref := range s.Registry.ByCategory(api.CategoryNotify) {
-		a, ok := s.Registry.Notify(ref)
-		if ok && a.Capabilities().Audience == api.AudiencePeople {
-			out = append(out, Channel{ID: ref, Kind: a.Kind()})
+	for _, a := range s.usable(ctx) {
+		if a.Capabilities.Audience == api.AudiencePeople {
+			out = append(out, Channel{ID: a.ID, Kind: a.Kind})
 		}
 	}
 	return out
 }
 
+// usable is the notification adapters that can send now.
+func (s *Service) usable(ctx context.Context) []notifyconn.Adapter {
+	n := notifiersOf(s.Notifiers, s.Registry)
+	if n == nil {
+		return nil
+	}
+	all, _ := n.Usable(ctx)
+	return all
+}
+
 // Destination is a notification adapter a subscription may send through.
 type Destination struct {
 	ID       string             `json:"id"`
+	Name     string             `json:"name"`
 	Kind     string             `json:"kind"`
 	Audience api.NotifyAudience `json:"audience"`
+
+	// Channels says a subscription to it names a channel, from
+	// GET /notify/{id}/channels.
+	Channels bool `json:"channels,omitempty"`
 }
 
 // Destinations lists every notification adapter a subscription may send
 // through, for a form that offers them to somebody who may not read the
 // adapters themselves. IDs and kinds only: an adapter's configuration is the
 // adapters screen's.
-func (s *Service) Destinations() []Destination {
+func (s *Service) Destinations(ctx context.Context) []Destination {
 	out := []Destination{}
-	if s.Registry == nil {
-		return out
-	}
-	for _, ref := range s.Registry.ByCategory(api.CategoryNotify) {
-		if a, ok := s.Registry.Notify(ref); ok {
-			out = append(out, Destination{ID: ref, Kind: a.Kind(), Audience: a.Capabilities().Audience})
-		}
+	for _, a := range s.usable(ctx) {
+		out = append(out, Destination{ID: a.ID, Name: a.Name, Kind: a.Kind,
+			Audience: a.Capabilities.Audience, Channels: a.Capabilities.Channels})
 	}
 	return out
 }
@@ -84,7 +92,7 @@ func (s *Service) Preferences(ctx context.Context, p authz.Principal) (Preferenc
 	for _, c := range chosen {
 		set[choice{c.Kind, c.Channel}] = c.Enabled
 	}
-	view := PreferencesView{Kinds: Kinds, Channels: s.channels(), Choices: []state.NotificationPreference{}}
+	view := PreferencesView{Kinds: Kinds, Channels: s.channels(ctx), Choices: []state.NotificationPreference{}}
 	for _, k := range Kinds {
 		for _, ch := range view.Channels {
 			view.Choices = append(view.Choices, state.NotificationPreference{
@@ -103,7 +111,7 @@ func (s *Service) SetPreferences(ctx context.Context, p authz.Principal, choices
 		return PreferencesView{}, err
 	}
 	channels := map[string]bool{}
-	for _, ch := range s.channels() {
+	for _, ch := range s.channels(ctx) {
 		channels[ch.ID] = true
 	}
 	for _, c := range choices {

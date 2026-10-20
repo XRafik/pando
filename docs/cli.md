@@ -1296,6 +1296,57 @@ How many of your notifications are unread
 pando notifications unread
 ```
 
+### `notify`
+
+Connect notification adapters such as Slack, and list their channels
+
+```
+pando notify
+```
+
+A Slack adapter posts as Pando's own Slack app, which connecting creates. Add the adapter with
+`pando adapter add notify/slack`, connect it with `pando notify connect`, then subscribe with
+`pando subscriptions create --adapter <id> --channel <channel>`.
+
+#### `notify channels`
+
+List the channels a subscription to the adapter can post to
+
+```
+pando notify channels <adapter>
+```
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--query` |  | Only channels whose names contain this |
+
+#### `notify connect`
+
+Connect a notification adapter, such as Slack, to its provider
+
+```
+pando notify connect <adapter>
+```
+
+Asks for a Slack configuration token: in Slack's app settings, under Your App Configuration
+Tokens, choose Generate Token. Pando uses it once to create its app, and prints Slack's approval
+page to open in a browser signed in to Pando. Slack returns only to an https address; without
+one, --manual prints a link that creates the app in Slack, and --bot-token asks for the bot
+token it shows once installed. A token is read from the terminal, never from the command line.
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--bot-token` |  | Ask for the bot token of an app created with --manual |
+| `--manual` |  | Print a link that creates the app in Slack, for a Pando without an https address |
+
+#### `notify list`
+
+Show the notification adapters and whether each can send
+
+```
+pando notify list
+```
+
 ### `plan`
 
 Show what a deploy would do, without doing it
@@ -1556,6 +1607,7 @@ A webhook's signing key is printed once. Keep it: Pando signs every delivery wit
 | --- | --- | --- |
 | `--adapter` |  | Send each event through this notification adapter |
 | `--app` |  | The app's ID; omit for install-wide |
+| `--channel` |  | The channel it posts to, for an adapter such as Slack; `pando notify channels` lists them |
 | `--content-type` |  | The body's content type; application/json by default |
 | `--description` |  | What this subscription is for |
 | `--events` | `[]` | Events to send: names, prefixes such as deploy.*, or * |
@@ -1644,6 +1696,7 @@ pando subscriptions update <subscription-id>
 | Flag | Default | What it does |
 | --- | --- | --- |
 | `--adapter` |  | A new notification adapter |
+| `--channel` |  | A new channel, for an adapter such as Slack |
 | `--content-type` |  | The body's content type; application/json by default |
 | `--description` |  | A new description |
 | `--disable` |  | Turn it off |

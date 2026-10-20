@@ -129,6 +129,24 @@ describe('a new subscription', () => {
   });
 });
 
+describe('a subscription to Slack, R-367', () => {
+  it('chooses the channel it posts to from the workspace’s', async () => {
+    const slack = { id: 'ntf_slack', name: 'Slack', kind: 'slack', audience: 'channel', channels: true };
+    const s = open(<Events canManageAll apps={[]} />, [
+      [['subscriptions', '', {}], page({ subscriptions: [] })],
+      [['events'], { events: [], destinations: [slack] }],
+      [['notify-channels', 'ntf_slack'], { channels: [{ id: 'C1', name: 'deploys' }, { id: 'G1', name: 'ops', private: true }] }],
+    ]);
+    await s.press('New subscription');
+    expect(s.text()).not.toContain('Slack channel');
+    await s.click('Notification channel');
+    expect(s.text()).toContain('Slack channel');
+    expect(s.text()).toContain('#deploys');
+    expect(s.text()).toContain('/invite @Pando');
+    await s.fill('Slack channel', 'G1');
+  });
+});
+
 describe('a subscription’s request', () => {
   it.each([
     ['{"text":"{{.Type}}"}', 'Custom body'],

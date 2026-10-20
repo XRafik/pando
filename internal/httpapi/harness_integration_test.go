@@ -102,6 +102,7 @@ type install struct {
 	Dispatcher *subscription.Dispatcher
 	People     *fakeNotify
 	Channel    *fakeNotify
+	SlackApp   *fakeNotify
 
 	// Restarts counts POST /restart's calls to Server.Restart.
 	Restarts *atomic.Int32
@@ -395,6 +396,9 @@ func newInstallWith(t *testing.T, overlay *corepolicy.Overlay, startup *config.C
 	channel := &fakeNotify{kind: "slack", audience: adapterapi.AudienceChannel}
 	require.NoError(t, registry.Register("ntf_people", people))
 	require.NoError(t, registry.Register("ntf_channel", channel))
+	// And one whose subscriptions each choose a channel, as Slack's do.
+	slackApp := &fakeNotify{kind: "slack", audience: adapterapi.AudienceChannel, channels: true}
+	require.NoError(t, registry.Register("ntf_slackapp", slackApp))
 	// And the real console adapter, recording into the inbox (R-377).
 	require.NoError(t, registry.Register("ntf_console", notifyconsole.New(state.NewNotifications(db))))
 	prefs := state.NewNotificationPreferences(db)
@@ -439,7 +443,7 @@ func newInstallWith(t *testing.T, overlay *corepolicy.Overlay, startup *config.C
 	}
 
 	return &install{
-		Dispatcher: dispatcher, People: people, Channel: channel,
+		Dispatcher: dispatcher, People: people, Channel: channel, SlackApp: slackApp,
 		t: t, handler: srv.Routes(), db: db, ownerURL: dbURL, Server: srv, Restarts: restarts, DeployQueue: deployQueue,
 		Apps: apps, Users: users, Grants: grants, Sessions: sessions, Tokens: tokens,
 		Secrets: secrets, Volumes: volumes, Adapters: adapters, PolicyStore: policyStore,

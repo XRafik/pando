@@ -24,6 +24,7 @@ import (
 
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/adapter/checkkit"
+	"github.com/trypando/pando/internal/adapter/notify/notifykit"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/secret"
 )
@@ -56,6 +57,8 @@ type Credentials struct {
 
 // Adapter sends email.
 type Adapter struct {
+	notifykit.Unconnected
+
 	cfg  Config
 	from *mail.Address
 
@@ -64,14 +67,14 @@ type Adapter struct {
 }
 
 // New returns an unconfigured adapter.
-func New() *Adapter { return &Adapter{} }
+func New() *Adapter { return &Adapter{Unconnected: notifykit.Unconnected{Name: "Email"}} }
 
 func (a *Adapter) Kind() string           { return Kind }
 func (a *Adapter) Category() api.Category { return api.CategoryNotify }
 
 // Capabilities: email reaches the people a notification names.
 func (a *Adapter) Capabilities() api.NotifyCapabilities {
-	return api.NotifyCapabilities{Audience: api.AudiencePeople}
+	return api.NotifyCapabilities{Audience: api.AudiencePeople, Authorized: true}
 }
 
 // readConfig decodes the configuration, refusing a password stored in it.

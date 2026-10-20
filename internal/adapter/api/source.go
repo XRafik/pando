@@ -212,6 +212,12 @@ const (
 	// to Pando's callback.
 	AuthorizationWeb AuthorizationMode = "web"
 
+	// AuthorizationManual connects by hand: begun, it returns a link to set
+	// the integration up at the provider; completed, it takes the credential
+	// that gives (a Slack bot token) as Code and checks it. For a provider
+	// Pando cannot be sent back from — a Pando without an https address.
+	AuthorizationManual AuthorizationMode = "manual"
+
 	// AuthorizationInstall finishes a GitHub App's installation: the
 	// provider sends the browser to SetupURL with the installation's ID,
 	// which CompleteAuthorization takes as Code. Never begun; core reaches
@@ -237,6 +243,11 @@ type AuthorizationRequest struct {
 	SetupURL    string
 	HomepageURL string
 	WebhookURL  string
+
+	// Grant is a credential the person gives to begin, used for this call
+	// only and never stored: a Slack configuration token, which lets Pando
+	// create its app.
+	Grant secret.Value
 }
 
 // AuthorizeForm is a form the person's browser submits to the provider, for

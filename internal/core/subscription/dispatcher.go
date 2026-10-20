@@ -69,6 +69,10 @@ type Dispatcher struct {
 	Groups   Groups
 	Registry *api.Registry
 
+	// Notifiers are the notification adapters a subscription sends through.
+	// Nil reads them from Registry.
+	Notifiers Notifiers
+
 	// Notifier tells a subscription's owner it was turned off. Optional.
 	Notifier interface {
 		Notify(ctx context.Context, n api.Notification) error
@@ -573,15 +577,17 @@ func (d *Dispatcher) webhook(ctx context.Context, sub state.Subscription, dl sta
 // notify sends an event through a notification adapter. One that reaches
 // people sends to the owner; one that posts to a channel ignores recipients.
 func (d *Dispatcher) notify(ctx context.Context, sub state.Subscription, e state.Event, app *EnvelopeApp) Result {
-	if d.Registry == nil {
+	notifiers := notifiersOf(d.Notifiers, d.Registry)
+	if notifiers == nil {
 		return Result{Err: sentence("Pando has no notification adapters configured.")}
 	}
-	adapter, ok := d.Registry.Notify(sub.AdapterID)
+	adapter, ok := notifiers.Notify(ctx, sub.AdapterID)
 	if !ok {
-		return Result{Err: sentence("The notification adapter " + sub.AdapterID + " is not configured on this installation any more. Choose another, or delete this subscription.")}
+		return Result{Err: sentence("The notification adapter " + sub.AdapterID + " cannot send: it was removed, or is not connected. Connect it under Adapters, choose another, or delete this subscription.")}
 	}
 	n := Describe(e, app)
 	n.Link = LinkFor(d.ExternalURL, e.AppID)
+	n.Channel = sub.Channel
 	if adapter.Capabilities().Audience == api.AudiencePeople {
 		r := api.Recipient{UserID: sub.OwnerID}
 		if user, ok, err := d.Users.ByID(ctx, sub.OwnerID); err == nil && ok {

@@ -276,6 +276,10 @@ type Subscription struct {
 	URL         string   `json:"url,omitempty"`
 	AdapterID   string   `json:"adapter_id,omitempty"`
 
+	// Channel is where an adapter whose capabilities say Channels posts —
+	// a Slack channel's ID. Empty for every other destination.
+	Channel string `json:"channel,omitempty"`
+
 	// How a webhook is sent (R-375). Header values are sealed in
 	// subscription_secrets; only their names are here.
 	Method          string   `json:"method,omitempty"`
@@ -301,7 +305,7 @@ func NewSubscriptions(db *DB) *Subscriptions { return &Subscriptions{db: db} }
 const subscriptionColumns = `s.id, coalesce(s.owner_user_id, ''), coalesce(s.owner_token_id, ''),
 	coalesce(nullif(u.display_name, ''), u.email, u.external_id, t.name, ''),
 	coalesce(s.app_id, ''), coalesce(a.name, ''), s.events, s.destination, coalesce(s.url, ''),
-	coalesce(s.adapter_id, ''), s.method, s.content_type, s.payload_template, s.header_names,
+	coalesce(s.adapter_id, ''), coalesce(s.channel, ''), s.method, s.content_type, s.payload_template, s.header_names,
 	s.description, s.enabled, s.disabled_reason, s.failing_since,
 	s.consecutive_failures, s.created_by, s.created_at, s.updated_at`
 
@@ -313,7 +317,7 @@ const subscriptionFrom = ` FROM subscriptions s
 func scanSubscription(row pgx.Row) (Subscription, error) {
 	var s Subscription
 	err := row.Scan(&s.ID, &s.OwnerID, &s.OwnerTokenID, &s.OwnerName, &s.AppID, &s.AppName, &s.Events,
-		&s.Destination, &s.URL, &s.AdapterID, &s.Method, &s.ContentType, &s.PayloadTemplate, &s.HeaderNames,
+		&s.Destination, &s.URL, &s.AdapterID, &s.Channel, &s.Method, &s.ContentType, &s.PayloadTemplate, &s.HeaderNames,
 		&s.Description, &s.Enabled, &s.DisabledReason, &s.FailingSince,
 		&s.ConsecutiveFailures, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt)
 	if s.Events == nil {
@@ -340,11 +344,11 @@ func (s *Subscriptions) Create(ctx context.Context, sub Subscription) (Subscript
 	}
 	if _, err := s.db.Exec(ctx, `
 		INSERT INTO subscriptions (id, owner_user_id, owner_token_id, app_id, events, destination, url, adapter_id,
-		                           method, content_type, payload_template, header_names, description, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+		                           method, content_type, payload_template, header_names, description, created_by, channel)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
 		sub.ID, nullable(sub.OwnerID), nullable(sub.OwnerTokenID), nullable(sub.AppID), sub.Events, sub.Destination,
 		nullable(sub.URL), nullable(sub.AdapterID), method, contentType, sub.PayloadTemplate, headers,
-		sub.Description, sub.CreatedBy); err != nil {
+		sub.Description, sub.CreatedBy, nullable(sub.Channel)); err != nil {
 		return Subscription{}, errs.Wrap(errs.Internal, "Could not save the subscription.", err)
 	}
 	got, _, err := s.Get(ctx, sub.ID)
@@ -487,6 +491,7 @@ type SubscriptionPatch struct {
 	Events          *[]string
 	URL             *string
 	AdapterID       *string
+	Channel         *string
 	Description     *string
 	Enabled         *bool
 	Method          *string
@@ -522,6 +527,7 @@ func (s *Subscriptions) Update(ctx context.Context, subscriptionID string, p Sub
 			content_type = CASE WHEN $14 THEN $15 ELSE content_type END,
 			payload_template = CASE WHEN $16 THEN $17 ELSE payload_template END,
 			header_names = CASE WHEN $18 THEN $19 ELSE header_names END,
+			channel = CASE WHEN $20 THEN nullif($21, '') ELSE channel END,
 			updated_at = now()
 		WHERE id = $1`,
 		subscriptionID,
@@ -533,7 +539,8 @@ func (s *Subscriptions) Update(ctx context.Context, subscriptionID string, p Sub
 		p.Method != nil, deref(p.Method),
 		p.ContentType != nil, deref(p.ContentType),
 		p.PayloadTemplate != nil, deref(p.PayloadTemplate),
-		p.HeaderNames != nil, headers)
+		p.HeaderNames != nil, headers,
+		p.Channel != nil, deref(p.Channel))
 	if err != nil {
 		return Subscription{}, errs.Wrap(errs.Internal, "Could not update the subscription.", err)
 	}

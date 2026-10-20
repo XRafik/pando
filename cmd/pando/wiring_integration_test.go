@@ -20,6 +20,7 @@ import (
 	adapterapi "github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/core/audit"
 	"github.com/trypando/pando/internal/core/authz"
+	"github.com/trypando/pando/internal/core/notifyconn"
 	"github.com/trypando/pando/internal/core/reconciler"
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/core/state"
@@ -217,13 +218,23 @@ func TestR253_EverySeededAdapterHasAnImplementation(t *testing.T) {
 	for _, category := range []adapterapi.Category{
 		adapterapi.CategoryRuntime, adapterapi.CategoryRouting, adapterapi.CategorySecrets,
 		adapterapi.CategoryBuilder, adapterapi.CategoryBackup, adapterapi.CategoryServices,
-		adapterapi.CategoryNotify,
 	} {
 		ref, ok := registry.Default(category)
 		require.True(t, ok, "no default registered for %s", category)
 		_, found := registry.Get(ref)
 		require.True(t, found, "%s defaults to %s, which is not registered", category, ref)
 	}
+
+	// A stored notification adapter is built from its row when it is used
+	// (core/notifyconn), not registered at startup; the seeded console one
+	// builds, and can send.
+	notifiers := &notifyconn.Service{Configs: store, Declared: registry,
+		New: func(kind string) adapterapi.NotifyAdapter {
+			n, _ := newAdapter(string(adapterapi.CategoryNotify), kind, state.NewNotifications(db)).(adapterapi.NotifyAdapter)
+			return n
+		}}
+	_, ok := notifiers.Notify(ctx, "ntf_console")
+	require.True(t, ok, "the seeded console notification adapter does not build")
 }
 
 // A disabled adapter is configuration an operator chose, and it must not be

@@ -92,6 +92,7 @@ var auditedRoutes = map[string][]string{
 	"POST /api/v1/adapters":                          {"adapter.configure"},
 	"DELETE /api/v1/sources/{sourceID}":              {"source.connection.delete"},
 	"POST /api/v1/sources/{sourceID}/authorize":      {"source.connection.authorize"},
+	"POST /api/v1/notify/{adapterID}/authorize":      {"notify.connection.authorize", "notify.connection.authorized"},
 	"POST /api/v1/sources/{sourceID}/authorize/poll": {"source.connection.authorized"},
 	"PUT /api/v1/ai/functions/{function}":            {"ai.function.assign"},
 	"DELETE /api/v1/ai/functions/{function}":         {"ai.function.unassign"},

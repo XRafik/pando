@@ -48,7 +48,7 @@ func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	destinations := []subscription.Destination{}
 	if s.Subscriptions != nil {
-		destinations = s.Subscriptions.Destinations()
+		destinations = s.Subscriptions.Destinations(r.Context())
 	}
 	JSON(w, http.StatusOK, map[string]any{"events": events.Catalog(), "destinations": destinations})
 }

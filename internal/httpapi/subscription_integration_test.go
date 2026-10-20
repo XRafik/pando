@@ -28,6 +28,8 @@ import (
 type fakeNotify struct {
 	kind     string
 	audience adapterapi.NotifyAudience
+	// channels makes it one whose subscriptions each choose a channel.
+	channels bool
 	mu       sync.Mutex
 	got      []adapterapi.Notification
 }
@@ -37,7 +39,17 @@ func (f *fakeNotify) Category() adapterapi.Category                    { return 
 func (f *fakeNotify) Configure(context.Context, json.RawMessage) error { return nil }
 func (f *fakeNotify) HealthCheck(context.Context) error                { return nil }
 func (f *fakeNotify) Capabilities() adapterapi.NotifyCapabilities {
-	return adapterapi.NotifyCapabilities{Audience: f.audience}
+	return adapterapi.NotifyCapabilities{Audience: f.audience, Channels: f.channels, Authorized: true}
+}
+
+func (*fakeNotify) Channels(context.Context, string) ([]adapterapi.NotifyChannel, error) {
+	return nil, nil
+}
+func (*fakeNotify) BeginAuthorization(context.Context, adapterapi.AuthorizationRequest) (adapterapi.Authorization, error) {
+	return adapterapi.Authorization{}, nil
+}
+func (*fakeNotify) CompleteAuthorization(context.Context, adapterapi.AuthorizationCompletion) (adapterapi.AuthorizationResult, error) {
+	return adapterapi.AuthorizationResult{}, nil
 }
 func (f *fakeNotify) Notify(_ context.Context, n adapterapi.Notification) error {
 	f.mu.Lock()
@@ -505,4 +517,57 @@ func TestR366_ADeliveryOutlivesAPandoThatStoppedMidSend(t *testing.T) {
 	i.Dispatcher.Pass(ctx)
 	require.Equal(t, 1, hook.count())
 	require.Equal(t, "succeeded", i.deliveries(i.admin(), sub.ID)[0].Status)
+}
+
+// TestR367_ASlackSubscriptionPostsToTheChannelItChose asserts a subscription
+// to an adapter whose subscriptions each choose a channel: it must name one,
+// may change it, and every event it hears is posted there; a subscription to
+// an adapter that posts to one place may not name one.
+func TestR367_ASlackSubscriptionPostsToTheChannelItChose(t *testing.T) {
+	i := newInstall(t)
+	admin := i.admin()
+	appID := i.createApp(admin, "billing")
+	base := map[string]any{"app_id": appID, "events": []string{"app.state_changed"}, "destination": "notify"}
+	with := func(extra map[string]any) map[string]any {
+		out := map[string]any{}
+		for k, v := range base {
+			out[k] = v
+		}
+		for k, v := range extra {
+			out[k] = v
+		}
+		return out
+	}
+
+	none := i.do(admin, http.MethodPost, "/subscriptions", with(map[string]any{"adapter_id": "ntf_slackapp"}))
+	require.Equal(t, http.StatusBadRequest, none.Code, none.String())
+	require.Contains(t, none.String(), "chooses none")
+	fixed := i.do(admin, http.MethodPost, "/subscriptions", with(map[string]any{"adapter_id": "ntf_channel", "channel": "C1"}))
+	require.Equal(t, http.StatusBadRequest, fixed.Code, fixed.String())
+
+	sub := i.subscribe(admin, with(map[string]any{"adapter_id": "ntf_slackapp", "channel": "C1"}))
+	got := i.do(admin, http.MethodGet, "/subscriptions/"+sub.ID, nil)
+	require.Contains(t, got.String(), `"channel":"C1"`)
+
+	patched := i.do(admin, http.MethodPatch, "/subscriptions/"+sub.ID, map[string]any{"channel": "C2"})
+	require.Equal(t, http.StatusOK, patched.Code, patched.String())
+	require.Contains(t, patched.String(), `"channel":"C2"`)
+	cleared := i.do(admin, http.MethodPatch, "/subscriptions/"+sub.ID, map[string]any{"channel": ""})
+	require.Equal(t, http.StatusBadRequest, cleared.Code, "a Slack subscription cannot drop its channel")
+
+	_, err := i.db.Exec(context.Background(), `UPDATE apps SET state = 'degraded' WHERE id = $1`, appID)
+	require.NoError(t, err)
+	i.Dispatcher.Pass(context.Background())
+	sent := i.SlackApp.sent()
+	require.Len(t, sent, 1)
+	require.Equal(t, "C2", sent[0].Channel, "the channel as it was changed")
+
+	events := i.do(admin, http.MethodGet, "/events", nil)
+	require.Contains(t, events.String(), `"id":"ntf_slackapp"`)
+	require.Contains(t, events.String(), `"channels":true`)
+
+	// The database refuses a channel on a webhook, whatever path writes it.
+	_, err = i.db.Exec(context.Background(), `UPDATE subscriptions
+		SET destination = 'webhook', url = 'https://hooks.example/x', adapter_id = NULL WHERE id = $1`, sub.ID)
+	require.ErrorContains(t, err, "subscriptions_channel_is_notify")
 }

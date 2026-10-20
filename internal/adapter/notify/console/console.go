@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/trypando/pando/internal/adapter/api"
+	"github.com/trypando/pando/internal/adapter/notify/notifykit"
 	"github.com/trypando/pando/internal/errs"
 )
 
@@ -30,6 +31,8 @@ const Kind = "console"
 
 // Adapter records notifications for display in the console.
 type Adapter struct {
+	notifykit.Unconnected
+
 	sink   Sink
 	config Config
 }
@@ -56,14 +59,16 @@ type Sink interface {
 }
 
 // New returns an adapter writing to sink.
-func New(sink Sink) *Adapter { return &Adapter{sink: sink} }
+func New(sink Sink) *Adapter {
+	return &Adapter{Unconnected: notifykit.Unconnected{Name: "The console"}, sink: sink}
+}
 
 func (a *Adapter) Kind() string           { return Kind }
 func (a *Adapter) Category() api.Category { return api.CategoryNotify }
 
 // Capabilities: the console reaches the people a notification names.
 func (a *Adapter) Capabilities() api.NotifyCapabilities {
-	return api.NotifyCapabilities{Audience: api.AudiencePeople}
+	return api.NotifyCapabilities{Audience: api.AudiencePeople, Authorized: true}
 }
 
 func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {

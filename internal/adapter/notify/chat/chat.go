@@ -26,6 +26,7 @@ import (
 
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/adapter/checkkit"
+	"github.com/trypando/pando/internal/adapter/notify/notifykit"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/secret"
 )
@@ -69,20 +70,24 @@ type Credentials struct {
 
 // Adapter posts to one channel.
 type Adapter struct {
+	notifykit.Unconnected
+
 	platform Platform
 	cfg      Config
 	client   *http.Client
 }
 
 // New returns an unconfigured adapter for platform.
-func New(p Platform) *Adapter { return &Adapter{platform: p} }
+func New(p Platform) *Adapter {
+	return &Adapter{Unconnected: notifykit.Unconnected{Name: p.Name}, platform: p}
+}
 
 func (a *Adapter) Kind() string           { return a.platform.Kind }
 func (a *Adapter) Category() api.Category { return api.CategoryNotify }
 
 // Capabilities: a channel, not people.
 func (a *Adapter) Capabilities() api.NotifyCapabilities {
-	return api.NotifyCapabilities{Audience: api.AudienceChannel}
+	return api.NotifyCapabilities{Audience: api.AudienceChannel, Authorized: a.client != nil}
 }
 
 // Configure reads the configuration core assembled, credentials included.

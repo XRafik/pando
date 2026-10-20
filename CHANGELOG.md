@@ -36,11 +36,23 @@ No new advisories.
 - The App Pando creates carries a **push webhook** when Pando's address is public (R-142), so a push
   starts an automatic deploy at once rather than at the next poll; **Deploy on push** turns it off.
   On a private address the App has no webhook, which GitHub would refuse, and auto-deploy polls.
+- **Slack is connected in one step** (R-374). A Slack adapter posts as Pando's own Slack app, which Pando
+  creates when you connect it: paste a configuration token from Slack's app settings, choose **Allow** on
+  Slack's screen, and it is ready. The app gets Pando's icon, and the token is used once and never stored.
+  On a Pando without an https address, Slack can't send you back, so you create the app from a link Pando
+  gives and paste its bot token. `pando notify connect` and the MCP tools do the same.
+- **A Slack subscription chooses its channel** (R-367). One Slack connection posts to any public channel,
+  and to private ones Pando is invited to; the console lists them, and `pando notify channels` and
+  `--channel` on `pando subscriptions` do the same.
+- **Notification adapters apply without a restart.** Adding or connecting one takes effect at once, on
+  every replica.
 
 ### Changed
 
 - The GitHub App fields (App ID, installation ID, private key) are no longer in the form. A
   connection set up with them before keeps working.
+- A Slack adapter set up with an incoming webhook URL keeps posting to its one channel. A new one is
+  connected as Pando's app instead.
 
 ## [0.10.0] - 2026-10-19
 

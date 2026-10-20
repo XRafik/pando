@@ -38,6 +38,7 @@ import (
 	"github.com/trypando/pando/internal/adapter/notify/chat"
 	notifyconsole "github.com/trypando/pando/internal/adapter/notify/console"
 	notifyntfy "github.com/trypando/pando/internal/adapter/notify/ntfy"
+	"github.com/trypando/pando/internal/adapter/notify/slack"
 	notifysmtp "github.com/trypando/pando/internal/adapter/notify/smtp"
 	"github.com/trypando/pando/internal/adapter/routing/cloudflare"
 	"github.com/trypando/pando/internal/adapter/routing/loopback"
@@ -78,6 +79,7 @@ import (
 	"github.com/trypando/pando/internal/core/idp"
 	"github.com/trypando/pando/internal/core/imageregistry"
 	"github.com/trypando/pando/internal/core/logstream"
+	"github.com/trypando/pando/internal/core/notifyconn"
 	"github.com/trypando/pando/internal/core/observe"
 	"github.com/trypando/pando/internal/core/oci"
 	"github.com/trypando/pando/internal/core/planner"
@@ -581,6 +583,22 @@ func serve(ctx context.Context, configPath string) error {
 	sources.Credentials = sourceConnections
 	sourceConnections.Prober = sources
 
+	// The install's notification adapters, built from their rows on each use
+	// so one added or connected — Slack's bot token arrives after it is
+	// saved — sends at once, on every replica, with no restart. Only the
+	// ones the configuration file declares are in the registry.
+	notifyConnections := &notifyconn.Service{
+		Configs:        adapters,
+		Credentials:    adapterCredentials,
+		Authorizations: notifyAuthorizationsFor(db, registry),
+		New: func(kind string) adapterapi.NotifyAdapter {
+			n, _ := newAdapter(string(adapterapi.CategoryNotify), kind, notifications).(adapterapi.NotifyAdapter)
+			return n
+		},
+		Declared: registry,
+		Clock:    clock.System{},
+	}
+
 	deployer := deploy.NewRunner(registry, appPlanner, apps, deployments, secrets, reconciles, logStore, volumes, proxyUpstream).
 		WithServices(state.NewServices(db), secrets).
 		WithSecurity(securityService).
@@ -779,6 +797,7 @@ func serve(ctx context.Context, configPath string) error {
 	// started with the other loops below (issue #50).
 	notifyRouter := subscription.Router{
 		Registry:    registry,
+		Notifiers:   notifyConnections,
 		Preferences: state.NewNotificationPreferences(db),
 		Users:       users,
 		Logger:      logger,
@@ -795,6 +814,7 @@ func serve(ctx context.Context, configPath string) error {
 		Policy:        policyStore,
 		Apps:          apps,
 		Registry:      registry,
+		Notifiers:     notifyConnections,
 		Audit:         httpapi.AuditFunc(auditor),
 		Clock:         clock.System{},
 		Logger:        logger,
@@ -946,6 +966,7 @@ func serve(ctx context.Context, configPath string) error {
 		Images:      images,
 
 		SourceConnections: sourceConnections,
+		NotifyConnections: notifyConnections,
 
 		ImageRegistries: buildRegistry,
 		DB:              db,
@@ -1244,6 +1265,7 @@ func serve(ctx context.Context, configPath string) error {
 	// and check every adapter's health every five minutes, recording a change
 	// as an event.
 	dispatcher := &subscription.Dispatcher{
+		Notifiers:     notifyConnections,
 		Events:        subscriptions.Events,
 		Subscriptions: subscriptions.Subscriptions,
 		Deliveries:    subscriptions.Deliveries,
@@ -1673,6 +1695,11 @@ func registerAdapters(ctx context.Context, db *state.DB, store *state.Adapters, 
 		if c.Category == string(adapterapi.CategorySource) && e.decl == nil {
 			continue
 		}
+		// And for a notification adapter: core/notifyconn builds a stored one
+		// from its row whenever it sends, so connecting Slack needs no restart.
+		if c.Category == string(adapterapi.CategoryNotify) && e.decl == nil {
+			continue
+		}
 		// The same for an image registry (issue #153): a stored one is built
 		// from its row on every push, pull and plan (core/imageregistry), so
 		// a password rotated on one replica reaches all of them.
@@ -1857,8 +1884,8 @@ func newAdapter(category, kind string, notifications *state.Notifications) adapt
 		return notifysmtp.New()
 	case category == string(adapterapi.CategoryNotify) && kind == notifyntfy.Kind:
 		return notifyntfy.New()
-	case category == string(adapterapi.CategoryNotify) && kind == chat.Slack.Kind:
-		return chat.New(chat.Slack)
+	case category == string(adapterapi.CategoryNotify) && kind == slack.Kind:
+		return slack.New()
 	case category == string(adapterapi.CategoryNotify) && kind == chat.Teams.Kind:
 		return chat.New(chat.Teams)
 	case category == string(adapterapi.CategoryNotify) && kind == chat.Discord.Kind:
@@ -2368,9 +2395,16 @@ func declaredSourceAdapters(registry *adapterapi.Registry) map[string]adapterapi
 	return out
 }
 
-// sourceAuthorizationsFor keeps OAuth authorizations of source connections
-// while they are in progress, sealed like the connections' credentials.
-func sourceAuthorizationsFor(db *state.DB, registry *adapterapi.Registry) *state.AdapterCredentials {
+// notifyAuthorizationsFor keeps connections of notification adapters while
+// they are in progress, sealed like the adapters' credentials.
+func notifyAuthorizationsFor(db *state.DB, registry *adapterapi.Registry) *state.AdapterCredentials {
+	sa, ref := installSecrets(registry)
+	return state.NewNotifyAuthorizations(db, sa, ref)
+}
+
+// installSecrets is the secrets adapter credentials are sealed with: the
+// default one, or the first.
+func installSecrets(registry *adapterapi.Registry) (adapterapi.SecretsAdapter, string) {
 	ref, ok := registry.Default(adapterapi.CategorySecrets)
 	if !ok {
 		if refs := registry.ByCategory(adapterapi.CategorySecrets); len(refs) > 0 {
@@ -2378,6 +2412,13 @@ func sourceAuthorizationsFor(db *state.DB, registry *adapterapi.Registry) *state
 		}
 	}
 	sa, _ := registry.Secrets(ref)
+	return sa, ref
+}
+
+// sourceAuthorizationsFor keeps OAuth authorizations of source connections
+// while they are in progress, sealed like the connections' credentials.
+func sourceAuthorizationsFor(db *state.DB, registry *adapterapi.Registry) *state.AdapterCredentials {
+	sa, ref := installSecrets(registry)
 	return state.NewSourceAuthorizations(db, sa, ref)
 }
 
@@ -2483,7 +2524,7 @@ func adapterKinds() []adapterapi.KindInfo {
 		servicesdocker.Info(),
 		notifyconsole.Info(),
 		notifysmtp.Info(),
-		chat.Slack.Info(),
+		slack.Info(),
 		chat.Teams.Info(),
 		chat.Discord.Info(),
 		notifyntfy.Info(),

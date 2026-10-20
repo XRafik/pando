@@ -276,6 +276,30 @@
       }
     },
     {
+      "name": "pando_connect_notify",
+      "description": "Connect a notification adapter such as Slack to its provider. mode web takes token, a Slack configuration token (Slack's app settings, Your App Configuration Tokens, Generate Token) used once and never stored; Pando creates its app and returns authorize_url for the person to open in a browser signed in to Pando and choose Allow. Slack returns only to an https address. mode manual without token returns authorize_url, which creates the app in Slack by hand; with token, the bot token it shows once installed, it finishes. Check pando_list_notify_adapters afterwards.",
+      "input_schema": {
+        "properties": {
+          "adapter_id": {
+            "description": "The adapter's ID, from pando_list_notify_adapters.",
+            "type": "string"
+          },
+          "mode": {
+            "description": "web (the default) or manual.",
+            "type": "string"
+          },
+          "token": {
+            "description": "For web, a Slack configuration token; for manual, the app's bot token, or omit for the link.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "adapter_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
       "name": "pando_count_unread_notifications",
       "description": "How many of your notifications are unread, without listing them.",
       "input_schema": {
@@ -383,6 +407,10 @@
           },
           "app_id": {
             "description": "The app. Omit for install-wide.",
+            "type": "string"
+          },
+          "channel": {
+            "description": "The channel it posts to, for an adapter whose destination says channels, such as Slack; pando_list_notify_channels lists them.",
             "type": "string"
           },
           "content_type": {
@@ -961,6 +989,35 @@
           }
         },
         "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_list_notify_adapters",
+      "description": "List the notification adapters, each with whether it can send: capabilities.authorized, and problem saying why one cannot. One with web_authorization or manual_authorization that is not authorized, such as Slack, needs pando_connect_notify first.",
+      "input_schema": {
+        "properties": {},
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_list_notify_channels",
+      "description": "List the channels a subscription to a notification adapter such as Slack can post to: id, name, private. A private Slack channel is listed once Pando is invited to it with /invite @Pando.",
+      "input_schema": {
+        "properties": {
+          "adapter_id": {
+            "description": "The adapter's ID.",
+            "type": "string"
+          },
+          "q": {
+            "description": "Only channels whose names contain this. Optional.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "adapter_id"
+        ],
         "type": "object"
       }
     },
@@ -1704,11 +1761,15 @@
     },
     {
       "name": "pando_update_subscription",
-      "description": "Change a subscription's events, url, adapter_id or description, or turn it on or off with enabled (true or false).",
+      "description": "Change a subscription's events, url, adapter_id, channel or description, or turn it on or off with enabled (true or false).",
       "input_schema": {
         "properties": {
           "adapter_id": {
             "description": "A new notification adapter. Optional.",
+            "type": "string"
+          },
+          "channel": {
+            "description": "A new channel, for an adapter such as Slack. Optional.",
             "type": "string"
           },
           "content_type": {

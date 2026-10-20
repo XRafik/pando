@@ -36,6 +36,7 @@ import (
 	"github.com/trypando/pando/internal/core/idp"
 	"github.com/trypando/pando/internal/core/imageregistry"
 	"github.com/trypando/pando/internal/core/logstream"
+	"github.com/trypando/pando/internal/core/notifyconn"
 	"github.com/trypando/pando/internal/core/observe"
 	"github.com/trypando/pando/internal/core/planner"
 	corepolicy "github.com/trypando/pando/internal/core/policy"
@@ -215,6 +216,12 @@ type Server struct {
 	// repositories each can list. Nil reads every repository anonymously and
 	// answers the /sources routes with an error.
 	SourceConnections *sourceconn.Service
+
+	// NotifyConnections is the install's notification adapters, built from
+	// their rows on each use: connecting Slack, and the channels a
+	// subscription to it can choose. Nil answers the /notify routes with an
+	// error.
+	NotifyConnections *notifyconn.Service
 
 	// Images keeps the credential an image app's image is pulled with (issue
 	// #41). Nil on an install that cannot store one, where setting one says so.
@@ -686,6 +693,18 @@ func (s *Server) Routes() http.Handler {
 		// /adapters like any adapter; read with app.create, which is what
 		// adding an app from one needs, and changed with
 		// install.adapters.manage. See source_handlers.go.
+		// Notification adapters that connect to their provider and post to
+		// the channel each subscription chooses (R-374). Configured with
+		// POST /adapters; see notify_handlers.go.
+		r.Route("/notify", func(r chi.Router) {
+			r.Get("/", s.handleListNotify)
+			r.Get("/callback", s.handleNotifyCallback)
+			r.Route("/{adapterID}", func(r chi.Router) {
+				r.Post("/authorize", s.handleAuthorizeNotify)
+				r.Get("/channels", s.handleListNotifyChannels)
+			})
+		})
+
 		r.Route("/sources", func(r chi.Router) {
 			r.Get("/", s.handleListSources)
 			r.Get("/callback", s.handleSourceCallback)

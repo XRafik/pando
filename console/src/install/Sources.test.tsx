@@ -4,7 +4,14 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-import { AppLogoDialog, AuthorizeDialog, needsAuthorizing, postForm, type SourceConnection } from './Sources';
+import {
+  AppLogoDialog,
+  AuthorizeDialog,
+  githubLogoPlace,
+  needsAuthorizing,
+  postForm,
+  type SourceConnection,
+} from './Sources';
 import { optionLabel } from './AdapterDialog';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -97,13 +104,17 @@ describe('the App logo step, R-091', () => {
     container = document.createElement('div');
     document.body.append(container);
     root = createRoot(container);
-    act(() => root!.render(<AppLogoDialog source={installed} onClose={() => undefined} />));
+    act(() =>
+      root!.render(
+        <AppLogoDialog manageURL={installed.capabilities.manage_url} where={githubLogoPlace} onClose={() => undefined} />,
+      ),
+    );
 
     const download = [...document.body.querySelectorAll('a')].find((a) => a.textContent === 'Download the logo');
     expect(download?.getAttribute('download')).toBe('pando-logo.png');
     expect(download?.getAttribute('href')).toMatch(/pando-icon-ink\.png$/);
     expect(document.body.textContent).toContain('Upload a logo');
-    await press('Open App settings');
+    await press('Open app settings');
     expect(open).toHaveBeenCalledWith(installed.capabilities.manage_url, '_blank', 'noopener,noreferrer');
   });
 });

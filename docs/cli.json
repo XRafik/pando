@@ -42,6 +42,7 @@
         "pando mcp",
         "pando migrate",
         "pando notifications",
+        "pando notify",
         "pando plan",
         "pando policy",
         "pando restart",
@@ -4132,6 +4133,157 @@
       "subcommands": []
     },
     {
+      "path": "pando notify",
+      "use": "notify",
+      "short": "Connect notification adapters such as Slack, and list their channels",
+      "long": "A Slack adapter posts as Pando's own Slack app, which connecting creates. Add the adapter with\n`pando adapter add notify/slack`, connect it with `pando notify connect`, then subscribe with\n`pando subscriptions create --adapter <id> --channel <channel>`.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        "pando notify channels",
+        "pando notify connect",
+        "pando notify list"
+      ]
+    },
+    {
+      "path": "pando notify channels",
+      "use": "channels <adapter>",
+      "short": "List the channels a subscription to the adapter can post to",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "query",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Only channels whose names contain this",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando notify connect",
+      "use": "connect <adapter>",
+      "short": "Connect a notification adapter, such as Slack, to its provider",
+      "long": "Asks for a Slack configuration token: in Slack's app settings, under Your App Configuration\nTokens, choose Generate Token. Pando uses it once to create its app, and prints Slack's approval\npage to open in a browser signed in to Pando. Slack returns only to an https address; without\none, --manual prints a link that creates the app in Slack, and --bot-token asks for the bot\ntoken it shows once installed. A token is read from the terminal, never from the command line.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "bot-token",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "Ask for the bot token of an app created with --manual",
+          "required": false
+        },
+        {
+          "name": "manual",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "Print a link that creates the app in Slack, for a Pando without an https address",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando notify list",
+      "use": "list",
+      "short": "Show the notification adapters and whether each can send",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
       "path": "pando plan",
       "use": "plan <app>",
       "short": "Show what a deploy would do, without doing it",
@@ -5080,6 +5232,14 @@
           "required": false
         },
         {
+          "name": "channel",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "The channel it posts to, for an adapter such as Slack; `pando notify channels` lists them",
+          "required": false
+        },
+        {
           "name": "content-type",
           "shorthand": "",
           "type": "string",
@@ -5429,6 +5589,14 @@
           "type": "string",
           "default": "",
           "usage": "A new notification adapter",
+          "required": false
+        },
+        {
+          "name": "channel",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "A new channel, for an adapter such as Slack",
           "required": false
         },
         {

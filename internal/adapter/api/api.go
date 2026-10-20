@@ -1352,6 +1352,20 @@ type NotifyAdapter interface {
 	Adapter
 	Capabilities() NotifyCapabilities
 	Notify(ctx context.Context, n Notification) error
+
+	// Channels lists the channels a notification can name, matching query —
+	// for a person to pick one per subscription. Only when
+	// NotifyCapabilities.Channels; otherwise it returns an error.
+	Channels(ctx context.Context, query string) ([]NotifyChannel, error)
+
+	// BeginAuthorization and CompleteAuthorization connect the adapter to
+	// its provider — for Slack, creating Pando's app and installing it —
+	// when NotifyCapabilities says it can be (WebAuthorization,
+	// ManualAuthorization). What CompleteAuthorization returns is stored as
+	// the adapter's credentials (R-190). An adapter with nothing to connect
+	// returns an error from both.
+	BeginAuthorization(ctx context.Context, req AuthorizationRequest) (Authorization, error)
+	CompleteAuthorization(ctx context.Context, req AuthorizationCompletion) (AuthorizationResult, error)
 }
 
 // NotifyAudience is who a notify adapter's messages reach.
@@ -1371,7 +1385,37 @@ const (
 
 // NotifyCapabilities is what a notify adapter can do, as data (R-254).
 type NotifyCapabilities struct {
-	Audience NotifyAudience
+	Audience NotifyAudience `json:"audience"`
+
+	// Channels says each subscription names the channel it posts to, from
+	// Channels, rather than the adapter posting to one place. A channel
+	// adapter only.
+	Channels bool `json:"channels,omitempty"`
+
+	// WebAuthorization says the adapter is connected in the browser, from a
+	// credential the person gives once (AuthorizationRequest.Grant) and the
+	// provider's approval screen. ManualAuthorization says it can instead be
+	// connected by hand: a link to set it up at the provider, and the
+	// credential that gives pasted back.
+	WebAuthorization    bool `json:"web_authorization,omitempty"`
+	ManualAuthorization bool `json:"manual_authorization,omitempty"`
+
+	// Authorized says the adapter holds what it needs to send. One that
+	// takes authorization and has not had it is false, and sends nothing.
+	Authorized bool `json:"authorized"`
+
+	// ManageURL is the provider's page for what connecting created — the
+	// Slack app Pando made — or empty. IconSet says Pando gave it Pando's
+	// icon; without it, the icon is uploaded on that page by hand.
+	ManageURL string `json:"manage_url,omitempty"`
+	IconSet   bool   `json:"icon_set,omitempty"`
+}
+
+// NotifyChannel is one channel a notification can be posted to.
+type NotifyChannel struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Private bool   `json:"private,omitempty"`
 }
 
 // Recipient is who to tell.
@@ -1398,6 +1442,10 @@ type Notification struct {
 	Fields []NotificationField
 	// Link is where in the console to look, when Pando knows its own address.
 	Link string
+
+	// Channel is the channel a subscription chose, for an adapter whose
+	// capabilities say Channels; empty for every other.
+	Channel string
 }
 
 // NotificationField is one labeled value.

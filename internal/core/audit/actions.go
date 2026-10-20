@@ -116,6 +116,8 @@ var Actions = []string{
 	"launcher.section.place",
 	"launcher.section.rename",
 	"launcher.section.unplace",
+	"notify.connection.authorize",
+	"notify.connection.authorized",
 	"policy.update",
 	"role.create",
 	"role.delete",

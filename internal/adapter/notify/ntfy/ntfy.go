@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/trypando/pando/internal/adapter/api"
+	"github.com/trypando/pando/internal/adapter/notify/notifykit"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/secret"
 )
@@ -44,19 +45,21 @@ type Credentials struct {
 
 // Adapter publishes to one topic.
 type Adapter struct {
+	notifykit.Unconnected
+
 	cfg    Config
 	client *http.Client
 }
 
 // New returns an unconfigured adapter.
-func New() *Adapter { return &Adapter{} }
+func New() *Adapter { return &Adapter{Unconnected: notifykit.Unconnected{Name: "ntfy"}} }
 
 func (a *Adapter) Kind() string           { return Kind }
 func (a *Adapter) Category() api.Category { return api.CategoryNotify }
 
 // Capabilities: a channel, not people.
 func (a *Adapter) Capabilities() api.NotifyCapabilities {
-	return api.NotifyCapabilities{Audience: api.AudienceChannel}
+	return api.NotifyCapabilities{Audience: api.AudienceChannel, Authorized: a.client != nil}
 }
 
 // Configure reads the configuration core assembled.
