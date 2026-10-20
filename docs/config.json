@@ -874,6 +874,15 @@
       "secret": false
     },
     {
+      "env": "PANDO_POLICY_STOP_ORPHANED_APPS",
+      "key": "policy.stop_orphaned_apps",
+      "type": "bool",
+      "default": "true",
+      "description": "Stop an app once none of its owners has an active account and no group owns it. On by default. It stays stopped until somebody starts it. Administrators are told either way.",
+      "group": "policy",
+      "secret": false
+    },
+    {
       "env": "PANDO_POLICY_UPDATE_CHANNEL",
       "key": "policy.update_channel",
       "type": "string",

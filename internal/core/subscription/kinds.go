@@ -22,6 +22,7 @@ var Kinds = []Kind{
 	{api.NotifyBackupFailed, "A backup failed", "A backup of an app you own was not taken.", true},
 	{api.NotifyAppDisk, "An app near its disk limit", "An app you own is near or over its disk limit, or Pando stopped it for staying over.", true},
 	{api.NotifyAppIdle, "An app nobody uses", "An app you own is about to be stopped or deleted because nobody has used it, or was.", true},
+	{api.NotifyAppOrphaned, "An app with no owner", "None of an app's owners has an active account. Sent to administrators.", true},
 	{api.NotifyUpdateAvailable, "Pando updates", "A newer Pando is released. Sent to people who may upgrade it.", true},
 	{api.NotifyUpgradeFailed, "Upgrade failed", "An in-place upgrade of Pando did not finish.", true},
 	{api.NotifySubscriptionDisabled, "A subscription was turned off", "One of your event subscriptions kept failing and Pando turned it off.", true},

@@ -1345,6 +1345,10 @@ const (
 	// NotifyAppDisk: an app is near or over its disk limit, or was stopped
 	// for staying over it (R-403). Sent to its owner.
 	NotifyAppDisk NotificationKind = "app_disk"
+	// NotifyAppOrphaned: none of an app's owners is active any more, and
+	// Pando stopped it or host policy left it running (R-408). Sent to
+	// everyone holding the built-in Administrator role.
+	NotifyAppOrphaned NotificationKind = "app_orphaned"
 )
 
 // NotifyAdapter delivers notifications.

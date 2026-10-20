@@ -147,7 +147,7 @@ exactly this.
 
 **R-048 [D]** **SCIM support** is the enterprise revocation and provisioning path. Where an IdP supports SCIM, Pando accepts pushed user and group lifecycle events (SCIM 2.0, a bearer token per provider). A pushed deactivation suspends and ends sessions at once; a pushed group change takes effect on the next request. On the proxy's path, "the next request" is the next one after the change reaches the proxy, which is told when it commits; if that message is lost, at most 30 seconds (design 06 §3.1, amended with issue #93).
 
-**R-049 [D]** **Suspended is not deleted.** Pando must model at minimum: active, suspended, deleted. A suspended user loses access immediately but their data-destruction rules (R-104) do not fire.
+**R-049 [D]** **Suspended is not deleted.** Pando must model at minimum: active, suspended, deleted. A suspended user loses access immediately but their data-destruction rules (R-280) do not fire. Their apps keep running unless none of their owners is left active (R-407).
 
 **R-050 [P]** For adapters that cannot push revocation, Pando falls back to expiry at next token refresh. The adapter's declared session lifetime is therefore the effective revocation window and must be documented as such.
 
@@ -672,6 +672,17 @@ Added by issue #131, so that an install does not fill up with apps nobody uses.
 **R-397 [D]** **An app's idle settings are app settings, not spec fields.** They decide whether Pando keeps the app, not how it runs (R-020), so changing them writes no spec revision and starts no deploy. Anybody holding `app.spec.edit` on the app may set its own stop and delete days, turn either off, or go back to the install's.
 
 **R-398 [D]** **Deleting an idle app is a delete with nobody present to answer R-204's question, so host policy answers it.** With `require_backup_before_destroy` (R-284), an app with volumes is backed up first and the backup is kept until somebody discards it; if the backup fails, the app is not deleted, its owner is told, and the next pass tries again. Without it, the volumes are discarded with the app.
+
+### 10.8 Apps with no active owner
+
+Added so that an app whose owners have all left, typically deactivated at the identity provider, is not
+left running with nobody to look after it.
+
+**R-406 [D]** **An app is orphaned when none of its owners is active:** its owner of record (R-031) and every account holding Owner on it are suspended or deleted, and no group holds Owner on it. A group's grant always counts, whoever is in the group. It does not matter how the last owner went: a pushed deactivation (R-048), an administrator suspending or deleting the account, linking its identity to another account so it becomes an alias (O-1), or an Owner grant removed. An app that never had an owner is not orphaned.
+
+**R-407 [D]** **Host policy `stop_orphaned_apps`, on by default, stops an app as soon as it is orphaned.** It stays stopped until somebody starts it, as an idle app does (R-396), and the app, in the console and the API, and its address, to a visitor, say why. Its data is kept (R-282). It is stopped once per orphaning: an administrator who starts it while it is still orphaned keeps it running, and it is stopped again only after it has an active owner and loses them again. Apps already orphaned when the setting is turned on, or when the upgrade that added it ran, are not stopped; administrators are told of them (R-408).
+
+**R-408 [D]** **Everyone holding the built-in Administrator role is told when an app is orphaned**, through the notification adapters (R-230), as `app_orphaned`, whether or not it was stopped. The notice says which, and that granting Owner to somebody gives the app an owner again. Apps a pass finds together are one notice. Each orphaning and each stop is an audit event. Linking an identity that would make the last active owner of an app an alias is refused until confirmed, naming the apps.
 
 ---
 

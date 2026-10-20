@@ -264,6 +264,25 @@
       ]
     },
     {
+      "type": "app.orphan_stopped",
+      "description": "Pando stopped an app none of whose owners has an active account. It stays stopped until somebody starts it.",
+      "scope": "app",
+      "source": "audit",
+      "fields": []
+    },
+    {
+      "type": "app.orphaned",
+      "description": "None of an app's owners has an active account any more, and no group owns it.",
+      "scope": "app",
+      "source": "audit",
+      "fields": [
+        {
+          "name": "stopped",
+          "description": "true when Pando stopped it, false when host policy left it running."
+        }
+      ]
+    },
+    {
       "type": "app.restarted",
       "description": "Somebody restarted an app.",
       "scope": "app",

@@ -428,6 +428,7 @@ func (s *Server) handleLinkIdentity(w http.ResponseWriter, r *http.Request) {
 		AdapterID      string `json:"adapter_id"`
 		ExternalID     string `json:"external_id"`
 		ReplaceAccount bool   `json:"replace_account"`
+		Confirm        bool   `json:"confirm"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		Error(w, r, errs.New(errs.ValidInvalid, "The request body could not be read."))
@@ -450,7 +451,7 @@ func (s *Server) handleLinkIdentity(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	aliased, err := s.IDP.LinkIdentity(r.Context(), p, userID, req.AdapterID, req.ExternalID, req.ReplaceAccount)
+	aliased, err := s.IDP.LinkIdentity(r.Context(), p, userID, req.AdapterID, req.ExternalID, req.ReplaceAccount, req.Confirm)
 	if err != nil {
 		Error(w, r, err)
 		return

@@ -1494,6 +1494,10 @@ func serve(ctx context.Context, configPath string) error {
 	// is still over (R-403). Every app has a limit (R-240), so this is on.
 	job("disk", diskPass(db, registry, notifyRouter, auditor, logger).Run)
 
+	// Apps none of whose owners is active: stopped at once unless host policy
+	// says otherwise, and administrators told either way (R-406 – R-408).
+	job("orphans", orphanPass(db, policyStore, notifyRouter, auditor, logger).Run)
+
 	// Metrics about this process, pushed to the operator's collector (R-399).
 	// Stopped by a defer, so after the server has drained, and its last push
 	// carries those requests; and before the pool closes, which the pool

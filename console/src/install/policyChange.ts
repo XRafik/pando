@@ -28,6 +28,7 @@ const LABELS: Record<string, string> = {
   idle_stop_days: 'Stop idle apps after (days)',
   idle_delete_days: 'Delete idle apps after (days)',
   max_apps_per_user: 'App limit',
+  stop_orphaned_apps: 'Stop apps with no active owner',
   allow_cpu_oversubscription: 'Allow CPU oversubscription',
   allow_memory_oversubscription: 'Allow memory oversubscription',
   disable_ai_screening: 'Disable AI screening',

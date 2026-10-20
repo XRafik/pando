@@ -422,6 +422,8 @@ interface PolicyDoc {
   idle_stop_days?: number;
   idle_delete_days?: number;
   max_apps_per_user?: number;
+  // R-407: on unless set false.
+  stop_orphaned_apps?: boolean;
 
   // Audit retention (R-347, R-348).
   audit_retention_months?: number;
@@ -1028,6 +1030,19 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
               value={String(current.max_apps_per_user ?? 0)}
               helper="Apps each person may own. Zero means unlimited. A limit on a person's account or group overrides this."
               onChange={(e) => edit({ max_apps_per_user: Math.max(0, Math.round(Number(e.target.value) || 0)) })}
+            />
+          </Fixed>
+        </PolicySection>
+
+        {/* R-407, R-408: unset is on. Administrators are told either way. */}
+        <PolicySection heading="Apps without an owner">
+          <Fixed field="stop_orphaned_apps">
+            <Switch
+              checked={current.stop_orphaned_apps ?? true}
+              disabled={locked('stop_orphaned_apps')}
+              label="Stop apps with no active owner"
+              description="Administrators are told either way."
+              onChange={(e) => edit({ stop_orphaned_apps: e.target.checked })}
             />
           </Fixed>
         </PolicySection>

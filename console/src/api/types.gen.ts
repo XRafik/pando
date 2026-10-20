@@ -17,6 +17,8 @@ export interface App {
   pinned_spec_id?: string;
   stopped_for_idle?: boolean;
   stopped_for_disk?: boolean;
+  stopped_for_orphan?: boolean;
+  orphaned?: boolean;
   source: Source;
   created_at: string;
   updated_at: string;
@@ -255,6 +257,7 @@ export interface PolicyDocument {
   max_concurrent_deploys?: number;
   idle_stop_days?: number;
   idle_delete_days?: number;
+  stop_orphaned_apps?: boolean;
   max_apps_per_user?: number;
   allow_cpu_oversubscription?: boolean;
   allow_memory_oversubscription?: boolean;

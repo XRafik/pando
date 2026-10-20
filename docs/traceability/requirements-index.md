@@ -9,10 +9,10 @@ specify it, the phase that builds it, and the tests that prove it. Test coverage
 
 | | Count | Of total |
 |---|---:|---:|
-| Requirements | 312 | — |
-| Specified in a design doc | 279 | 89% |
+| Requirements | 315 | — |
+| Specified in a design doc | 282 | 89% |
 | Assigned to a phase | 137 | 43% |
-| Covered by a named test | 250 | 80% |
+| Covered by a named test | 253 | 80% |
 
 A requirement with no design reference is not necessarily a gap — it may be philosophy (R-002),
 a non-goal (R-010–R-016), or deferred (R-290+). A requirement with no *test* is either
@@ -168,6 +168,9 @@ philosophy, deferred, or a real gap, and the difference should be stated rather 
 | **R-396** | D | An app stopped for being idle stays stopped until somebody starts it. | 10.7 Idle apps | 02, 05 | — | `TestR396_AnAppStoppedForInactivitySaysSo`, `TestR396_OnlyARunningAppIsStopped` |
 | **R-397** | D | An app's idle settings are app settings, not spec fields. | 10.7 Idle apps | 02 | — | `TestR397_AnAppsIdleSettingsAreItsOwn`, `TestR397_AnAppsSettingsSayWhatIsInForceAndWhen`, `TestR397_IdleSettingsAsTools`, `TestR397_IdleSettingsFromTheCLI` |
 | **R-398** | D | Deleting an idle app is a delete with nobody present to answer R-204's question, so host… | 10.7 Idle apps | 05 | — | `TestR398_ADeleteThatFailsWaitsAnotherNotice`, `TestR398_AnIdleAppIsDeletedAsHostPolicySays`, `TestR398_DeleteFailureNoticeUsesTheErrorEnvelope`, `TestR398_PolicyAnswersForPandosOwnDelete` |
+| **R-406** | D | An app is orphaned when none of its owners is active: its owner of record (R-031) and every… | 10.8 Apps with no active owner | 02, 05 | — | `TestR406_AnAppIsOrphanedWhenNoneOfItsOwnersIsActive` |
+| **R-407** | D | Host policy `stop_orphaned_apps`, on by default, stops an app as soon as it is orphaned. | 10.8 Apps with no active owner | 02, 05 | — | `TestR407_ANotificationRunsAPassAtOnce`, `TestR407_AnAppStoppedForHavingNoOwnerSaysSo`, `TestR407_AnAppWithNoActiveOwnerIsStopped`, `TestR407_AnOrphanedAppIsStoppedOnceAndStartedClear`, `TestR407_AnOwnerComingBackMakesTheNextLossANewOrphaning`, `TestR407_SuspendingTheLastOwnerStopsTheAppAtOnce`, `TestR407_TheOrphanPassListensForOwnerChanges`, `TestR407_WithThePolicyOffAnOrphanedAppKeepsRunning` |
+| **R-408** | D | Everyone holding the built-in Administrator role is told when an app is orphaned, through the… | 10.8 Apps with no active owner | 02, 05 | — | `TestR408_AFailedNoticeIsSentAgain`, `TestR408_AdministratorsAreThoseHoldingTheBuiltInRole`, `TestR408_LinkingAwayAnAppsLastOwnerNeedsConfirming`, `TestR408_LinkingFromTheCLICanConfirm`, `TestR408_NoAdministratorsStillRecordsTheNotice`, `TestR408_SeveralAppsAreOneNotice` |
 | **R-160** | D | Routing is an adapter category. | 11. Networking and Routing | — | — | `TestR160_AStaticSitesDirectoryRedirectIsRelative`, `TestR160_AStaticSitesDirectoryRedirectKeepsItsPort` |
 | **R-161** | D | Each routing adapter advertises which addressing modes it supports: subdomain, path prefix,… | 11. Networking and Routing | 03 | — | `TestR161_APortModeAppIsFoundByItsPortColumn`, `TestR161_APortModeAppIsServedAtTheRootOfItsPort`, `TestR161_AnAppsAddressFollowsItsRoutingMode`, `TestR161_InfoDescribesPortModeAndOffersNoBaseURL`, `TestR161_MigrationFillsTheAddressPortFromPinnedSpecs` |
 | **R-162** | D | Each routing adapter declares a default mode (e.g. | 11. Networking and Routing | 03 | 03 | `TestR162_AnAddressCanBeInAnyOfTheAdaptersDomains`, `TestR162_AnAppIsNamedInTheRoutingAdaptersDomain`, `TestR162_AppsAreNamedOneLevelBelowTheZone`, `TestR162_AppsCanBeNamedInOtherZones`, `TestR162_CapabilitiesAreHonestAboutTLS`, `TestR162_MovingAnAppToAnotherAdapterTakesItsDefaults`, `TestR162_MovingAnAppToTheDefaultAdapterNeedsNoOverride`, `TestR162_TheRoutingModeComesFromTheAdapterNotFromConfiguration` |

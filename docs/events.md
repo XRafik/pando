@@ -81,6 +81,8 @@ A template is checked against a sample event when it is saved, and a JSON conten
 | `app.disk_stopped` | app | Pando stopped an app that stayed over its disk limit. It stays stopped until somebody starts it. | `used_bytes` What the app's containers and volumes hold.<br>`limit_bytes` Its disk limit. |
 | `app.idle_notice` | app | Nobody has used an app for a while, and its owner was told Pando will stop or delete it. | `action` stop or delete.<br>`days` The idle setting in force.<br>`last_activity` When the app was last used, deployed or started.<br>`action_at` When Pando will act. |
 | `app.idle_stopped` | app | Pando stopped an app nobody had used. It stays stopped until somebody starts it. | `days` The idle setting in force.<br>`last_activity` When the app was last used, deployed or started. |
+| `app.orphaned` | app | None of an app's owners has an active account any more, and no group owns it. | `stopped` true when Pando stopped it, false when host policy left it running. |
+| `app.orphan_stopped` | app | Pando stopped an app none of whose owners has an active account. It stays stopped until somebody starts it. |  |
 | `app.state_changed` | app | An app moved from one state to another: running, degraded, failed, stopped, deploying and the rest. A health change is a move between running and degraded. | `from` The state it was in.<br>`to` The state it is in now. |
 | `app.restarted` | app | Somebody restarted an app. |  |
 | `app.failed` | app | Pando stopped trying to bring an app back after repeated failures. It stays failed until somebody deploys it. | `reason` Why, in words a person can act on.<br>`failures` How many attempts failed.<br>`window` Over how long. |

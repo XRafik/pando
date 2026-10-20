@@ -9,7 +9,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Banner, Button, Checkbox, Dialog, Input, Select, Tag } from '@design';
 
-import { api } from '@api/client';
+import { api, RequestFailed } from '@api/client';
 import type { Identity, ProviderView } from '@api/types.gen';
 import { Quiet, refusal } from './Accounts';
 import { LineSkeleton } from '../ui/Loading';
@@ -87,13 +87,22 @@ function LinkDialog({ userID, onClose }: { userID: string; onClose: () => void }
   const chosen = adapterID || external[0]?.id || '';
 
   const link = useMutation({
-    mutationFn: () =>
-      api.post(`/users/${userID}/identities`, { adapter_id: chosen, external_id: externalID.trim(), replace_account: replace }),
+    mutationFn: (confirm: boolean) =>
+      api.post(`/users/${userID}/identities`, {
+        adapter_id: chosen,
+        external_id: externalID.trim(),
+        replace_account: replace,
+        confirm,
+      }),
     onSuccess: () => {
       void queries.invalidateQueries({ queryKey: ['users'] });
       onClose();
     },
   });
+
+  // R-408: moving the identity would suspend the last active owner of these
+  // apps. Asked once; linking again goes ahead.
+  const orphans = link.error instanceof RequestFailed && link.error.envelope?.details?.orphaned_apps !== undefined;
 
   return (
     <Dialog
@@ -106,8 +115,12 @@ function LinkDialog({ userID, onClose }: { userID: string; onClose: () => void }
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" disabled={!chosen || !externalID.trim() || link.isPending} onClick={() => link.mutate()}>
-            {link.isPending ? 'Linking' : 'Link identity'}
+          <Button
+            variant="primary"
+            disabled={!chosen || !externalID.trim() || link.isPending}
+            onClick={() => link.mutate(orphans)}
+          >
+            {link.isPending ? 'Linking' : orphans ? 'Link anyway' : 'Link identity'}
           </Button>
         </>
       }
@@ -138,7 +151,12 @@ function LinkDialog({ userID, onClose }: { userID: string; onClose: () => void }
             />
           </>
         )}
-        {link.isError && <Banner tone="failed">{refusal(link.error)}</Banner>}
+        {link.isError &&
+          (orphans ? (
+            <Banner tone="info">{link.error.message}</Banner>
+          ) : (
+            <Banner tone="failed">{refusal(link.error)}</Banner>
+          ))}
       </div>
     </Dialog>
   );

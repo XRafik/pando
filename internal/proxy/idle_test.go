@@ -125,3 +125,16 @@ func TestR403_AnAppStoppedForDiskSaysSo(t *testing.T) {
 	require.Contains(t, body, "start it again")
 	require.NotContains(t, body, "Try again in a moment")
 }
+
+// TestR407_AnAppStoppedForHavingNoOwnerSaysSo asserts a visitor to an app
+// Pando stopped because none of its owners was active is told why and who can
+// fix it.
+func TestR407_AnAppStoppedForHavingNoOwnerSaysSo(t *testing.T) {
+	stopped := state.App{ID: appID, Slug: "notes", State: state.StateStopped, StoppedForOrphan: true}
+
+	status, body := get(t, idleProxy(t, stopped, activeUser("usr_alice"), &touches{}).URL+"/")
+	require.Equal(t, http.StatusServiceUnavailable, status)
+	require.Contains(t, body, "none of its owners has an active Pando account")
+	require.Contains(t, body, "administrator")
+	require.NotContains(t, body, "Try again in a moment")
+}

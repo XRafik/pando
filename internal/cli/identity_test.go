@@ -52,6 +52,16 @@ func TestO1_LinkingFromTheCLISaysWhatBecameAnAlias(t *testing.T) {
 	require.Contains(t, got.out, "usr_2 is now a suspended alias")
 }
 
+// R-408: --confirm goes ahead when the account the identity leaves is the last
+// active owner of an app.
+func TestR408_LinkingFromTheCLICanConfirm(t *testing.T) {
+	api := newAPI(t).reply("POST /users/usr_1/identities", map[string]any{"aliased_user_id": "usr_2"})
+	got := run(t, api, "", "identity-provider", "link", "usr_1", "idp_1", "00u1", "--replace", "--confirm")
+	require.NoError(t, got.err, got.errOut)
+	require.JSONEq(t, `{"adapter_id":"idp_1","external_id":"00u1","replace_account":true,"confirm":true}`,
+		api.bodyFor("POST /users/usr_1/identities"))
+}
+
 // R-047 and R-261: the provider list says, per provider, how soon each can
 // revoke — the same number the console shows.
 func TestR047_TheCLIListsEachProvidersRevocationWindow(t *testing.T) {

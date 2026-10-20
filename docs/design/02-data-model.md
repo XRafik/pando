@@ -885,6 +885,17 @@ Migration 000069.
 The limit is counted in the transaction that inserts the app, under `SELECT … FOR UPDATE` on the
 owner's `users` row, so two creates at once cannot both take the last place.
 
+### 2.13 Apps with no active owner (R-406 – R-408)
+
+Migration 000078.
+
+| Object | What it holds |
+|---|---|
+| `apps.orphaned_at` | When the orphan pass found the app with no active owner. NULL once it has one again, so losing that owner is a new orphaning. Set by the migration for apps already orphaned, which are not stopped. |
+| `apps.orphan_announced_at` | When administrators were told (R-408). NULL is not yet. |
+| `apps.stopped_for_orphan` | Pando stopped it for having no active owner (R-407). Cleared by `app_activity_started` on start, which leaves `orphaned_at`. In the proxy cache trigger's column list. |
+| Triggers `app_owners_*` on `users`, `grants`, `apps` | Notify `pando_app_owners` when an account's status or `deleted_at`, an Owner grant, or an app's owner of record changes, so the pass runs at once (design 05 §6.0a). |
+
 ## 3. Things deliberately not in the schema
 
 - **Hosts.** R-256: multi-machine capability lives entirely in adapters. Adding a `hosts` table would be the first step toward the scheduler R-010 forbids.

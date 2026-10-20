@@ -153,8 +153,12 @@ var ErrIdentityTaken = errs.New(errs.ValidInvalid,
 // deleted, because its ID may be an assertion subject an app holds data under
 // (R-054).
 //
+// An alias that is the last active owner of an app leaves the app with none,
+// which host policy may stop (R-407). Unless confirm is set, that is refused,
+// naming the apps (R-408).
+//
 // Returns the account that became an alias, if any.
-func (s *Identities) Link(ctx context.Context, userID, adapterID, externalID, by string, replace bool) (string, error) {
+func (s *Identities) Link(ctx context.Context, userID, adapterID, externalID, by string, replace, confirm bool) (string, error) {
 	externalID = strings.TrimSpace(externalID)
 	if externalID == "" {
 		return "", errs.New(errs.ValidInvalid, "An identity needs the provider's ID for the person.").
@@ -232,6 +236,20 @@ func (s *Identities) Link(ctx context.Context, userID, adapterID, externalID, by
 		// the last administrator is the lockout reached another way. Moving
 		// its grants would be a merge, which O-1 rules out; the administrator
 		// grants the surviving account what it needs.
+		if !confirm {
+			orphaned, err := lastOwnerOf(ctx, tx, current)
+			if err != nil {
+				return "", err
+			}
+			if len(orphaned) > 0 {
+				return "", errs.Newf(errs.ValidInvalid,
+					"Moving this identity suspends account %s, the last active owner of %s. "+
+						"An app with no active owner is stopped unless host policy turns that off.",
+					current, joinNames(orphaned)).
+					WithDetail("orphaned_apps", orphaned).
+					WithRemedy("Give this account Owner on them first, or link the identity again with confirm set.")
+			}
+		}
 		before, err := lockoutForUsers(ctx, tx, current)
 		if err != nil {
 			return "", errs.Wrap(errs.Internal, "Could not link the identity.", err)

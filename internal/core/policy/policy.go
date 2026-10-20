@@ -131,6 +131,12 @@ type Document struct {
 	IdleStopDays   int `json:"idle_stop_days,omitempty"`
 	IdleDeleteDays int `json:"idle_delete_days,omitempty"`
 
+	// StopOrphanedApps stops an app the moment none of its owners is active
+	// (R-407). On unless set false: nil is on, so an install whose stored
+	// policy predates the setting has it. Administrators are told either way
+	// (R-408).
+	StopOrphanedApps *bool `json:"stop_orphaned_apps,omitempty"`
+
 	// MaxAppsPerUser is how many apps a person may own unless their account or
 	// a group of theirs says otherwise (R-244). Zero is unlimited.
 	MaxAppsPerUser int `json:"max_apps_per_user,omitempty"`
@@ -328,6 +334,12 @@ func (d Document) GraceHours() int {
 	return DefaultInsecureGraceHours
 }
 
+// StopsOrphanedApps reports whether an app with no active owner is stopped
+// (R-407). On unless turned off.
+func (d Document) StopsOrphanedApps() bool {
+	return d.StopOrphanedApps == nil || *d.StopOrphanedApps
+}
+
 // StopsInsecureApps reports whether policy says to stop them (R-316).
 func (d Document) StopsInsecureApps() bool {
 	return d.InsecureAction == InsecureStop
@@ -368,9 +380,10 @@ func (d Document) PublicSharingMode() PublicSharing {
 
 // Default is the permissive starting posture (R-270).
 func Default() Document {
-	allowAnonymous := true
+	allowAnonymous, stopOrphaned := true, true
 	return Document{
 		AllowAnonymousGrants: &allowAnonymous,
+		StopOrphanedApps:     &stopOrphaned,
 		MinBuildIsolation:    spec.IsolationContainer,
 		MinRuntimeIsolation:  spec.IsolationContainer,
 

@@ -19,10 +19,24 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+### Added
+
+- **An app whose owners are all gone is stopped** (R-406 – R-408). When every account that owns an
+  app is suspended or deleted (for example, deactivated in Okta and pushed by SCIM) and no group owns
+  it, Pando stops the app at once and tells everyone holding the Administrator role. The app keeps its
+  data and stays stopped until somebody starts it; giving someone Owner on it gives it an owner again.
+  Host policy `stop_orphaned_apps`, on by default, turns the stop off; administrators are told either
+  way. Linking an identity that would leave an app with no active owner now needs confirming.
+
 ### Changed
 
 - **Adding an app from a source connection picks the repository in one field.** Type part of its
   name and choose it from the list under the field; the separate search box is gone.
+
+### Upgrade notes
+
+- Apps that already have no active owner when you upgrade are not stopped. Administrators get one
+  notice listing them.
 
 ## [0.12.0] - 2026-10-20
 
