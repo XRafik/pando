@@ -220,8 +220,8 @@ func packageRecipe(in Install, format, arch string) string {
 	url := in.Download + file
 	return strings.Join([]string{
 		"VERSION=" + exampleVersion + "   # the release you want",
-		"curl -LO " + strings.ReplaceAll(url, versionPlaceholder, "${VERSION}"),
-		"sudo apt install ./" + strings.ReplaceAll(file, versionPlaceholder, "${VERSION}"),
+		"curl -LO " + versionVar(url),
+		"sudo apt install ./" + versionVar(file),
 	}, "\n")
 }
 
@@ -231,8 +231,8 @@ func archiveRecipe(in Install, os, arch string) string {
 	url := in.Download + file
 	return strings.Join([]string{
 		"VERSION=" + exampleVersion + "   # the release you want",
-		"curl -LO " + strings.ReplaceAll(url, versionPlaceholder, "${VERSION}"),
-		"tar xzf " + strings.ReplaceAll(file, versionPlaceholder, "${VERSION}"),
+		"curl -LO " + versionVar(url),
+		"tar xzf " + versionVar(file),
 		"sudo mv pando /usr/local/bin/",
 	}, "\n")
 }
@@ -243,12 +243,15 @@ const (
 	versionPlaceholder = "<version>"
 )
 
+// versionVar puts the shell variable a recipe sets where the version goes.
+func versionVar(s string) string { return strings.ReplaceAll(s, versionPlaceholder, "${VERSION}") }
+
 // windowsRecipe is the same for Windows's zip, in PowerShell.
 func windowsRecipe(in Install, arch string) string {
-	file := strings.ReplaceAll(strings.ReplaceAll(in.WindowsArchive, archPlaceholder, arch), versionPlaceholder, "${VERSION}")
+	file := versionVar(strings.ReplaceAll(in.WindowsArchive, archPlaceholder, arch))
 	return strings.Join([]string{
 		"$VERSION = \"" + exampleVersion + "\"   # the release you want",
-		"Invoke-WebRequest " + strings.ReplaceAll(in.Download, versionPlaceholder, "${VERSION}") + file + " -OutFile " + file,
+		"Invoke-WebRequest " + versionVar(in.Download) + file + " -OutFile " + file,
 		"Expand-Archive " + file + " \"$env:LOCALAPPDATA\\Programs\\pando\"",
 	}, "\n")
 }
