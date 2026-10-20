@@ -420,7 +420,10 @@ an account that must change its password, so neither requirement can be stepped 
 Cross-site posts are refused by `sameOriginWrites` like any other.
 
 **[D] Nothing waits as a credential.** The token is made at the exchange, not at approval, so no token
-secret is stored to be collected. One wrong attempt spends the code. Approvals nobody collected are
+secret is stored to be collected. One wrong attempt spends the code, and is audited as
+`cli_sign_in.denied` against the account whose approval it spent. A code that matches no approval is
+refused with nothing written: the exchange is public, and a row per guess would let anyone grow the
+audit log. Approvals nobody collected are
 removed by the retention job with expired sign-in flows.
 
 **[P]** `--no-browser` prints the address and reads the code the page shows instead, for a CLI on a

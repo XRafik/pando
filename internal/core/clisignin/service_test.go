@@ -163,10 +163,13 @@ func TestR406_ACodeIsWorthNothingWithoutItsVerifier(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, approved.RedirectURL, "pasted, not redirected")
 
-	_, err = r.svc.Exchange(ctx, code(t, approved), strings.Repeat("x", 43))
+	refused, err := r.svc.Exchange(ctx, code(t, approved), strings.Repeat("x", 43))
 	requireCode(t, err, errs.AuthInvalid, "wrong verifier")
-	_, err = r.svc.Exchange(ctx, code(t, approved), verifier)
+	require.Equal(t, clisignin.Exchanged{UserID: "usr_ada", ApprovedBy: "ses_1", Name: "laptop CLI"}, refused,
+		"says whose approval was spent, for the audit log")
+	refused, err = r.svc.Exchange(ctx, code(t, approved), verifier)
 	requireCode(t, err, errs.AuthInvalid, "spent by the wrong verifier")
+	require.Empty(t, refused.UserID, "a code that names nothing says nothing")
 	require.Empty(t, r.tokens.made)
 
 	_, err = r.svc.Exchange(ctx, code(t, approved), "short")

@@ -89,10 +89,25 @@ func TestR406_TheCLISignsInThroughTheBrowserEndToEnd(t *testing.T) {
 		map[string]string{"code": a.Code, "code_verifier": cliVerifier})
 	require.Equal(t, http.StatusUnauthorized, again.Code, "a code works once")
 
+	// Guesses and spent codes leave no audit row: the route is public, and a
+	// row per request would be a row anybody can add.
 	var denied int
 	require.NoError(t, i.db.QueryRow(context.Background(),
 		`SELECT count(*) FROM audit_events WHERE action = 'cli_sign_in.denied'`).Scan(&denied))
-	require.Equal(t, 2, denied)
+	require.Equal(t, 0, denied)
+
+	// A wrong verifier on a real approval spends it, and is recorded against
+	// the account that approved it.
+	second := approveCLI(i, dana, 0)
+	require.Equal(t, http.StatusCreated, second.Code, second.String())
+	var b struct {
+		Code string `json:"code"`
+	}
+	second.JSON(t, &b)
+	stolen := i.anon(http.MethodPost, "/cli-sign-ins/token",
+		map[string]string{"code": b.Code, "code_verifier": cliVerifier + "-not-the-one"})
+	require.Equal(t, http.StatusUnauthorized, stolen.Code, stolen.String())
+	require.Equal(t, 1, auditCount(t, i, "cli_sign_in.denied", danaID))
 }
 
 // TestR406_OnlyASignedInPersonApprovesACLISignIn asserts R-406: nobody signed

@@ -90,9 +90,15 @@ func (s *Server) handleExchangeCLISignIn(w http.ResponseWriter, r *http.Request)
 
 	got, err := s.CLISignIn.Exchange(r.Context(), req.Code, req.CodeVerifier)
 	if err != nil {
-		if e := errs.As(err); e != nil && e.Code == errs.AuthInvalid {
+		// Only a code that named an approval is recorded, against the account
+		// that approved it. A guess at a code is refused without an audit
+		// row: this route is public, and each row would otherwise be one
+		// anybody can add.
+		if e := errs.As(err); e != nil && e.Code == errs.AuthInvalid && got.UserID != "" {
 			s.audit(r, audit.Event{
 				PrincipalKind: audit.KindAnonymous, Action: "cli_sign_in.denied",
+				TargetKind: "user", TargetID: got.UserID,
+				Detail: map[string]any{"name": got.Name, "approved_by": got.ApprovedBy},
 			})
 		}
 		Error(w, r, err)

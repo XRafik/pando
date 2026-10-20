@@ -215,7 +215,10 @@ func spent() error {
 }
 
 // Exchange trades a code and the verifier behind its challenge for a
-// delegated token. The approval is gone whatever the outcome.
+// delegated token. The approval is gone whatever the outcome. When a code
+// that named an approval is refused, the Exchanged returned with the error
+// says whose it was (UserID, ApprovedBy, Name); for any other refusal it is
+// empty.
 func (s *Service) Exchange(ctx context.Context, code, verifier string) (Exchanged, error) {
 	if code == "" || !verifierShape.MatchString(verifier) {
 		return Exchanged{}, spent()
@@ -224,17 +227,24 @@ func (s *Service) Exchange(ctx context.Context, code, verifier string) (Exchange
 	if err != nil {
 		return Exchanged{}, err
 	}
-	if !found || !s.Clock.Now().Before(approval.ExpiresAt) {
+	if !found {
 		return Exchanged{}, spent()
 	}
-	if subtle.ConstantTimeCompare([]byte(Challenge(verifier)), []byte(approval.CodeChallenge)) != 1 {
-		return Exchanged{}, spent()
+
+	// From here a refusal spent a real approval, and says whose: the caller
+	// audits that, and only that. A code that matched nothing is refused
+	// without a trace, so nobody can grow the audit log by posting guesses
+	// to a public endpoint; every approval took a signed-in person to make.
+	refused := Exchanged{UserID: approval.UserID, ApprovedBy: approval.ApprovedBy, Name: approval.TokenName}
+	if !s.Clock.Now().Before(approval.ExpiresAt) ||
+		subtle.ConstantTimeCompare([]byte(Challenge(verifier)), []byte(approval.CodeChallenge)) != 1 {
+		return refused, spent()
 	}
 
 	// Approved minutes ago, but the account may have been suspended since.
 	user, err := s.user(ctx, approval.UserID)
 	if err != nil {
-		return Exchanged{}, err
+		return refused, err
 	}
 
 	doc, err := s.Policy.Load(ctx)
