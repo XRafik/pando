@@ -24,6 +24,7 @@ type apiCall struct {
 type session struct {
 	calls  []apiCall
 	result string
+	noBody bool
 	err    error
 }
 
@@ -39,7 +40,11 @@ func (s *session) run(t *testing.T, srv *mcp.Server, requests ...string) []map[s
 		if body2 == "" {
 			body2 = `{"ok":true}`
 		}
-		return json.Unmarshal([]byte(body2), out)
+		if s.noBody {
+			body2 = ""
+		}
+		*out.(*[]byte) = []byte(body2)
+		return nil
 	}
 
 	var in strings.Builder
@@ -549,6 +554,28 @@ func TestASuccessfulCallReturnsTheAPIsJSONVerbatim(t *testing.T) {
 
 	replies := s.run(t, srv, call(1, "pando_list_apps", `{}`))
 	require.JSONEq(t, s.result, text(t, replies[0]))
+}
+
+// TestR262_PlainTextLogsReachTheAgentVerbatim asserts R-262 for the one
+// endpoint whose response is not JSON. Logs that open with npm's banner, or
+// carry one JSON object per line, are returned whole and unchanged.
+func TestR262_PlainTextLogsReachTheAgentVerbatim(t *testing.T) {
+	srv, s := newSession()
+	s.result = "> notes@1.0.0 start\n> node server.js\n{\"level\":\"info\",\"msg\":\"listening\"}\n{\"level\":\"info\",\"msg\":\"ready\"}\n"
+
+	replies := s.run(t, srv, call(1, "pando_get_logs", `{"app_id":"app_01HQ8"}`))
+	require.Nil(t, replies[0]["result"].(map[string]any)["isError"])
+	require.Equal(t, s.result, text(t, replies[0]))
+}
+
+// An endpoint that answers 204 has no body, and the agent is told it worked
+// rather than handed an empty string.
+func TestAnEmptyResponseTellsTheAgentTheCallWorked(t *testing.T) {
+	srv, s := newSession()
+	s.noBody = true
+
+	replies := s.run(t, srv, call(1, "pando_favorite_app", `{"app_id":"app_01HQ8"}`))
+	require.Equal(t, "Done.", text(t, replies[0]))
 }
 
 // A tools/call result can carry a whole app spec, and the default scanner

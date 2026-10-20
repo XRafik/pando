@@ -223,7 +223,19 @@ func (c *Client) Do(method, path string, body, out any) error {
 		_, _ = io.Copy(io.Discard, resp.Body)
 		return nil
 	}
-	return json.NewDecoder(resp.Body).Decode(out)
+	return decodeBody(resp.Body, out)
+}
+
+// decodeBody reads a successful response into out. A *[]byte receives the body
+// as sent, whatever its type: the MCP server hands a response to the agent
+// verbatim, and one of them — an app's logs — is plain text, not JSON.
+func decodeBody(r io.Reader, out any) error {
+	if raw, ok := out.(*[]byte); ok {
+		body, err := io.ReadAll(r)
+		*raw = body
+		return err
+	}
+	return json.NewDecoder(r).Decode(out)
 }
 
 // decodeInto unmarshals an error envelope, tolerating a body that is not one.

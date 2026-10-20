@@ -19,6 +19,25 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+### Security
+
+No new advisories.
+
+### Added
+
+- **The CLI is released for Windows**, as `pando_<version>_windows_amd64.zip` and `_arm64.zip`
+  holding `pando.exe`. An MCP client on Windows, such as Claude Desktop, can now run `pando mcp`;
+  its configuration names the full path to `pando.exe`. `pando self-update` works there too.
+
+### Fixed
+
+- The MCP tool `pando_get_logs` failed with `invalid character '>' looking for beginning of value`
+  on an app whose logs started with anything but JSON, such as npm's `> app@1.0.0 start`. For an app
+  logging one JSON object per line, it returned only the first line. It now returns the logs as
+  written.
+- An MCP tool whose call succeeds with nothing to return, such as `pando_favorite_app`, answers
+  `Done.` rather than an empty result.
+
 ## [0.11.0] - 2026-10-20
 
 ### Security

@@ -32,6 +32,9 @@ Or, by hand, in an MCP client's configuration:
 }
 ```
 
+On Windows, `command` is the full path to `pando.exe`, with each backslash doubled:
+`"C:\\Users\\you\\AppData\\Local\\Programs\\pando\\pando.exe"`.
+
 ## Tools
 
 One tool per endpoint, deliberately. A tool that composed several calls would be

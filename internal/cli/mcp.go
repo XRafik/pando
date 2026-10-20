@@ -35,12 +35,7 @@ func MCPCommand() *cobra.Command {
 
 			s := &mcp.Server{
 				Version: Version,
-				Call: func(_ context.Context, method, path string, body, out any) error {
-					if raw, ok := body.(mcp.Bytes); ok {
-						return c.sendBytes(method, path, raw.ContentType, raw.Data, out)
-					}
-					return c.Do(method, path, body, out)
-				},
+				Call:    mcpCall(c),
 			}
 			// Stdout is the protocol stream. Anything else written there
 			// corrupts it, which is why every diagnostic in this package goes
@@ -48,5 +43,16 @@ func MCPCommand() *cobra.Command {
 			fmt.Fprintf(os.Stderr, "pando mcp: connected to %s\n", c.BaseURL)
 			return s.Serve(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout())
 		},
+	}
+}
+
+// mcpCall is the MCP server's way to the API: the CLI's own client, so an agent
+// reaches nothing a person at the terminal could not.
+func mcpCall(c *Client) func(ctx context.Context, method, path string, body, out any) error {
+	return func(_ context.Context, method, path string, body, out any) error {
+		if raw, ok := body.(mcp.Bytes); ok {
+			return c.sendBytes(method, path, raw.ContentType, raw.Data, out)
+		}
+		return c.Do(method, path, body, out)
 	}
 }

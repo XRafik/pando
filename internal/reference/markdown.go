@@ -88,8 +88,12 @@ func CLIMarkdown(doc Document) string {
 	b.WriteString("For `.rpm`, `dnf install` the same file; for `.apk`,\n")
 	b.WriteString("`apk add --allow-untrusted`. On an ARM machine, `arm64` in place of `amd64`.\n\n")
 
+	tarballs, windows := splitWindows(doc.Install.Platforms)
+	b.WriteString("**Windows:** a zip holding `pando.exe`, named `" + doc.Install.WindowsArchive + "`, for " +
+		list(windows, "`%s`") + ". In PowerShell:\n\n")
+	b.WriteString("```\n" + windowsRecipe(doc.Install, "amd64") + "\n```\n\n")
 	b.WriteString("**Anything else:** plain tarballs, named `" + doc.Install.Archive + "`, for " +
-		list(doc.Install.Platforms, "`%s`") + ":\n\n")
+		list(tarballs, "`%s`") + ":\n\n")
 	b.WriteString("```\n" + archiveRecipe(doc.Install, "darwin", "arm64") + "\n```\n\n")
 	b.WriteString("Every release is published with a checksum file signed by the release workflow;\n")
 	b.WriteString("verifying it is described in [releasing.md](releasing.md).\n\n")
@@ -158,6 +162,8 @@ func MCPMarkdown(doc Document) string {
 		"      \"args\": [\"mcp\"],\n      \"env\": {\n        \"" + doc.Connect.ServerEnv +
 		"\": \"https://pando.example.com\",\n" +
 		"        \"" + doc.Connect.TokenEnv + "\": \"tok_…\"\n      }\n    }\n  }\n}\n```\n\n")
+	b.WriteString("On Windows, `command` is the full path to `pando.exe`, with each backslash doubled:\n" +
+		"`\"C:\\\\Users\\\\you\\\\AppData\\\\Local\\\\Programs\\\\pando\\\\pando.exe\"`.\n\n")
 	b.WriteString("## Tools\n\n")
 	b.WriteString("One tool per endpoint, deliberately. A tool that composed several calls would be\n")
 	b.WriteString("a capability the CLI and console do not have. Exec, reading a secret's value,\n")
@@ -210,25 +216,56 @@ func arguments(schema map[string]any) string {
 // instruction somebody has to assemble before they can run it, and assembling
 // it is where they get it wrong.
 func packageRecipe(in Install, format, arch string) string {
-	file := strings.NewReplacer("<format>", format, "<arch>", arch).Replace(in.Package)
+	file := strings.NewReplacer("<format>", format, archPlaceholder, arch).Replace(in.Package)
 	url := in.Download + file
 	return strings.Join([]string{
 		"VERSION=" + exampleVersion + "   # the release you want",
-		"curl -LO " + strings.ReplaceAll(url, "<version>", "${VERSION}"),
-		"sudo apt install ./" + strings.ReplaceAll(file, "<version>", "${VERSION}"),
+		"curl -LO " + versionVar(url),
+		"sudo apt install ./" + versionVar(file),
 	}, "\n")
 }
 
 // archiveRecipe is the same for a tarball.
 func archiveRecipe(in Install, os, arch string) string {
-	file := strings.NewReplacer("<os>", os, "<arch>", arch).Replace(in.Archive)
+	file := strings.NewReplacer("<os>", os, archPlaceholder, arch).Replace(in.Archive)
 	url := in.Download + file
 	return strings.Join([]string{
 		"VERSION=" + exampleVersion + "   # the release you want",
-		"curl -LO " + strings.ReplaceAll(url, "<version>", "${VERSION}"),
-		"tar xzf " + strings.ReplaceAll(file, "<version>", "${VERSION}"),
+		"curl -LO " + versionVar(url),
+		"tar xzf " + versionVar(file),
 		"sudo mv pando /usr/local/bin/",
 	}, "\n")
+}
+
+// The parts of a release file's name a person substitutes.
+const (
+	archPlaceholder    = "<arch>"
+	versionPlaceholder = "<version>"
+)
+
+// versionVar puts the shell variable a recipe sets where the version goes.
+func versionVar(s string) string { return strings.ReplaceAll(s, versionPlaceholder, "${VERSION}") }
+
+// windowsRecipe is the same for Windows's zip, in PowerShell.
+func windowsRecipe(in Install, arch string) string {
+	file := versionVar(strings.ReplaceAll(in.WindowsArchive, archPlaceholder, arch))
+	return strings.Join([]string{
+		"$VERSION = \"" + exampleVersion + "\"   # the release you want",
+		"Invoke-WebRequest " + versionVar(in.Download) + file + " -OutFile " + file,
+		"Expand-Archive " + file + " \"$env:LOCALAPPDATA\\Programs\\pando\"",
+	}, "\n")
+}
+
+// splitWindows separates the platforms released as a zip from the rest.
+func splitWindows(platforms []string) (tarballs, windows []string) {
+	for _, p := range platforms {
+		if strings.HasPrefix(p, "windows/") {
+			windows = append(windows, p)
+		} else {
+			tarballs = append(tarballs, p)
+		}
+	}
+	return tarballs, windows
 }
 
 // exampleVersion stands in for whatever is current. It is a placeholder in a

@@ -12,7 +12,6 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
-	"syscall"
 
 	"github.com/coder/websocket"
 	"golang.org/x/term"
@@ -147,19 +146,22 @@ func (c *Client) watchResize(ctx context.Context, conn *websocket.Conn, fd int) 
 	}
 	send()
 
-	sigwinch := make(chan os.Signal, 1)
-	signal.Notify(sigwinch, syscall.SIGWINCH)
-	go func() {
-		defer signal.Stop(sigwinch)
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-sigwinch:
-				send()
-			}
+	if resized := notifyResize(); resized != nil {
+		go forwardResizes(ctx, resized, send)
+	}
+}
+
+// forwardResizes sends the size again on every resize until the session ends.
+func forwardResizes(ctx context.Context, resized chan os.Signal, send func()) {
+	defer signal.Stop(resized)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-resized:
+			send()
 		}
-	}()
+	}
 }
 
 // pump copies bytes both ways until one side ends.

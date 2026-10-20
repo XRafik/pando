@@ -24,6 +24,9 @@ type Install struct {
 	Packages []string `json:"packages"`
 	// Archive is how a tarball is named, with the parts a person substitutes.
 	Archive string `json:"archive"`
+	// WindowsArchive is how Windows's zip is named. A zip rather than a
+	// tarball, holding pando.exe.
+	WindowsArchive string `json:"windows_archive"`
 	// Package is how a Linux package is named. Same shape as Archive, so one
 	// download line covers every format.
 	Package string `json:"package"`
@@ -38,14 +41,17 @@ type Install struct {
 
 func install() Install {
 	return Install{
-		Repo:        "https://github.com/trypando/pando",
-		Module:      "github.com/trypando/pando/cmd/pando",
-		Homebrew:    "trypando/tap/pando",
-		Packages:    []string{"deb", "rpm", "apk"},
-		Archive:     "pando_<version>_<os>_<arch>.tar.gz",
-		Package:     "pando_<version>_linux_<arch>.<format>",
-		Download:    "https://github.com/trypando/pando/releases/download/v<version>/",
-		Platforms:   []string{"darwin/amd64", "darwin/arm64", "linux/amd64", "linux/arm64"},
+		Repo:           "https://github.com/trypando/pando",
+		Module:         "github.com/trypando/pando/cmd/pando",
+		Homebrew:       "trypando/tap/pando",
+		Packages:       []string{"deb", "rpm", "apk"},
+		Archive:        "pando_<version>_<os>_<arch>.tar.gz",
+		WindowsArchive: "pando_<version>_windows_<arch>.zip",
+		Package:        "pando_<version>_linux_<arch>.<format>",
+		Download:       "https://github.com/trypando/pando/releases/download/v<version>/",
+		Platforms: []string{
+			"darwin/amd64", "darwin/arm64", "linux/amd64", "linux/arm64", "windows/amd64", "windows/arm64",
+		},
 		InContainer: "docker compose exec pando pando",
 	}
 }
