@@ -19,33 +19,38 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-20
+
 ### Security
 
 No new advisories.
 
 ### Added
 
-- **Pando creates the GitHub App itself** (R-091). A GitHub source connection signs in with a GitHub
-  App by default, marked recommended. Saving one opens GitHub with the App filled in — read access
-  to repository contents and nothing more — under your account or the connection's organization;
-  choose **Create GitHub App**, pick the repositories, choose **Install**, and the connection is
-  ready. No App ID, private key or installation ID is copied by hand. Each installation of Pando
-  gets its own App. `pando source authorize` and the MCP tool hand you a console link to finish it
-  in the browser, where GitHub requires it. GitHub cannot set an App's logo for Pando, so the last
-  step offers Pando's logo to download and links to the App's settings page to upload it.
-- The App Pando creates carries a **push webhook** when Pando's address is public (R-142), so a push
-  starts an automatic deploy at once rather than at the next poll; **Deploy on push** turns it off.
-  On a private address the App has no webhook, which GitHub would refuse, and auto-deploy polls.
-- **Slack is connected in one step** (R-374). A Slack adapter posts as Pando's own Slack app, which Pando
-  creates when you connect it: paste a configuration token from Slack's app settings, choose **Allow** on
-  Slack's screen, and it is ready. The app gets Pando's icon, and the token is used once and never stored.
-  On a Pando without an https address, Slack can't send you back, so you create the app from a link Pando
-  gives and paste its bot token. `pando notify connect` and the MCP tools do the same.
-- **A Slack subscription chooses its channel** (R-367). One Slack connection posts to any public channel,
-  and to private ones Pando is invited to; the console lists them, and `pando notify channels` and
-  `--channel` on `pando subscriptions` do the same.
-- **Notification adapters apply without a restart.** Adding or connecting one takes effect at once, on
-  every replica.
+- **Pando creates the GitHub App itself** (#279, R-091). A GitHub source connection signs in with a
+  GitHub App by default, marked recommended. Saving one opens GitHub with the App filled in — read
+  access to repository contents and nothing more — under your account or the connection's
+  organization; choose **Create GitHub App**, pick the repositories, choose **Install**, and the
+  connection is ready. No App ID, private key or installation ID is copied by hand. Each
+  installation of Pando gets its own App. `pando source authorize` and the MCP tool hand you a
+  console link to finish it in the browser, where GitHub requires it. GitHub cannot set an App's
+  logo for Pando, so the last step offers Pando's logo to download and links to the App's settings
+  page to upload it.
+- The App Pando creates carries a **push webhook** when Pando's address is public (#279, R-142), so
+  a push starts an automatic deploy at once rather than at the next poll; **Deploy on push** turns
+  it off. On a private address the App has no webhook, which GitHub would refuse, and auto-deploy
+  polls.
+- **Slack is connected in one step** (#280, R-374). A Slack adapter posts as Pando's own Slack app,
+  which Pando creates when you connect it: paste a configuration token from Slack's app settings,
+  choose **Allow** on Slack's screen, and it is ready. The app gets Pando's icon, and the token is
+  used once and never stored. On a Pando without an https address, Slack can't send you back, so you
+  create the app from a link Pando gives and paste its bot token. `pando notify connect` and the MCP
+  tools do the same.
+- **A Slack subscription chooses its channel** (#280, R-367). One Slack connection posts to any
+  public channel, and to private ones Pando is invited to; the console lists them, and `pando notify
+  channels` and `--channel` on `pando subscriptions` do the same.
+- **Notification adapters apply without a restart** (#280). Adding or connecting one takes effect at
+  once, on every replica.
 
 ### Changed
 
@@ -56,8 +61,10 @@ No new advisories.
 
 ### Fixed
 
-- The secrets key and API token key are flushed to disk when Pando first creates them. A power loss
-  just after first start could leave either one empty, and Pando then failed at every start.
+- The secrets key and API token key are flushed to disk when Pando first creates them (#282). A
+  power loss just after first start could leave either one empty, and Pando then failed at every
+  start.
+- The guided adapter setup fits a phone's screen (#278).
 
 ## [0.10.0] - 2026-10-19
 
@@ -1249,7 +1256,8 @@ review the proposal as usual.
 The first release. Its notes were generated from the commit log, which is what this file now exists
 to replace; see the release page for the artifact list.
 
-[Unreleased]: https://github.com/trypando/pando/compare/v0.10.0...main
+[Unreleased]: https://github.com/trypando/pando/compare/v0.11.0...main
+[0.11.0]: https://github.com/trypando/pando/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/trypando/pando/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/trypando/pando/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/trypando/pando/compare/v0.7.0...v0.8.0
