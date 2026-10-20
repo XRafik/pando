@@ -146,21 +146,22 @@ func (c *Client) watchResize(ctx context.Context, conn *websocket.Conn, fd int) 
 	}
 	send()
 
-	resized := notifyResize()
-	if resized == nil {
-		return
+	if resized := notifyResize(); resized != nil {
+		go forwardResizes(ctx, resized, send)
 	}
-	go func() {
-		defer signal.Stop(resized)
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-resized:
-				send()
-			}
+}
+
+// forwardResizes sends the size again on every resize until the session ends.
+func forwardResizes(ctx context.Context, resized chan os.Signal, send func()) {
+	defer signal.Stop(resized)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-resized:
+			send()
 		}
-	}()
+	}
 }
 
 // pump copies bytes both ways until one side ends.

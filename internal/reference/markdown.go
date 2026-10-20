@@ -216,33 +216,39 @@ func arguments(schema map[string]any) string {
 // instruction somebody has to assemble before they can run it, and assembling
 // it is where they get it wrong.
 func packageRecipe(in Install, format, arch string) string {
-	file := strings.NewReplacer("<format>", format, "<arch>", arch).Replace(in.Package)
+	file := strings.NewReplacer("<format>", format, archPlaceholder, arch).Replace(in.Package)
 	url := in.Download + file
 	return strings.Join([]string{
 		"VERSION=" + exampleVersion + "   # the release you want",
-		"curl -LO " + strings.ReplaceAll(url, "<version>", "${VERSION}"),
-		"sudo apt install ./" + strings.ReplaceAll(file, "<version>", "${VERSION}"),
+		"curl -LO " + strings.ReplaceAll(url, versionPlaceholder, "${VERSION}"),
+		"sudo apt install ./" + strings.ReplaceAll(file, versionPlaceholder, "${VERSION}"),
 	}, "\n")
 }
 
 // archiveRecipe is the same for a tarball.
 func archiveRecipe(in Install, os, arch string) string {
-	file := strings.NewReplacer("<os>", os, "<arch>", arch).Replace(in.Archive)
+	file := strings.NewReplacer("<os>", os, archPlaceholder, arch).Replace(in.Archive)
 	url := in.Download + file
 	return strings.Join([]string{
 		"VERSION=" + exampleVersion + "   # the release you want",
-		"curl -LO " + strings.ReplaceAll(url, "<version>", "${VERSION}"),
-		"tar xzf " + strings.ReplaceAll(file, "<version>", "${VERSION}"),
+		"curl -LO " + strings.ReplaceAll(url, versionPlaceholder, "${VERSION}"),
+		"tar xzf " + strings.ReplaceAll(file, versionPlaceholder, "${VERSION}"),
 		"sudo mv pando /usr/local/bin/",
 	}, "\n")
 }
 
+// The parts of a release file's name a person substitutes.
+const (
+	archPlaceholder    = "<arch>"
+	versionPlaceholder = "<version>"
+)
+
 // windowsRecipe is the same for Windows's zip, in PowerShell.
 func windowsRecipe(in Install, arch string) string {
-	file := strings.ReplaceAll(strings.ReplaceAll(in.WindowsArchive, "<arch>", arch), "<version>", "${VERSION}")
+	file := strings.ReplaceAll(strings.ReplaceAll(in.WindowsArchive, archPlaceholder, arch), versionPlaceholder, "${VERSION}")
 	return strings.Join([]string{
 		"$VERSION = \"" + exampleVersion + "\"   # the release you want",
-		"Invoke-WebRequest " + strings.ReplaceAll(in.Download, "<version>", "${VERSION}") + file + " -OutFile " + file,
+		"Invoke-WebRequest " + strings.ReplaceAll(in.Download, versionPlaceholder, "${VERSION}") + file + " -OutFile " + file,
 		"Expand-Archive " + file + " \"$env:LOCALAPPDATA\\Programs\\pando\"",
 	}, "\n")
 }

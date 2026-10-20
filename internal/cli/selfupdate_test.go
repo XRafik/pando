@@ -153,6 +153,37 @@ func TestR363_SelfUpdateReplacesTheBinaryOnlyAfterTheSignatureAndChecksumHold(t 
 		require.ErrorContains(t, err, "no pando_0.4.0_linux_riscv64.tar.gz for this platform")
 	})
 
+	t.Run("an archive that cannot be downloaded replaces nothing", func(t *testing.T) {
+		r, archive := newRelease(t, "0.4.0", []byte("new binary"))
+		delete(r.files, archive)
+		u, exe := updater(t, r, nil)
+		_, err := runSelfUpdate(t, u, "0.4.0", false)
+		require.ErrorContains(t, err, "404")
+		got, _ := os.ReadFile(exe)
+		require.Equal(t, "old binary", string(got))
+	})
+
+	t.Run("an archive without the binary replaces nothing", func(t *testing.T) {
+		r, archive := newRelease(t, "0.4.0", nil)
+		tb := tarball(t, "README.md", []byte("hi"))
+		sum := sha256.Sum256(tb)
+		r.files[archive] = tb
+		r.files["https://example.test/v0.4.0/checksums.txt"] = []byte(hex.EncodeToString(sum[:]) + "  pando_0.4.0_linux_amd64.tar.gz\n")
+		u, exe := updater(t, r, nil)
+		_, err := runSelfUpdate(t, u, "0.4.0", false)
+		require.ErrorContains(t, err, "no pando binary")
+		got, _ := os.ReadFile(exe)
+		require.Equal(t, "old binary", string(got))
+	})
+
+	t.Run("a binary that cannot be replaced says which", func(t *testing.T) {
+		r, _ := newRelease(t, "0.4.0", []byte("new binary"))
+		u, _ := updater(t, r, nil)
+		u.exe = filepath.Join(t.TempDir(), "gone", "pando")
+		_, err := runSelfUpdate(t, u, "0.4.0", false)
+		require.ErrorContains(t, err, "could not replace "+u.exe)
+	})
+
 	t.Run("already the latest", func(t *testing.T) {
 		Version = "0.4.0"
 		t.Cleanup(func() { Version = "0.3.1" })
