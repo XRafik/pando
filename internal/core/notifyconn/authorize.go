@@ -163,9 +163,11 @@ func (s *Service) connectable(ctx context.Context, id string) (Adapter, error) {
 	return a, nil
 }
 
-// store writes what connecting returned, all or none: a connection left with
-// half of it could neither send nor be connected again. On a failure the
-// fields already written are put back, on a context of their own.
+// store replaces the adapter's credentials with what connecting returned,
+// all or none: a connection left with half of it could neither send nor be
+// connected again, and one left with a field from before — the app a Slack
+// adapter was connected to last time — would point at the wrong app. On a
+// failure the fields already changed are put back, on a context of their own.
 func (s *Service) store(ctx context.Context, id string, creds map[string]secret.Value) error {
 	if len(creds) == 0 {
 		return errs.New(errs.AdapterFailed, "The provider finished connecting without a credential.")
@@ -174,13 +176,23 @@ func (s *Service) store(ctx context.Context, id string, creds map[string]secret.
 	if err != nil {
 		return err
 	}
-	var written []string
+	var changed []string
 	for field, v := range creds {
 		if err := s.Credentials.Put(ctx, id, field, v); err != nil {
-			s.putBack(ctx, id, before, written)
+			s.putBack(ctx, id, before, changed)
 			return err
 		}
-		written = append(written, field)
+		changed = append(changed, field)
+	}
+	for field := range before {
+		if _, kept := creds[field]; kept {
+			continue
+		}
+		if err := s.Credentials.Delete(ctx, id, field); err != nil {
+			s.putBack(ctx, id, before, changed)
+			return err
+		}
+		changed = append(changed, field)
 	}
 	return nil
 }

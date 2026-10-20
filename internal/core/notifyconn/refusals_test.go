@@ -124,6 +124,13 @@ func TestAFailedStorePutsBackWhatWasThere(t *testing.T) {
 	require.Equal(t, "old", store.m["ntf_chat"]["token"].Reveal())
 	require.Equal(t, "A0", store.m["ntf_chat"]["app_id"].Reveal())
 
+	// Connecting again replaces what was there: no field of the last
+	// connection is left behind.
+	store.fails = ""
+	store.m["ntf_chat"]["client_secret"] = secret.New("stale")
+	require.NoError(t, s.CompleteManual(ctx(), "ntf_chat", secret.New("pasted")))
+	require.Equal(t, map[string]secret.Value{"token": secret.New("pasted")}, store.m["ntf_chat"])
+
 	// A declared adapter is found by Get too, and is not connected from here.
 	reg := api.NewRegistry()
 	require.NoError(t, reg.Register("ntf_file", &chatty{}))

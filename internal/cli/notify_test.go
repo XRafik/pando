@@ -24,7 +24,7 @@ func TestR374_SlackIsConnectedFromTheCLI(t *testing.T) {
 	require.Regexp(t, `ntf_console\s+console\s+people\s+ready`, got.out)
 	require.Contains(t, got.out, "not connected: pando notify connect ntf_slack")
 
-	got = run(t, api, "", "notify", "connect", "ntf_slack", "--token", "xoxe-1")
+	got = run(t, api, "xoxe-1\n", "notify", "connect", "ntf_slack")
 	require.NoError(t, got.err, got.errOut)
 	require.JSONEq(t, `{"mode":"web","token":"xoxe-1"}`, api.bodyFor("POST /notify/ntf_slack/authorize"))
 	require.Contains(t, got.out, "https://slack.com/oauth/v2/authorize?state=x")
@@ -36,12 +36,12 @@ func TestR374_SlackIsConnectedFromTheCLI(t *testing.T) {
 	require.Contains(t, got.out, "--bot-token")
 
 	done := newAPI(t).reply("POST /notify/ntf_slack/authorize", map[string]any{"status": "authorized"})
-	got = run(t, done, "", "notify", "connect", "ntf_slack", "--bot-token", "xoxb-1")
+	got = run(t, done, "xoxb-1\n", "notify", "connect", "ntf_slack", "--bot-token")
 	require.NoError(t, got.err, got.errOut)
 	require.JSONEq(t, `{"mode":"manual","token":"xoxb-1"}`, done.bodyFor("POST /notify/ntf_slack/authorize"))
 	require.Contains(t, got.out, "Connected.")
 
-	require.ErrorContains(t, run(t, api, "", "notify", "connect", "ntf_slack").err, "give --token")
+	require.ErrorContains(t, run(t, api, "\n", "notify", "connect", "ntf_slack").err, "configuration token is needed")
 
 	got = run(t, api, "", "notify", "channels", "ntf_slack", "--query", "dep")
 	require.NoError(t, got.err, got.errOut)

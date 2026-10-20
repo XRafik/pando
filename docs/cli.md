@@ -1328,17 +1328,16 @@ Connect a notification adapter, such as Slack, to its provider
 pando notify connect <adapter>
 ```
 
---token is a Slack configuration token: in Slack's app settings, under Your App Configuration
+Asks for a Slack configuration token: in Slack's app settings, under Your App Configuration
 Tokens, choose Generate Token. Pando uses it once to create its app, and prints Slack's approval
 page to open in a browser signed in to Pando. Slack returns only to an https address; without
-one, --manual prints a link that creates the app in Slack, and --bot-token takes the bot token it
-shows once installed.
+one, --manual prints a link that creates the app in Slack, and --bot-token asks for the bot
+token it shows once installed. A token is read from the terminal, never from the command line.
 
 | Flag | Default | What it does |
 | --- | --- | --- |
-| `--bot-token` |  | The bot token of an app created with --manual |
+| `--bot-token` |  | Ask for the bot token of an app created with --manual |
 | `--manual` |  | Print a link that creates the app in Slack, for a Pando without an https address |
-| `--token` |  | A Slack configuration token, used once to create Pando's app |
 
 #### `notify list`
 

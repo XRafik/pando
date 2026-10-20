@@ -728,7 +728,14 @@ func (s *Service) retarget(ctx context.Context, sub state.Subscription, req Upda
 		return errs.New(errs.ValidInvalid,
 			"This subscription is a webhook, so it has no notification adapter or channel to change. Change url instead.")
 	}
-	adapterID, channel := or(req.AdapterID, sub.AdapterID), or(req.Channel, sub.Channel)
+	adapterID := or(req.AdapterID, sub.AdapterID)
+	// The channel it had belongs to the adapter it had: another adapter starts
+	// with none unless the request names one.
+	kept := ""
+	if adapterID == sub.AdapterID {
+		kept = sub.Channel
+	}
+	channel := or(req.Channel, kept)
 	caps, _, err := s.checkTarget(ctx, sub.Destination, "", adapterID, sub.OwnerTokenID != "")
 	if err != nil {
 		return err

@@ -4210,7 +4210,7 @@
       "path": "pando notify connect",
       "use": "connect <adapter>",
       "short": "Connect a notification adapter, such as Slack, to its provider",
-      "long": "--token is a Slack configuration token: in Slack's app settings, under Your App Configuration\nTokens, choose Generate Token. Pando uses it once to create its app, and prints Slack's approval\npage to open in a browser signed in to Pando. Slack returns only to an https address; without\none, --manual prints a link that creates the app in Slack, and --bot-token takes the bot token it\nshows once installed.",
+      "long": "Asks for a Slack configuration token: in Slack's app settings, under Your App Configuration\nTokens, choose Generate Token. Pando uses it once to create its app, and prints Slack's approval\npage to open in a browser signed in to Pando. Slack returns only to an https address; without\none, --manual prints a link that creates the app in Slack, and --bot-token asks for the bot\ntoken it shows once installed. A token is read from the terminal, never from the command line.",
       "example": "",
       "aliases": [],
       "hidden": false,
@@ -4219,9 +4219,9 @@
         {
           "name": "bot-token",
           "shorthand": "",
-          "type": "string",
-          "default": "",
-          "usage": "The bot token of an app created with --manual",
+          "type": "bool",
+          "default": "false",
+          "usage": "Ask for the bot token of an app created with --manual",
           "required": false
         },
         {
@@ -4230,14 +4230,6 @@
           "type": "bool",
           "default": "false",
           "usage": "Print a link that creates the app in Slack, for a Pando without an https address",
-          "required": false
-        },
-        {
-          "name": "token",
-          "shorthand": "",
-          "type": "string",
-          "default": "",
-          "usage": "A Slack configuration token, used once to create Pando's app",
           "required": false
         }
       ],

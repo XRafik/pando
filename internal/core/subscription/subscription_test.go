@@ -290,3 +290,37 @@ func TestR373_PandosOwnNotificationsNeverReachAChannelThroughNotifiers(t *testin
 	}
 	require.Equal(t, []Channel{{ID: "ntf_console", Kind: "console"}}, s.channels(context.Background()))
 }
+
+// TestAChannelBelongsToItsAdapter asserts changing a subscription's adapter
+// drops the channel it had for the old one: a Slack channel means nothing to
+// another adapter, and one that takes none would refuse it.
+func TestAChannelBelongsToItsAdapter(t *testing.T) {
+	slack := &slackish{recorder{kind: "slack", audience: api.AudienceChannel}}
+	teams := &recorder{kind: "teams", audience: api.AudienceChannel}
+	s := &Service{Notifiers: channels{"ntf_slack": slack, "ntf_other": &slackish{}, "ntf_teams": teams}}
+	sub := state.Subscription{Destination: state.DestinationNotify, AdapterID: "ntf_slack", Channel: "C1"}
+	move := func(req UpdateRequest) (state.SubscriptionPatch, error) {
+		var patch state.SubscriptionPatch
+		err := s.retarget(context.Background(), sub, req, &patch, map[string]any{})
+		return patch, err
+	}
+	str := func(v string) *string { return &v }
+
+	patch, err := move(UpdateRequest{AdapterID: str("ntf_teams")})
+	require.NoError(t, err, "moving to an adapter that takes no channel leaves the old one behind")
+	require.Empty(t, *patch.Channel)
+
+	_, err = move(UpdateRequest{AdapterID: str("ntf_other")})
+	require.ErrorContains(t, err, "chooses none", "another workspace starts with no channel")
+	patch, err = move(UpdateRequest{AdapterID: str("ntf_other"), Channel: str("C9")})
+	require.NoError(t, err)
+	require.Equal(t, "C9", *patch.Channel)
+
+	patch, err = move(UpdateRequest{Description: str("same adapter")})
+	require.NoError(t, err)
+	require.Equal(t, "C1", *patch.Channel, "the same adapter keeps its channel")
+
+	err = s.retarget(context.Background(), state.Subscription{Destination: state.DestinationWebhook}, UpdateRequest{Channel: str("C1")},
+		&state.SubscriptionPatch{}, map[string]any{})
+	require.ErrorContains(t, err, "is a webhook")
+}

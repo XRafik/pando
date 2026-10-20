@@ -83,12 +83,15 @@ func (s *Server) handleAuthorizeNotify(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Mode == api.AuthorizationManual && !req.Token.IsZero() {
-		event.Action = "notify.connection.authorized"
+		// The attempt is recorded before it is made, and the connection
+		// once the token is accepted.
 		s.audit(r, event)
 		if err := s.NotifyConnections.CompleteManual(r.Context(), id, req.Token); err != nil {
 			Error(w, r, err)
 			return
 		}
+		event.Action = "notify.connection.authorized"
+		s.audit(r, event)
 		JSON(w, http.StatusOK, map[string]any{"status": "authorized"})
 		return
 	}
