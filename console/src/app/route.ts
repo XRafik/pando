@@ -108,11 +108,17 @@ export function parse(pathname: string, search = ''): Route {
   return { view: 'admin', section: section ?? 'apps' };
 }
 
+/** The views that are one page each, at one address. */
+const FIXED_PATHS: Partial<Record<Route['view'], string>> = {
+  launcher: '/',
+  settings: '/admin/settings',
+  cli: '/admin/cli',
+};
+
 /** The path for a route. The inverse of parse, and tested as such. */
 export function format(route: Route): string {
-  if (route.view === 'launcher') return '/';
-  if (route.view === 'settings') return '/admin/settings';
-  if (route.view === 'cli') return '/admin/cli';
+  const fixed = FIXED_PATHS[route.view];
+  if (fixed) return fixed;
   if (route.section === 'apps' && route.appID) {
     return `/admin/apps/${route.appID}${route.tab ? `/${route.tab}` : ''}`;
   }

@@ -54,13 +54,13 @@ type Store interface {
 	Take(ctx context.Context, codeHash string) (state.CLISignIn, bool, error)
 }
 
-// Users reads accounts (state.Users).
-type Users interface {
+// AccountReader reads accounts (state.Users).
+type AccountReader interface {
 	ByID(ctx context.Context, userID string) (state.User, bool, error)
 }
 
-// Tokens mints tokens (state.Tokens).
-type Tokens interface {
+// TokenMinter mints tokens (state.Tokens).
+type TokenMinter interface {
 	Create(ctx context.Context, kind, name, ownerUserID, createdBy string, expiresAt *time.Time) (state.Issued, error)
 }
 
@@ -69,8 +69,8 @@ type Tokens interface {
 // person, not a token, approved, and audits what happened.
 type Service struct {
 	Store  Store
-	Users  Users
-	Tokens Tokens
+	Users  AccountReader
+	Tokens TokenMinter
 	Policy interface {
 		Load(ctx context.Context) (policy.Document, error)
 	}

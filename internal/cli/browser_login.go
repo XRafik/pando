@@ -10,7 +10,9 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"time"
@@ -31,15 +33,23 @@ import (
 
 // openBrowser opens an address in the person's browser. A variable so a test
 // can stand in for the person.
+//
+// Each opener is named by its full path rather than looked up on PATH, which
+// a writable directory early on it could answer instead. Where one is not at
+// that path, the address is already on the screen to open by hand.
 var openBrowser = func(address string) error {
 	var c *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
-		c = exec.Command("open", address)
+		c = exec.Command("/usr/bin/open", address)
 	case "windows":
-		c = exec.Command("rundll32", "url.dll,FileProtocolHandler", address)
+		root := os.Getenv("SystemRoot")
+		if root == "" {
+			root = `C:\Windows`
+		}
+		c = exec.Command(filepath.Join(root, "System32", "rundll32.exe"), "url.dll,FileProtocolHandler", address)
 	default:
-		c = exec.Command("xdg-open", address)
+		c = exec.Command("/usr/bin/xdg-open", address)
 	}
 	return c.Start()
 }
