@@ -134,8 +134,10 @@ func (r *Retention) IdempotencyKeys(ctx context.Context, before time.Time, limit
 
 // SSOFlows removes up to limit sign-in flows that expired before before —
 // kept that long so a person arriving late at a failed sign-in can still be
-// told why — and the one-time identifiers whose assertions have expired. Both
-// used to be deleted on every sign-in, inside the request.
+// told why — the one-time identifiers whose assertions have expired, and CLI
+// sign-ins approved and never collected (R-406), which have nothing to explain
+// and go as soon as they expire. The first two used to be deleted on every
+// sign-in, inside the request.
 func (r *Retention) SSOFlows(ctx context.Context, before, now time.Time, limit int) (int64, error) {
 	flows, err := r.exec(ctx, "sign-in flows", `
 		DELETE FROM sso_flows WHERE id IN (
@@ -146,5 +148,11 @@ func (r *Retention) SSOFlows(ctx context.Context, before, now time.Time, limit i
 	replay, err := r.exec(ctx, "sign-in identifiers", `
 		DELETE FROM sso_replay WHERE ctid IN (
 		    SELECT ctid FROM sso_replay WHERE expires_at < $1 LIMIT $2)`, now, limit)
-	return flows + replay, err
+	if err != nil {
+		return flows + replay, err
+	}
+	cli, err := r.exec(ctx, "CLI sign-ins", `
+		DELETE FROM cli_sign_ins WHERE code_hash IN (
+		    SELECT code_hash FROM cli_sign_ins WHERE expires_at < $1 LIMIT $2)`, now, limit)
+	return flows + replay + cli, err
 }

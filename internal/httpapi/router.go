@@ -29,6 +29,7 @@ import (
 	"github.com/trypando/pando/internal/core/autodeploy"
 	"github.com/trypando/pando/internal/core/backup"
 	"github.com/trypando/pando/internal/core/capacity"
+	"github.com/trypando/pando/internal/core/clisignin"
 	"github.com/trypando/pando/internal/core/clock"
 	"github.com/trypando/pando/internal/core/deploy"
 	"github.com/trypando/pando/internal/core/edge"
@@ -80,6 +81,10 @@ type Server struct {
 	// password the only factor, and the two-factor routes say so.
 	TwoFactor *twofactor.Service
 	Tokens    *state.Tokens
+
+	// CLISignIn signs the CLI in through the browser (R-406). Nil leaves
+	// pando login --username, with a password, the only way.
+	CLISignIn *clisignin.Service
 	Apps      *state.Apps
 	Volumes   *state.Volumes
 	Authz     *authz.Authorizer
@@ -519,6 +524,12 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/auth/providers/{providerID}/metadata", s.handleSAMLMetadata)
 		r.Get("/auth/complete", s.handleSSOComplete)
 		r.Get("/auth/failures/{flowID}", s.handleSSOFailure)
+
+		// Signing the CLI in through the browser (R-406, design 06 §3.5):
+		// approved by a session in the console, collected by the CLI with
+		// the verifier only it holds. The second is public.
+		r.Post("/cli-sign-ins", s.handleApproveCLISignIn)
+		r.Post("/cli-sign-ins/token", s.handleExchangeCLISignIn)
 
 		// SCIM 2.0 (R-048): a provider's own bearer token, not a Pando one.
 		// The Authenticate middleware leaves this prefix alone.

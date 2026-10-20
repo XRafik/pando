@@ -3,6 +3,7 @@ package policy
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/trypando/pando/internal/core/audit"
 	"github.com/trypando/pando/internal/core/authz"
@@ -326,6 +327,17 @@ func (d Document) GraceHours() int {
 		return d.InsecureGraceHours
 	}
 	return DefaultInsecureGraceHours
+}
+
+// TokenExpiry is when a token asked for without an expiry expires: never,
+// unless policy caps how long a token may live (R-061), in which case the cap
+// counted from now.
+func (d Document) TokenExpiry(now time.Time) *time.Time {
+	if d.MaxTokenLifetimeDays <= 0 {
+		return nil
+	}
+	at := now.UTC().AddDate(0, 0, d.MaxTokenLifetimeDays)
+	return &at
 }
 
 // StopsInsecureApps reports whether policy says to stop them (R-316).

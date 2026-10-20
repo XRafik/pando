@@ -19,7 +19,18 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+### Added
+
+- **`pando login` signs in through the browser.** It opens Pando, where you sign in however your
+  account does — including through your identity provider, which had no way to sign the CLI in
+  before — and approve the CLI. `pando mcp` uses the token it stores. `--no-browser` prints the
+  address to open on another computer and asks for the code shown there.
+
 ### Changed
+
+- **`pando login` needs `--username` to sign in with a password in the terminal.** Without it, it
+  opens the browser. A script that pipes a username and password into `pando login` passes
+  `--username` and pipes only the password.
 
 - **Adding an app from a source connection picks the repository in one field.** Type part of its
   name and choose it from the list under the field; the separate search box is gone.

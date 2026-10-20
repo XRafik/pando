@@ -17,10 +17,21 @@ export interface SignInOptions {
  * prefix so it works on an app's own hostname too (R-172), carrying where the
  * person was going. `next` is checked the same way the password form checks
  * it, and the server checks it again.
+ *
+ * Without a `next`, where they were going is the page they are on: the form
+ * is drawn in place of a page that needs a session — the CLI's approval page
+ * (R-406) is one — and a password sign-in stays on it, so a provider's should
+ * come back to it.
  */
 export function providerStart(providerID: string, search: string, here: string): string {
-  const next = returnTo(search, here) ?? '/';
+  const next = returnTo(search, here) ?? stayHere(here);
   return `/.pando/api/v1/auth/providers/${encodeURIComponent(providerID)}/start?next=${encodeURIComponent(next)}`;
+}
+
+/** The page at `here` as a path, unless it is the sign-in page itself. */
+function stayHere(here: string): string {
+  const back = returnTo(`?next=${encodeURIComponent(here)}`, here);
+  return back === null || /^(\/\.pando)?\/login([?#]|$)/.test(back) ? '/' : back;
 }
 
 /**

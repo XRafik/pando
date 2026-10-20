@@ -208,6 +208,8 @@ var classes = map[string]Mapping{
 	"secret.delete":                      apiDelete,
 	"secret.write":                       apiCreate,
 	"server.start":                       apiOther,
+	"cli_sign_in.approve":                authLogon,
+	"cli_sign_in.denied":                 authLogon,
 	"session.create":                     authLogon,
 	"session.denied":                     authLogon,
 	"session.revoke":                     authLogoff,

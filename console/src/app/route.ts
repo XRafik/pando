@@ -34,8 +34,9 @@ const SYSTEM_TABS: SystemTab[] = ['adapters', 'policy', 'backups', 'updates'];
 export interface Route {
   /** Settings is its own page, not a section of the admin console: it is
    *  about the person, and everyone reaches it. It still lives under /admin,
-   *  because that prefix is already reserved against app slugs (R-023). */
-  view: 'launcher' | 'admin' | 'settings';
+   *  because that prefix is already reserved against app slugs (R-023).
+   *  So is the CLI's approval page (R-406), which `pando login` opens. */
+  view: 'launcher' | 'admin' | 'settings' | 'cli';
   section: Section;
   appID?: string;
   /** An app's tab, or System's. */
@@ -66,6 +67,7 @@ export function parse(pathname: string, search = ''): Route {
 
   if (parts[0] !== 'admin') return { view: 'launcher', section: 'apps' };
   if (parts[1] === 'settings') return { view: 'settings', section: 'apps' };
+  if (parts[1] === 'cli') return { view: 'cli', section: 'apps' };
 
   // /admin/apps/{id}[/{tab}]
   if (parts[1] === 'apps' && parts[2]) {
@@ -110,6 +112,7 @@ export function parse(pathname: string, search = ''): Route {
 export function format(route: Route): string {
   if (route.view === 'launcher') return '/';
   if (route.view === 'settings') return '/admin/settings';
+  if (route.view === 'cli') return '/admin/cli';
   if (route.section === 'apps' && route.appID) {
     return `/admin/apps/${route.appID}${route.tab ? `/${route.tab}` : ''}`;
   }

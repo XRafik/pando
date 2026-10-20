@@ -104,6 +104,11 @@ func CLIMarkdown(doc Document) string {
 
 	b.WriteString("## Connecting\n\n")
 	b.WriteString("```\n" + strings.Replace(doc.Connect.LoginCmd, "<server-url>", "https://pando.example.com", 1) + "\n```\n\n")
+	b.WriteString("`pando login` opens Pando in your browser, where you sign in however your account\n")
+	b.WriteString("signs in — including through your organization's identity provider — and approve\n")
+	b.WriteString("the CLI. On a machine without a browser, `--no-browser` prints the address to open\n")
+	b.WriteString("elsewhere and asks for the code it shows; `--username` signs in with a password\n")
+	b.WriteString("instead. `pando mcp` uses the same token.\n\n")
 	b.WriteString("`pando login` stores a delegated token under your home directory, which is right\n")
 	b.WriteString("for a person at a terminal and no use to CI or a container. Those get the same\n")
 	b.WriteString("thing from the environment — make a token in the console under **API and tools** ›\n")

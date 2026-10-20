@@ -7,6 +7,7 @@ describe('route', () => {
   const routes: Route[] = [
     { view: 'launcher', section: 'apps' },
     { view: 'settings', section: 'apps' },
+    { view: 'cli', section: 'apps' },
     { view: 'admin', section: 'apps' },
     { view: 'admin', section: 'api' },
     { view: 'admin', section: 'apps', appID: 'app_01', tab: 'logs' },

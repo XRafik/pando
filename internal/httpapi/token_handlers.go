@@ -88,10 +88,7 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 			Error(w, r, err)
 			return
 		}
-		if doc.MaxTokenLifetimeDays > 0 {
-			at := time.Now().UTC().AddDate(0, 0, doc.MaxTokenLifetimeDays)
-			expires = &at
-		}
+		expires = doc.TokenExpiry(time.Now())
 	}
 
 	issued, err := s.Tokens.Create(r.Context(), state.TokenDelegated, req.Name, p.UserID, p.ID, expires)
@@ -191,10 +188,7 @@ func (s *Server) handleCreateServiceToken(w http.ResponseWriter, r *http.Request
 			Error(w, r, err)
 			return
 		}
-		if doc.MaxTokenLifetimeDays > 0 {
-			at := time.Now().UTC().AddDate(0, 0, doc.MaxTokenLifetimeDays)
-			expires = &at
-		}
+		expires = doc.TokenExpiry(time.Now())
 	}
 
 	issued, err := s.Tokens.Create(r.Context(), state.TokenAccount, req.Name, "", p.ID, expires)

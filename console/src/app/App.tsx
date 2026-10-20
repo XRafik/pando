@@ -24,6 +24,7 @@ import { useRoute } from './route';
 import type { Route } from './route';
 import { ChangePassword, Login, Passcode } from '../auth/Login';
 import { TwoFactorElsewhere, TwoFactorSetup } from '../auth/TwoFactorSetup';
+import { CliSignIn } from '../auth/CliSignIn';
 import { returnTo } from '../auth/return-to';
 import { reservedPrefix } from '@api/client';
 import { passcodeApp } from '../auth/passcode';
@@ -138,6 +139,13 @@ export function App() {
   if (reservedPrefix() !== '') {
     window.location.replace(returnTo(window.location.search, window.location.href) ?? '/');
     return null;
+  }
+
+  // The CLI's approval page (R-406). After the checks above, so an account
+  // that must change its password or set up a second factor does that first,
+  // and the page is still here when it has.
+  if (route.view === 'cli') {
+    return <CliSignIn username={principal.data?.username} />;
   }
 
   // Signing out lands on the sign-in form at the root, not at whatever admin
