@@ -12,7 +12,6 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
-	"syscall"
 
 	"github.com/coder/websocket"
 	"golang.org/x/term"
@@ -147,15 +146,17 @@ func (c *Client) watchResize(ctx context.Context, conn *websocket.Conn, fd int) 
 	}
 	send()
 
-	sigwinch := make(chan os.Signal, 1)
-	signal.Notify(sigwinch, syscall.SIGWINCH)
+	resized := notifyResize()
+	if resized == nil {
+		return
+	}
 	go func() {
-		defer signal.Stop(sigwinch)
+		defer signal.Stop(resized)
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-sigwinch:
+			case <-resized:
 				send()
 			}
 		}

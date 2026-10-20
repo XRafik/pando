@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"strings"
 	"sync"
 )
 
@@ -28,6 +29,10 @@ type Server struct {
 	// Call performs one API call on the agent's behalf. Injected so the
 	// transport can be tested without a server, and so this package cannot
 	// reach anything the API does not expose.
+	//
+	// out is a *[]byte, and Call stores the response body in it as sent. Not
+	// decoded: the body goes to the agent unchanged, and an app's logs are
+	// plain text rather than JSON.
 	Call func(ctx context.Context, method, path string, body any, out any) error
 
 	// ToolsDisabled are excluded from tools/list.
@@ -144,7 +149,7 @@ func (s *Server) callTool(ctx context.Context, req request) {
 		return
 	}
 
-	var result json.RawMessage
+	var result []byte
 	if err := s.Call(ctx, method, path, body, &result); err != nil {
 		// The API's own message, which is held to the R-105 standard: self
 		// contained, actionable, and written to be pasted into an assistant.
@@ -154,8 +159,14 @@ func (s *Server) callTool(ctx context.Context, req request) {
 		return
 	}
 
+	// An endpoint that answers 204 has no body. An empty result reads to an
+	// agent as if nothing happened, so it gets a word saying something did.
+	text := string(result)
+	if strings.TrimSpace(text) == "" {
+		text = "Done."
+	}
 	s.reply(response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
-		"content": []map[string]any{{"type": "text", "text": string(result)}},
+		"content": []map[string]any{{"type": "text", "text": text}},
 	}})
 }
 

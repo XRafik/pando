@@ -35,8 +35,12 @@ func TestInstallInstructionsMatchWhatATagPublishes(t *testing.T) {
 			Goarch []string `yaml:"goarch"`
 		} `yaml:"builds"`
 		Archives []struct {
-			Formats      []string `yaml:"formats"`
-			NameTemplate string   `yaml:"name_template"`
+			Formats         []string `yaml:"formats"`
+			NameTemplate    string   `yaml:"name_template"`
+			FormatOverrides []struct {
+				Goos    string   `yaml:"goos"`
+				Formats []string `yaml:"formats"`
+			} `yaml:"format_overrides"`
 		} `yaml:"archives"`
 		HomebrewCasks []struct {
 			Name       string `yaml:"name"`
@@ -125,6 +129,20 @@ func TestInstallInstructionsMatchWhatATagPublishes(t *testing.T) {
 			"{{ .Arch }}":        "<arch>",
 		})+".tar.gz",
 		got.Archive)
+
+	// Windows's is a zip, which is what the documented PowerShell expands.
+	require.Len(t, release.Archives[0].FormatOverrides, 1)
+	override := release.Archives[0].FormatOverrides[0]
+	require.Equal(t, "windows", override.Goos)
+	require.Equal(t, []string{"zip"}, override.Formats)
+	require.Equal(t,
+		expand(release.Archives[0].NameTemplate, map[string]string{
+			"{{ .ProjectName }}": "pando",
+			"{{ .Version }}":     "<version>",
+			"{{ .Os }}":          "windows",
+			"{{ .Arch }}":        "<arch>",
+		})+".zip",
+		got.WindowsArchive)
 }
 
 // expand fills a goreleaser name template with what a person substitutes.

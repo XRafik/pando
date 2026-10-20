@@ -32,6 +32,14 @@ sudo apt install ./pando_${VERSION}_linux_amd64.deb
 For `.rpm`, `dnf install` the same file; for `.apk`,
 `apk add --allow-untrusted`. On an ARM machine, `arm64` in place of `amd64`.
 
+**Windows:** a zip holding `pando.exe`, named `pando_<version>_windows_<arch>.zip`, for `windows/amd64` and `windows/arm64`. In PowerShell:
+
+```
+$VERSION = "0.2.0"   # the release you want
+Invoke-WebRequest https://github.com/trypando/pando/releases/download/v${VERSION}/pando_${VERSION}_windows_amd64.zip -OutFile pando_${VERSION}_windows_amd64.zip
+Expand-Archive pando_${VERSION}_windows_amd64.zip "$env:LOCALAPPDATA\Programs\pando"
+```
+
 **Anything else:** plain tarballs, named `pando_<version>_<os>_<arch>.tar.gz`, for `darwin/amd64`, `darwin/arm64`, `linux/amd64` and `linux/arm64`:
 
 ```

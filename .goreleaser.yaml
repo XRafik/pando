@@ -1,5 +1,6 @@
 # Release build. Produces the artifacts a tag is expected to produce: signed-by-
-# checksum archives for macOS and Linux, Linux packages, and a Homebrew cask.
+# checksum archives for macOS, Linux and Windows, Linux packages, and a Homebrew
+# cask.
 #
 # What this ships is the CLI. Pando the *server* is installed with the Compose
 # file (design 00 §1.1) — it needs Postgres, a container runtime and Railpack,
@@ -38,6 +39,9 @@ builds:
     goos:
       - darwin
       - linux
+      # The CLI only. An MCP client on Windows, such as Claude Desktop, launches
+      # `pando mcp` itself and has nothing to launch without this.
+      - windows
     goarch:
       - amd64
       - arm64
@@ -46,6 +50,9 @@ archives:
   - id: pando
     formats: [tar.gz]
     name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
+    format_overrides:
+      - goos: windows
+        formats: [zip]
     files:
       - README.md
       - LICENSE

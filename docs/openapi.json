@@ -14806,6 +14806,9 @@
           "archive": {
             "type": "string"
           },
+          "windows_archive": {
+            "type": "string"
+          },
           "package": {
             "type": "string"
           },
@@ -14831,6 +14834,7 @@
           "homebrew",
           "packages",
           "archive",
+          "windows_archive",
           "package",
           "download",
           "platforms",

@@ -88,8 +88,12 @@ func CLIMarkdown(doc Document) string {
 	b.WriteString("For `.rpm`, `dnf install` the same file; for `.apk`,\n")
 	b.WriteString("`apk add --allow-untrusted`. On an ARM machine, `arm64` in place of `amd64`.\n\n")
 
+	tarballs, windows := splitWindows(doc.Install.Platforms)
+	b.WriteString("**Windows:** a zip holding `pando.exe`, named `" + doc.Install.WindowsArchive + "`, for " +
+		list(windows, "`%s`") + ". In PowerShell:\n\n")
+	b.WriteString("```\n" + windowsRecipe(doc.Install, "amd64") + "\n```\n\n")
 	b.WriteString("**Anything else:** plain tarballs, named `" + doc.Install.Archive + "`, for " +
-		list(doc.Install.Platforms, "`%s`") + ":\n\n")
+		list(tarballs, "`%s`") + ":\n\n")
 	b.WriteString("```\n" + archiveRecipe(doc.Install, "darwin", "arm64") + "\n```\n\n")
 	b.WriteString("Every release is published with a checksum file signed by the release workflow;\n")
 	b.WriteString("verifying it is described in [releasing.md](releasing.md).\n\n")
@@ -158,6 +162,8 @@ func MCPMarkdown(doc Document) string {
 		"      \"args\": [\"mcp\"],\n      \"env\": {\n        \"" + doc.Connect.ServerEnv +
 		"\": \"https://pando.example.com\",\n" +
 		"        \"" + doc.Connect.TokenEnv + "\": \"tok_…\"\n      }\n    }\n  }\n}\n```\n\n")
+	b.WriteString("On Windows, `command` is the full path to `pando.exe`, with each backslash doubled:\n" +
+		"`\"C:\\\\Users\\\\you\\\\AppData\\\\Local\\\\Programs\\\\pando\\\\pando.exe\"`.\n\n")
 	b.WriteString("## Tools\n\n")
 	b.WriteString("One tool per endpoint, deliberately. A tool that composed several calls would be\n")
 	b.WriteString("a capability the CLI and console do not have. Exec, reading a secret's value,\n")
@@ -229,6 +235,28 @@ func archiveRecipe(in Install, os, arch string) string {
 		"tar xzf " + strings.ReplaceAll(file, "<version>", "${VERSION}"),
 		"sudo mv pando /usr/local/bin/",
 	}, "\n")
+}
+
+// windowsRecipe is the same for Windows's zip, in PowerShell.
+func windowsRecipe(in Install, arch string) string {
+	file := strings.ReplaceAll(strings.ReplaceAll(in.WindowsArchive, "<arch>", arch), "<version>", "${VERSION}")
+	return strings.Join([]string{
+		"$VERSION = \"" + exampleVersion + "\"   # the release you want",
+		"Invoke-WebRequest " + strings.ReplaceAll(in.Download, "<version>", "${VERSION}") + file + " -OutFile " + file,
+		"Expand-Archive " + file + " \"$env:LOCALAPPDATA\\Programs\\pando\"",
+	}, "\n")
+}
+
+// splitWindows separates the platforms released as a zip from the rest.
+func splitWindows(platforms []string) (tarballs, windows []string) {
+	for _, p := range platforms {
+		if strings.HasPrefix(p, "windows/") {
+			windows = append(windows, p)
+		} else {
+			tarballs = append(tarballs, p)
+		}
+	}
+	return tarballs, windows
 }
 
 // exampleVersion stands in for whatever is current. It is a placeholder in a

@@ -164,11 +164,7 @@ func (c *Client) sendBytes(method, path, contentType string, body []byte, out an
 		return apiErr
 	}
 	if out != nil {
-		raw, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return err
-		}
-		return decodeInto(raw, out)
+		return decodeBody(resp.Body, out)
 	}
 	_, _ = io.Copy(io.Discard, resp.Body)
 	return nil

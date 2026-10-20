@@ -2,6 +2,7 @@ package cli
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -198,7 +199,7 @@ func TestSelfUpdateDownloadsSayWhatFailed(t *testing.T) {
 	_, err = checksumOf([]byte("abc  pando_0.4.0_linux_amd64.tar.gz\n"), "pando_0.4.0_darwin_arm64.tar.gz")
 	require.ErrorContains(t, err, "for this platform")
 
-	require.Error(t, replaceExecutable(filepath.Join(t.TempDir(), "no-such-dir", "pando"), []byte("x")),
+	require.Error(t, replaceExecutable(filepath.Join(t.TempDir(), "no-such-dir", "pando"), []byte("x"), "linux"),
 		"a directory that cannot be written to replaces nothing")
 
 	cmd := SelfUpdateCmd()
@@ -219,8 +220,73 @@ func TestAReleaseListThatCannotBeReadIsSaid(t *testing.T) {
 }
 
 func TestAnArchiveWithoutPandoInItIsRefused(t *testing.T) {
-	_, err := binaryFrom(tarball(t, "README.md", []byte("hi")))
+	_, err := binaryFrom(tarball(t, "README.md", []byte("hi")), "linux")
 	require.ErrorContains(t, err, "no pando binary")
-	_, err = binaryFrom([]byte("not gzip"))
+	_, err = binaryFrom([]byte("not gzip"), "linux")
 	require.Error(t, err)
+}
+
+func zipped(t *testing.T, name string, content []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for _, f := range []struct {
+		name string
+		body []byte
+	}{{"LICENSE", []byte("license")}, {name, content}} {
+		w, err := zw.Create(f.name)
+		require.NoError(t, err)
+		_, err = w.Write(f.body)
+		require.NoError(t, err)
+	}
+	require.NoError(t, zw.Close())
+	return buf.Bytes()
+}
+
+// TestR363_SelfUpdateOnWindowsReadsTheZipAndMovesTheRunningBinaryAside asserts
+// R-363 for Windows, whose release is a zip holding pando.exe and which will not
+// replace a running executable in place.
+func TestR363_SelfUpdateOnWindowsReadsTheZipAndMovesTheRunningBinaryAside(t *testing.T) {
+	old := Version
+	t.Cleanup(func() { Version = old })
+	Version = "0.3.1"
+
+	archive := "pando_0.4.0_windows_amd64.zip"
+	packed := zipped(t, "pando.exe", []byte("new binary"))
+	sum := sha256.Sum256(packed)
+	dir := "https://example.test/v0.4.0/"
+	r := &release{files: map[string][]byte{
+		dir + archive:                       packed,
+		dir + "checksums.txt":               []byte(hex.EncodeToString(sum[:]) + "  " + archive + "\n"),
+		dir + "checksums.txt.sigstore.json": []byte(`{}`),
+	}}
+	u, _ := updater(t, r, nil)
+	u.goos = "windows"
+	u.exe = filepath.Join(t.TempDir(), "pando.exe")
+	require.NoError(t, os.WriteFile(u.exe, []byte("old binary"), 0o755))
+	require.NoError(t, os.WriteFile(u.exe+".old", []byte("older binary"), 0o755))
+
+	_, err := runSelfUpdate(t, u, "", false)
+	require.NoError(t, err)
+	got, err := os.ReadFile(u.exe)
+	require.NoError(t, err)
+	require.Equal(t, "new binary", string(got))
+	aside, err := os.ReadFile(u.exe + ".old")
+	require.NoError(t, err)
+	require.Equal(t, "old binary", string(aside), "the previous update's leftover is replaced")
+}
+
+func TestAWindowsArchiveWithoutPandoExeIsRefused(t *testing.T) {
+	_, err := binaryFrom(zipped(t, "pando", []byte("hi")), "windows")
+	require.ErrorContains(t, err, "no pando.exe")
+	_, err = binaryFrom([]byte("not a zip"), "windows")
+	require.Error(t, err)
+	require.Equal(t, "pando_1.0.0_darwin_arm64.tar.gz", archiveName("1.0.0", "darwin", "arm64"))
+}
+
+func TestAWindowsUpdateThatCannotMoveTheBinaryAsideReplacesNothing(t *testing.T) {
+	exe := filepath.Join(t.TempDir(), "pando.exe")
+	require.Error(t, replaceExecutable(exe, []byte("x"), "windows"), "there is no binary to move aside")
+	_, err := os.Stat(exe)
+	require.True(t, os.IsNotExist(err))
 }

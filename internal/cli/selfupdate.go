@@ -2,6 +2,7 @@ package cli
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bufio"
 	"bytes"
 	"compress/gzip"
@@ -117,7 +118,7 @@ func (u *selfUpdater) run(cmd *cobra.Command, version string, prerelease bool) e
 	}
 
 	dir := u.base + "v" + version + "/"
-	archive := fmt.Sprintf("pando_%s_%s_%s.tar.gz", version, u.goos, u.goarch)
+	archive := archiveName(version, u.goos, u.goarch)
 	sums, err := u.download(ctx, dir+"checksums.txt")
 	if err != nil {
 		return err
@@ -133,18 +134,18 @@ func (u *selfUpdater) run(cmd *cobra.Command, version string, prerelease bool) e
 	if err != nil {
 		return err
 	}
-	tarball, err := u.download(ctx, dir+archive)
+	packed, err := u.download(ctx, dir+archive)
 	if err != nil {
 		return err
 	}
-	if got := sha256.Sum256(tarball); hex.EncodeToString(got[:]) != want {
+	if got := sha256.Sum256(packed); hex.EncodeToString(got[:]) != want {
 		return fmt.Errorf("%s does not match its checksum in the signed checksums.txt, so nothing was replaced", archive)
 	}
-	bin, err := binaryFrom(tarball)
+	bin, err := binaryFrom(packed, u.goos)
 	if err != nil {
 		return err
 	}
-	if err := replaceExecutable(u.exe, bin); err != nil {
+	if err := replaceExecutable(u.exe, bin, u.goos); err != nil {
 		return fmt.Errorf("could not replace %s: %w", u.exe, err)
 	}
 	fmt.Fprintf(w, "Replaced %s with Pando %s, after checking its signature.\n", u.exe, version)
@@ -162,9 +163,22 @@ func checksumOf(sums []byte, name string) (string, error) {
 	return "", fmt.Errorf("the release has no %s for this platform", name)
 }
 
-// binaryFrom finds the pando executable in a release archive.
-func binaryFrom(tarball []byte) ([]byte, error) {
-	gz, err := gzip.NewReader(bytes.NewReader(tarball))
+// archiveName is a platform's release archive: a zip on Windows, which has no
+// tar in its file manager, and a tarball everywhere else.
+func archiveName(version, goos, goarch string) string {
+	ext := "tar.gz"
+	if goos == "windows" {
+		ext = "zip"
+	}
+	return fmt.Sprintf("pando_%s_%s_%s.%s", version, goos, goarch, ext)
+}
+
+// binaryFrom finds the pando executable in a platform's release archive.
+func binaryFrom(archive []byte, goos string) ([]byte, error) {
+	if goos == "windows" {
+		return exeFromZip(archive)
+	}
+	gz, err := gzip.NewReader(bytes.NewReader(archive))
 	if err != nil {
 		return nil, err
 	}
@@ -183,9 +197,31 @@ func binaryFrom(tarball []byte) ([]byte, error) {
 	}
 }
 
+func exeFromZip(archive []byte) ([]byte, error) {
+	zr, err := zip.NewReader(bytes.NewReader(archive), int64(len(archive)))
+	if err != nil {
+		return nil, err
+	}
+	for _, f := range zr.File {
+		if f.FileInfo().Mode().IsRegular() && filepath.Base(f.Name) == "pando.exe" {
+			rc, err := f.Open()
+			if err != nil {
+				return nil, err
+			}
+			defer func() { _ = rc.Close() }()
+			return io.ReadAll(io.LimitReader(rc, 512<<20))
+		}
+	}
+	return nil, fmt.Errorf("the release archive has no pando.exe in it")
+}
+
 // replaceExecutable writes the new binary beside the old one and renames it
 // over it, so an interrupted update leaves the old one working.
-func replaceExecutable(exe string, bin []byte) error {
+//
+// Windows will not replace a running executable, but will rename one, so there
+// the old binary is moved aside to pando.exe.old first. It cannot be deleted
+// while it runs; the next update removes it.
+func replaceExecutable(exe string, bin []byte, goos string) error {
 	tmp, err := os.CreateTemp(filepath.Dir(exe), ".pando-update-*")
 	if err != nil {
 		return err
@@ -201,7 +237,19 @@ func replaceExecutable(exe string, bin []byte) error {
 	if err := os.Chmod(tmp.Name(), 0o755); err != nil {
 		return err
 	}
-	return os.Rename(tmp.Name(), exe)
+	if goos != "windows" {
+		return os.Rename(tmp.Name(), exe)
+	}
+	aside := exe + ".old"
+	_ = os.Remove(aside)
+	if err := os.Rename(exe, aside); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp.Name(), exe); err != nil {
+		_ = os.Rename(aside, exe)
+		return err
+	}
+	return nil
 }
 
 func httpDownload(ctx context.Context, url string) ([]byte, error) {

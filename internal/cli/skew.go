@@ -73,10 +73,10 @@ func upgradeFor(exe, version string, exists func(string) bool, contains func(pat
 		return "curl -fsSLO " + download + pkg("apk") + " && sudo apk add --allow-untrusted ./" + pkg("apk")
 	case exe == "/usr/bin/pando":
 		return "curl -fsSLO " + download + pkg("rpm") + " && sudo dnf install ./" + pkg("rpm")
-	case filepath.Base(filepath.Dir(exe)) == "bin" && strings.Contains(exe, "/go/bin/"):
+	case filepath.Base(filepath.Dir(exe)) == "bin" && strings.Contains(filepath.ToSlash(exe), "/go/bin/"):
 		return "go install github.com/trypando/pando/cmd/pando@v" + version
 	}
-	return "download pando_" + version + "_" + runtime.GOOS + "_" + runtime.GOARCH + ".tar.gz from " + download +
+	return "download " + archiveName(version, runtime.GOOS, runtime.GOARCH) + " from " + download +
 		" and replace " + exe
 }
 

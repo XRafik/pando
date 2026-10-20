@@ -664,6 +664,7 @@ export interface Install {
   homebrew: string;
   packages: (string[] | null);
   archive: string;
+  windows_archive: string;
   package: string;
   download: string;
   platforms: (string[] | null);
