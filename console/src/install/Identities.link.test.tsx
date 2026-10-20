@@ -86,10 +86,19 @@ describe('linking away the last owner of an app', () => {
     expect(dialog().textContent).toContain('the last active owner of wiki');
     expect(dialog().textContent).not.toContain('confirm set');
 
-    await act(async () => button(dialog(), 'Link anyway').click());
+    // Editing the identity withdraws the warning: it was about the old one.
+    act(() => type(external, '00u2'));
+    expect(button(dialog(), 'Link anyway')).toBeUndefined();
+    act(() => type(external, '00u1'));
+    await act(async () => button(dialog(), 'Link identity').click());
     await settle();
     expect(posts).toHaveLength(2);
-    expect(posts[1]?.confirm).toBe(true);
+    expect(posts[1]?.confirm).toBe(false);
+
+    await act(async () => button(dialog(), 'Link anyway').click());
+    await settle();
+    expect(posts).toHaveLength(3);
+    expect(posts[2]?.confirm).toBe(true);
     expect(document.querySelector('[role="dialog"]')).toBeNull();
   });
 });

@@ -101,7 +101,8 @@ function LinkDialog({ userID, onClose }: { userID: string; onClose: () => void }
   });
 
   // R-408: moving the identity would suspend the last active owner of these
-  // apps. Asked once; linking again goes ahead.
+  // apps. Asked once; linking again goes ahead. Changing the form clears it,
+  // so a confirmation is only ever for the identity it warned about.
   const orphans = link.error instanceof RequestFailed && link.error.envelope?.details?.orphaned_apps !== undefined;
   let action = orphans ? 'Link anyway' : 'Link identity';
   if (link.isPending) action = 'Linking';
@@ -136,20 +137,29 @@ function LinkDialog({ userID, onClose }: { userID: string; onClose: () => void }
               label="Identity provider"
               value={chosen}
               options={external.map((p) => ({ value: p.id, label: p.name }))}
-              onChange={(e) => setAdapterID(e.target.value)}
+              onChange={(e) => {
+                link.reset();
+                setAdapterID(e.target.value);
+              }}
             />
             <Input
               label="External ID"
               mono
               value={externalID}
               helper="Shown in a test sign-in and in the refusal message."
-              onChange={(e) => setExternalID(e.target.value)}
+              onChange={(e) => {
+                link.reset();
+                setExternalID(e.target.value);
+              }}
             />
             <Checkbox
               label="Move from another account"
               description="The other account is kept, suspended."
               checked={replace}
-              onChange={(e) => setReplace(e.target.checked)}
+              onChange={(e) => {
+                link.reset();
+                setReplace(e.target.checked);
+              }}
             />
           </>
         )}
