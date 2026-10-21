@@ -3806,12 +3806,20 @@
       "path": "pando login",
       "use": "login [server-url]",
       "short": "Sign in and store a token for this machine",
-      "long": "Signs in with a username and password, then creates a token and stores it.\nThe token acts as you and holds nothing you do not.",
+      "long": "Opens Pando in your browser, where you sign in however your account signs in —\na password, two-factor authentication, or your organization's identity provider —\nand approve this CLI. The CLI then stores a token that acts as you and holds\nnothing you do not. `pando mcp` uses the same token.\n\nOn a machine with no browser, such as over SSH, --no-browser prints the address to\nopen on another computer and asks for the code shown there.\n\n--username signs in with a username and password in the terminal instead.",
       "example": "",
       "aliases": [],
       "hidden": false,
       "deprecated": "",
       "flags": [
+        {
+          "name": "no-browser",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "print the address to open on another computer, and paste the code it shows",
+          "required": false
+        },
         {
           "name": "server",
           "shorthand": "",
@@ -3825,7 +3833,7 @@
           "shorthand": "",
           "type": "string",
           "default": "",
-          "usage": "username to sign in as",
+          "usage": "sign in with this username and a password instead of a browser",
           "required": false
         }
       ],

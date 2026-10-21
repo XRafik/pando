@@ -22,6 +22,8 @@ var auditedRoutes = map[string][]string{
 	// Sessions and setup.
 	"POST /api/v1/sessions":                             {"session.create", "session.denied"},
 	"DELETE /api/v1/sessions":                           {"session.revoke"},
+	"POST /api/v1/cli-sign-ins":                         {"cli_sign_in.approve"},
+	"POST /api/v1/cli-sign-ins/token":                   {"token.create", "cli_sign_in.denied"},
 	"POST /api/v1/auth/providers/{providerID}/callback": {"session.create", "session.denied", "identity_provider.test", "user.create", "user.identity.link"},
 	"POST /api/v1/setup":                                {"user.create", "grant.create", "session.create"},
 	"POST /api/v1/me/password":                          {"user.password.change", "user.password.denied"},

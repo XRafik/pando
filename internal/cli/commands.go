@@ -74,12 +74,18 @@ func Commands() []*cobra.Command {
 
 func loginCmd(server *string) *cobra.Command {
 	var username string
+	var noBrowser bool
 
 	cmd := &cobra.Command{
 		Use:   "login [server-url]",
 		Short: "Sign in and store a token for this machine",
-		Long: "Signs in with a username and password, then creates a token and stores it.\n" +
-			"The token acts as you and holds nothing you do not.",
+		Long: "Opens Pando in your browser, where you sign in however your account signs in —\n" +
+			"a password, two-factor authentication, or your organization's identity provider —\n" +
+			"and approve this CLI. The CLI then stores a token that acts as you and holds\n" +
+			"nothing you do not. `pando mcp` uses the same token.\n\n" +
+			"On a machine with no browser, such as over SSH, --no-browser prints the address to\n" +
+			"open on another computer and asks for the code shown there.\n\n" +
+			"--username signs in with a username and password in the terminal instead.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			url := "http://localhost:8080"
@@ -88,65 +94,76 @@ func loginCmd(server *string) *cobra.Command {
 			} else if *server != "" {
 				url = *server
 			}
-
-			if username == "" {
-				var err error
-				username, err = prompt(cmd, "Username: ")
-				if err != nil {
-					return err
-				}
+			if username != "" {
+				return passwordLogin(cmd, url, username)
 			}
-
-			// Read without echo. A password in a terminal's scrollback is a
-			// password in the scrollback, and `--password` would put it in the
-			// shell history as well.
-			password, err := promptSecret(cmd, "Password: ")
-			if err != nil {
-				return err
-			}
-
-			// A cookie jar for exactly two calls: sign in, then mint a token
-			// with the session. The token is what gets stored — a session is
-			// bound to a browser's lifetime and dies on a password change,
-			// which is right for a browser and wrong for a script at 3am.
-			jar, err := cookiejar.New(nil)
-			if err != nil {
-				return err
-			}
-			anon := &Client{BaseURL: url, HTTP: &http.Client{Jar: jar, Timeout: time.Minute}}
-
-			if err := signInSession(cmd, anon, username, password); err != nil {
-				return err
-			}
-
-			name, _ := os.Hostname()
-			if name == "" {
-				name = "cli"
-			}
-			var issued struct {
-				Secret string `json:"secret"`
-			}
-			if err := anon.Do("POST", "/tokens",
-				map[string]any{"name": name + " CLI"}, &issued); err != nil {
-				return err
-			}
-
-			// The session has done its job. Revoking it means the only
-			// credential left on this machine is the one in the file, with the
-			// permissions that file has.
-			_ = anon.Do("DELETE", sessionsPath, nil, nil)
-
-			if err := SaveCredentials(Credentials{URL: url, Token: issued.Secret, User: username}); err != nil {
-				return err
-			}
-
-			path, _ := credentialsPath()
-			fmt.Fprintf(cmd.OutOrStdout(), "Signed in to %s. Token stored in %s.\n", url, path)
-			return nil
+			return browserLogin(cmd, url, noBrowser)
 		},
 	}
-	cmd.Flags().StringVar(&username, "username", "", "username to sign in as")
+	cmd.Flags().StringVar(&username, "username", "", "sign in with this username and a password instead of a browser")
+	cmd.Flags().BoolVar(&noBrowser, "no-browser", false, "print the address to open on another computer, and paste the code it shows")
+	cmd.MarkFlagsMutuallyExclusive("username", "no-browser")
 	return cmd
+}
+
+// tokenName is what a token made for this machine is called: "laptop CLI".
+func tokenName() string {
+	name, _ := os.Hostname()
+	if name == "" {
+		name = "cli"
+	}
+	return name + " CLI"
+}
+
+// signedIn stores the token and says where.
+func signedIn(cmd *cobra.Command, url, token, username string) error {
+	if err := SaveCredentials(Credentials{URL: url, Token: token, User: username}); err != nil {
+		return err
+	}
+	path, _ := credentialsPath()
+	fmt.Fprintf(cmd.OutOrStdout(), "Signed in to %s. Token stored in %s.\n", url, path)
+	return nil
+}
+
+// passwordLogin signs in with a username and password, then creates a token
+// and stores it.
+func passwordLogin(cmd *cobra.Command, url, username string) error {
+	// Read without echo. A password in a terminal's scrollback is a
+	// password in the scrollback, and `--password` would put it in the
+	// shell history as well.
+	password, err := promptSecret(cmd, "Password: ")
+	if err != nil {
+		return err
+	}
+
+	// A cookie jar for exactly two calls: sign in, then mint a token
+	// with the session. The token is what gets stored — a session is
+	// bound to a browser's lifetime and dies on a password change,
+	// which is right for a browser and wrong for a script at 3am.
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		return err
+	}
+	anon := &Client{BaseURL: url, HTTP: &http.Client{Jar: jar, Timeout: time.Minute}}
+
+	if err := signInSession(cmd, anon, username, password); err != nil {
+		return err
+	}
+
+	var issued struct {
+		Secret string `json:"secret"`
+	}
+	if err := anon.Do("POST", "/tokens",
+		map[string]any{"name": tokenName()}, &issued); err != nil {
+		return err
+	}
+
+	// The session has done its job. Revoking it means the only
+	// credential left on this machine is the one in the file, with the
+	// permissions that file has.
+	_ = anon.Do("DELETE", sessionsPath, nil, nil)
+
+	return signedIn(cmd, url, issued.Secret, username)
 }
 
 // sessionsPath is where a password sign-in is posted, and a session ended.

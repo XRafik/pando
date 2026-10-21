@@ -17,7 +17,7 @@ func TestR058_LoginExchangesASessionForAStoredToken(t *testing.T) {
 		reply("POST /sessions", map[string]any{"user_id": "usr_01HQ8"}).
 		reply("POST /tokens", map[string]any{"secret": "tok_secret_value"})
 
-	got := run(t, api, "ben\nhunter2\n", "login")
+	got := run(t, api, "hunter2\n", "login", "--username", "ben")
 	require.NoError(t, got.err)
 
 	require.JSONEq(t, `{"username":"ben","password":"hunter2"}`, api.bodyFor("POST /sessions"))
@@ -60,7 +60,7 @@ func TestLoginTakesTheServerAsAPositionalArgument(t *testing.T) {
 		reply("POST /sessions", map[string]any{"user_id": "usr_01HQ8"}).
 		reply("POST /tokens", map[string]any{"secret": "tok_secret_value"})
 
-	got := run(t, api, "ben\nhunter2\n", "login", api.url+"/")
+	got := run(t, api, "hunter2\n", "login", api.url+"/", "--username", "ben")
 	require.NoError(t, got.err)
 
 	creds, err := cli.LoadCredentials()
@@ -74,7 +74,7 @@ func TestLoginStopsOnAnAccountThatMustChangeItsPassword(t *testing.T) {
 	api := newAPI(t).reply("POST /sessions",
 		map[string]any{"user_id": "usr_01HQ8", "must_change_password": true})
 
-	got := run(t, api, "ben\ngenerated-password\n", "login")
+	got := run(t, api, "generated-password\n", "login", "--username", "ben")
 	require.ErrorContains(t, got.err, "password Pando generated")
 	require.ErrorContains(t, got.err, "web console")
 
@@ -89,7 +89,7 @@ func TestLoginReportsBadCredentialsAndStoresNothing(t *testing.T) {
 		"message": "That username and password do not match an account.",
 	})
 
-	got := run(t, api, "ben\nwrong\n", "login")
+	got := run(t, api, "wrong\n", "login", "--username", "ben")
 	require.ErrorContains(t, got.err, "do not match an account")
 
 	_, err := cli.LoadCredentials()
@@ -104,7 +104,7 @@ func TestLoginReportsATokenThatCouldNotBeMinted(t *testing.T) {
 			"message": "This install does not allow tokens.",
 		})
 
-	got := run(t, api, "ben\nhunter2\n", "login")
+	got := run(t, api, "hunter2\n", "login", "--username", "ben")
 	require.ErrorContains(t, got.err, "does not allow tokens")
 
 	_, err := cli.LoadCredentials()
@@ -113,14 +113,14 @@ func TestLoginReportsATokenThatCouldNotBeMinted(t *testing.T) {
 
 func TestLoginReportsAnUnreachableServer(t *testing.T) {
 	dead := &fakeAPI{t: t, url: "http://127.0.0.1:1", responses: map[string]any{}, status: map[string]int{}}
-	got := run(t, dead, "ben\nhunter2\n", "login")
+	got := run(t, dead, "hunter2\n", "login", "--username", "ben")
 	require.Error(t, got.err)
 }
 
 // A prompt that reaches end of input must say so rather than proceeding with an
-// empty username.
+// empty password.
 func TestLoginStopsWhenThereIsNoInputToRead(t *testing.T) {
-	got := run(t, newAPI(t), "", "login")
+	got := run(t, newAPI(t), "", "login", "--username", "ben")
 	require.Error(t, got.err)
 }
 

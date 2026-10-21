@@ -43,6 +43,7 @@ import (
 	"github.com/trypando/pando/internal/core/backup"
 	"github.com/trypando/pando/internal/core/bootstrap"
 	"github.com/trypando/pando/internal/core/capacity"
+	"github.com/trypando/pando/internal/core/clisignin"
 	"github.com/trypando/pando/internal/core/clock"
 	"github.com/trypando/pando/internal/core/deploy"
 	"github.com/trypando/pando/internal/core/detection"
@@ -216,10 +217,14 @@ func newInstallWith(t *testing.T, overlay *corepolicy.Overlay, startup *config.C
 		Sessions:  sessions,
 		TwoFactor: twoFactor,
 		Tokens:    tokens,
-		Apps:      apps,
-		Volumes:   volumes,
-		Auditor:   auditor,
-		Policy:    hostPolicy,
+		CLISignIn: &clisignin.Service{
+			Store: state.NewCLISignIns(db), Users: users, Tokens: tokens,
+			Policy: effectivePolicy, Clock: clock.System{},
+		},
+		Apps:    apps,
+		Volumes: volumes,
+		Auditor: auditor,
+		Policy:  hostPolicy,
 
 		Registry:    registry,
 		Adapters:    adapters,

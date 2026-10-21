@@ -9,6 +9,15 @@ describe('providerStart', () => {
     );
   });
 
+  it('comes back to the page it was drawn on', () => {
+    expect(providerStart('idp_1', '?port=4000&state=s', 'https://pando.example.com/admin/cli?port=4000&state=s')).toBe(
+      '/.pando/api/v1/auth/providers/idp_1/start?next=%2Fadmin%2Fcli%3Fport%3D4000%26state%3Ds',
+    );
+    expect(providerStart('idp_1', '', 'https://pando.example.com/login')).toBe(
+      '/.pando/api/v1/auth/providers/idp_1/start?next=%2F',
+    );
+  });
+
   it('refuses to carry another origin', () => {
     expect(providerStart('idp_1', '?next=https%3A%2F%2Fevil.example', 'https://pando.example.com/login')).toBe(
       '/.pando/api/v1/auth/providers/idp_1/start?next=%2F',
