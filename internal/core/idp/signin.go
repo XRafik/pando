@@ -541,7 +541,7 @@ func (s *Service) decide(ctx context.Context, p state.IdentityProvider, subject 
 				return refused(refusal)
 			}
 			if !dryRun {
-				if _, err := s.Identities.Link(ctx, candidate.ID, p.ID, subject.ExternalID, "system", false); err != nil {
+				if _, err := s.Identities.Link(ctx, candidate.ID, p.ID, subject.ExternalID, "system", false, false); err != nil {
 					return refused(errs.As(err))
 				}
 				s.audit(ctx, audit.Event{

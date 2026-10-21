@@ -3482,12 +3482,20 @@
       "path": "pando identity-provider link",
       "use": "link <user-id> <provider-id> <external-id>",
       "short": "Link a provider's identity to an account",
-      "long": "Whoever signs in with that identity signs in to that account. Nothing is merged: with --replace,\nan account the identity already reaches is kept, suspended, as an alias.",
+      "long": "Whoever signs in with that identity signs in to that account. Nothing is merged: with --replace,\nan account the identity already reaches is kept, suspended, as an alias. When that account is\nthe last active owner of an app, --confirm is needed too.",
       "example": "",
       "aliases": [],
       "hidden": false,
       "deprecated": "",
       "flags": [
+        {
+          "name": "confirm",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "go ahead when the account it moves from is the last active owner of an app",
+          "required": false
+        },
         {
           "name": "replace",
           "shorthand": "",

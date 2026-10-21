@@ -105,3 +105,15 @@ describe('the Policy screen’s idle apps and app limit (R-393, R-398, R-244)', 
     expect(render({ idle_stop_days: 30, max_apps_per_user: 5 })).toContain('value="30"');
   });
 });
+
+describe('the Policy screen’s apps without an owner (R-408)', () => {
+  // The switch's input, by the label beside it.
+  const stopSwitch = (html: string) => html.match(/<label[^>]*>(?:(?!<\/label>).)*Stop apps with no active owner/s)?.[0] ?? '';
+
+  it('is on when policy does not say, and off only when it says false', () => {
+    expect(stopSwitch(render({}))).toContain('checked=""');
+    expect(stopSwitch(render({ stop_orphaned_apps: true }))).toContain('checked=""');
+    expect(stopSwitch(render({ stop_orphaned_apps: false }))).not.toContain('checked=""');
+    expect(render({})).toContain('Administrators are told either way.');
+  });
+});

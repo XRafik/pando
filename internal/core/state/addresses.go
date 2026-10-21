@@ -178,14 +178,14 @@ func (a *Apps) ByPath(ctx context.Context, requestPath string) (App, *spec.AppSp
 	)
 	err := a.db.QueryRow(ctx, `
 		SELECT a.id, a.name, a.slug, a.owner_user_id, a.state, a.desired_state, a.pinned_spec_id,
-		       a.created_at, a.updated_at, r.body, a.address_path, a.stopped_for_idle, a.stopped_for_disk
+		       a.created_at, a.updated_at, r.body, a.address_path, a.stopped_for_idle, a.stopped_for_disk, a.stopped_for_orphan, a.orphaned_at IS NOT NULL
 		FROM apps a
 		LEFT JOIN spec_revisions r ON r.id = a.pinned_spec_id
 		WHERE a.deleted_at IS NULL AND a.address_path = ANY($1)
 		ORDER BY length(a.address_path) DESC
 		LIMIT 1`, candidates).
 		Scan(&app.ID, &app.Name, &app.Slug, &owner, &app.State, &app.DesiredState, &pinned,
-			&app.CreatedAt, &app.UpdatedAt, &body, &prefix, &app.StoppedForIdle, &app.StoppedForDisk)
+			&app.CreatedAt, &app.UpdatedAt, &body, &prefix, &app.StoppedForIdle, &app.StoppedForDisk, &app.StoppedForOrphan, &app.Orphaned)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return App{}, nil, "", false, nil
 	}

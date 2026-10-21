@@ -46,6 +46,8 @@ var descriptions = map[string]string{
 		"longer than idle_stop_days. Its owner is told 7 days before. Storage is backed up first when " +
 		"require_backup_before_destroy is on, and discarded otherwise. An app can set its own number or turn " +
 		"this off. 0 means never.",
+	"stop_orphaned_apps": "Stop an app once none of its owners has an active account and no group owns it. " +
+		"On by default. It stays stopped until somebody starts it. Administrators are told either way.",
 	"max_apps_per_user": "How many apps each person may own, unless their account or one of their groups says " +
 		"otherwise. 0 means unlimited.",
 	"allow_cpu_oversubscription": "Let apps together ask for more CPU than the runtime has. Off by default: a " +

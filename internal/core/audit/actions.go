@@ -38,6 +38,8 @@ var Actions = []string{
 	"app.idle.notice",
 	"app.idle.stopped",
 	"app.logs.read",
+	"app.orphan.stopped",
+	"app.orphaned",
 	"app.passcode.denied",
 	"app.passcode.unlock",
 	"app.reconciled",

@@ -972,6 +972,12 @@
                     "stopped_for_disk": {
                       "type": "boolean"
                     },
+                    "stopped_for_orphan": {
+                      "type": "boolean"
+                    },
+                    "orphaned": {
+                      "type": "boolean"
+                    },
                     "source": {
                       "$ref": "#/components/schemas/SpecSource"
                     },
@@ -11666,7 +11672,7 @@
       "post": {
         "operationId": "linkIdentity",
         "summary": "Link an identity",
-        "description": "Link a provider's identity (`adapter_id`, `external_id`) to an account, so it signs in there. Adds an alias and never merges accounts. If it already signs in to another account, `replace_account: true` moves it, and that account is kept, suspended, as an alias. On someone else's account, refused unless the caller holds every installation permission that account holds.\n\nNeeds `install.users.manage`.",
+        "description": "Link a provider's identity (`adapter_id`, `external_id`) to an account, so it signs in there. Adds an alias and never merges accounts. If it already signs in to another account, `replace_account: true` moves it, and that account is kept, suspended, as an alias. When that account is the last active owner of an app, refused unless `confirm: true`, naming the apps. On someone else's account, refused unless the caller holds every installation permission that account holds.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
         ],
@@ -11694,12 +11700,16 @@
                   },
                   "replace_account": {
                     "type": "boolean"
+                  },
+                  "confirm": {
+                    "type": "boolean"
                   }
                 },
                 "required": [
                   "adapter_id",
                   "external_id",
-                  "replace_account"
+                  "replace_account",
+                  "confirm"
                 ]
               }
             }
@@ -12297,6 +12307,12 @@
             "type": "boolean"
           },
           "stopped_for_disk": {
+            "type": "boolean"
+          },
+          "stopped_for_orphan": {
+            "type": "boolean"
+          },
+          "orphaned": {
             "type": "boolean"
           },
           "source": {
@@ -15692,6 +15708,9 @@
           "idle_delete_days": {
             "type": "integer",
             "format": "int64"
+          },
+          "stop_orphaned_apps": {
+            "type": "boolean"
           },
           "max_apps_per_user": {
             "type": "integer",

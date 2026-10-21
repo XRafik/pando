@@ -598,6 +598,39 @@ the host's disk with three mechanisms. Disk is never committed past what the hos
 apps write is measured and an app that stays over is stopped (this section). Where possible the
 runtime caps a container's layer as well. Logs and backups are bounded by size (R-222, R-224).
 
+### 6.0a Apps with no active owner (R-407 – R-409)
+
+A leader job of its own (`orphans`, `internal/core/orphan`). It runs when who owns an app may have
+changed: migration 79's triggers notify `pando_app_owners` when an account's status or `deleted_at`
+changes, an Owner grant is added, changed or removed, or an app's owner of record changes. It also
+runs when its listener connects again, and every 5 minutes **[P]** in case a notification was lost.
+
+- **Orphaned** (R-407): no active account among the owner of record and the accounts holding Owner,
+  and no group holding Owner. An alias is suspended, so it is not active. An app with neither an owner
+  of record nor an Owner grant to an account is not orphaned. The predicate is `noActiveOwner` in
+  `state/orphans.go`; migration 79 repeats it once.
+- **Unmark first.** A marked app that has an active owner again loses `orphaned_at`, so losing that
+  owner is a new orphaning. A stop the pass made is left until somebody starts the app.
+- **Mark**: `orphaned_at`, and when `stop_orphaned_apps` is on (nil is on), `desired_state = stopped`
+  and `stopped_for_orphan` in the same write, only for an app meant to be running and not `failed`
+  (R-151), and only while the app is still orphaned and unmarked. Audited `app.orphaned` (with
+  `stopped`) and `app.orphan.stopped`.
+- **Starting** the app clears `stopped_for_orphan` (migration 79's `app_activity_started`) and leaves
+  `orphaned_at`, so the pass does not stop it again. That is how an administrator keeps an orphaned
+  app running.
+- **Announce**: every marked app without `orphan_announced_at` goes to the active holders of
+  `role_administrator`, directly or through a group, in one `app_orphaned` notice. It is recorded as
+  sent only once it went out, so a failed send is retried by the next pass.
+- **Existing orphans** at migration 79 are marked and not stopped, so the upgrade takes no app down,
+  and announced by the first pass (R-408). Turning the setting on later does not stop apps that are
+  already marked, for the same reason.
+- **Linking** (O-1): `Identities.Link` with `replace` would make the account it leaves an alias. If
+  that account is the last active owner of an unmarked app, the link is refused unless `confirm` is
+  set, with the apps' names in `details.orphaned_apps` (R-409).
+
+**[P]** Administrators, not owners of other apps or holders of `install.apps.*`: the built-in role is
+the one an installation is sure to have, and the person deciding who owns what.
+
 ### 6.1 Idle apps (issue #131)
 
 A leader job of its own (`idle`, `internal/core/idle`), hourly, inert until host policy's

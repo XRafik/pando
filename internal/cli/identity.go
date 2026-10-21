@@ -298,12 +298,13 @@ func identityCmd(client func() (*Client, error)) *cobra.Command {
 	scim.Flags().BoolVar(&scimOff, "off", false, "turn SCIM off instead")
 	cmd.AddCommand(scim)
 
-	var replace bool
+	var replace, confirm bool
 	link := &cobra.Command{
 		Use:   "link <user-id> <provider-id> <external-id>",
 		Short: "Link a provider's identity to an account",
 		Long: "Whoever signs in with that identity signs in to that account. Nothing is merged: with --replace,\n" +
-			"an account the identity already reaches is kept, suspended, as an alias.",
+			"an account the identity already reaches is kept, suspended, as an alias. When that account is\n" +
+			"the last active owner of an app, --confirm is needed too.",
 		Args: cobra.ExactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := client()
@@ -313,8 +314,11 @@ func identityCmd(client func() (*Client, error)) *cobra.Command {
 			var out struct {
 				Aliased string `json:"aliased_user_id"`
 			}
-			if err := c.Do("POST", "/users/"+url.PathEscape(args[0])+"/identities",
-				map[string]any{"adapter_id": args[1], "external_id": args[2], "replace_account": replace}, &out); err != nil {
+			body := map[string]any{"adapter_id": args[1], "external_id": args[2], "replace_account": replace}
+			if confirm {
+				body["confirm"] = true
+			}
+			if err := c.Do("POST", "/users/"+url.PathEscape(args[0])+"/identities", body, &out); err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Linked %s at %s to %s.\n", args[2], args[1], args[0])
@@ -325,6 +329,7 @@ func identityCmd(client func() (*Client, error)) *cobra.Command {
 		},
 	}
 	link.Flags().BoolVar(&replace, "replace", false, "move the identity here if it already signs in to another account")
+	link.Flags().BoolVar(&confirm, "confirm", false, "go ahead when the account it moves from is the last active owner of an app")
 	cmd.AddCommand(link)
 
 	cmd.AddCommand(&cobra.Command{

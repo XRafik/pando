@@ -14,8 +14,9 @@ import (
 // LinkIdentity attaches a provider's identity to an account. When it already
 // reaches another account, it moves only with replace set, and that account
 // becomes a suspended alias of this one — never deleted (design 02 §2.1).
-func (s *Service) LinkIdentity(ctx context.Context, p authz.Principal, userID, providerID, externalID string, replace bool) (string, error) {
-	aliased, err := s.Identities.Link(ctx, userID, providerID, externalID, p.ID, replace)
+// Suspending the last active owner of an app that way needs confirm (R-409).
+func (s *Service) LinkIdentity(ctx context.Context, p authz.Principal, userID, providerID, externalID string, replace, confirm bool) (string, error) {
+	aliased, err := s.Identities.Link(ctx, userID, providerID, externalID, p.ID, replace, confirm)
 	if err != nil {
 		return "", err
 	}

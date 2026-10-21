@@ -153,8 +153,12 @@ var ErrIdentityTaken = errs.New(errs.ValidInvalid,
 // deleted, because its ID may be an assertion subject an app holds data under
 // (R-054).
 //
+// An alias that is the last active owner of an app leaves the app with none,
+// which host policy may stop (R-408). Unless confirm is set, that is refused,
+// naming the apps (R-409).
+//
 // Returns the account that became an alias, if any.
-func (s *Identities) Link(ctx context.Context, userID, adapterID, externalID, by string, replace bool) (string, error) {
+func (s *Identities) Link(ctx context.Context, userID, adapterID, externalID, by string, replace, confirm bool) (string, error) {
 	externalID = strings.TrimSpace(externalID)
 	if externalID == "" {
 		return "", errs.New(errs.ValidInvalid, "An identity needs the provider's ID for the person.").
@@ -166,29 +170,8 @@ func (s *Identities) Link(ctx context.Context, userID, adapterID, externalID, by
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var kind string
-	err = tx.QueryRow(ctx, `SELECT kind FROM identity_adapters WHERE id = $1`, adapterID).Scan(&kind)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", errs.New(errs.NotFound, "There is no identity provider with that ID.")
-	}
-	if err != nil {
-		return "", errs.Wrap(errs.Internal, "Could not link the identity.", err)
-	}
-	if kind == "local" {
-		return "", errs.New(errs.ValidInvalid, "A local account is linked by giving it a password, not an identity.")
-	}
-
-	var target string
-	var alias *string
-	err = tx.QueryRow(ctx, `SELECT id, alias_of FROM users WHERE id = $1 AND deleted_at IS NULL`, userID).Scan(&target, &alias)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", errs.New(errs.NotFound, "There is no account with that ID.")
-	}
-	if err != nil {
-		return "", errs.Wrap(errs.Internal, "Could not link the identity.", err)
-	}
-	if alias != nil {
-		return "", errs.New(errs.ValidInvalid, "That account is an alias of another. Link the identity to that one.")
+	if err := checkLinkable(ctx, tx, userID, adapterID); err != nil {
+		return "", err
 	}
 
 	var current string
@@ -226,37 +209,91 @@ func (s *Identities) Link(ctx context.Context, userID, adapterID, externalID, by
 		current).Scan(&remaining, &origin); err != nil {
 		return "", errs.Wrap(errs.Internal, "Could not link the identity.", err)
 	}
-	aliased := ""
-	if remaining == 0 && origin != "local" {
-		// The R-088 check applies: aliasing suspends, and an alias that was
-		// the last administrator is the lockout reached another way. Moving
-		// its grants would be a merge, which O-1 rules out; the administrator
-		// grants the surviving account what it needs.
-		before, err := lockoutForUsers(ctx, tx, current)
-		if err != nil {
-			return "", errs.Wrap(errs.Internal, "Could not link the identity.", err)
-		}
-		if _, err := tx.Exec(ctx, `
-			UPDATE users SET alias_of = $2, status = 'suspended', suspended_by = 'alias', updated_at = now()
-			WHERE id = $1`, current, userID); err != nil {
-			return "", errs.Wrap(errs.Internal, "Could not link the identity.", err)
-		}
-		if _, err := tx.Exec(ctx,
-			`UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL`, current); err != nil {
-			return "", errs.Wrap(errs.Internal, "Could not link the identity.", err)
-		}
-		lost, err := before.managersLost(ctx, tx)
-		if err != nil {
-			return "", errs.Wrap(errs.Internal, "Could not link the identity.", err)
-		}
-		if lost {
-			return "", errs.New(errs.ValidInvalid,
-				"The account this identity leaves is the only one that can manage accounts, and it would be suspended.").
-				WithRemedy("Make this account an administrator first, then link the identity.")
-		}
-		aliased = current
+	if remaining > 0 || origin == "local" {
+		return "", commit(ctx, tx, "Could not link the identity.")
 	}
-	return aliased, commit(ctx, tx, "Could not link the identity.")
+	if err := makeAlias(ctx, tx, current, userID, confirm); err != nil {
+		return "", err
+	}
+	return current, commit(ctx, tx, "Could not link the identity.")
+}
+
+// checkLinkable refuses a link to a local provider, to an account that does
+// not exist, or to an alias.
+func checkLinkable(ctx context.Context, tx pgx.Tx, userID, adapterID string) error {
+	var kind string
+	err := tx.QueryRow(ctx, `SELECT kind FROM identity_adapters WHERE id = $1`, adapterID).Scan(&kind)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errs.New(errs.NotFound, "There is no identity provider with that ID.")
+	}
+	if err != nil {
+		return errs.Wrap(errs.Internal, "Could not link the identity.", err)
+	}
+	if kind == "local" {
+		return errs.New(errs.ValidInvalid, "A local account is linked by giving it a password, not an identity.")
+	}
+
+	var target string
+	var alias *string
+	err = tx.QueryRow(ctx, `SELECT id, alias_of FROM users WHERE id = $1 AND deleted_at IS NULL`, userID).Scan(&target, &alias)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errs.New(errs.NotFound, "There is no account with that ID.")
+	}
+	if err != nil {
+		return errs.Wrap(errs.Internal, "Could not link the identity.", err)
+	}
+	if alias != nil {
+		return errs.New(errs.ValidInvalid, "That account is an alias of another. Link the identity to that one.")
+	}
+	return nil
+}
+
+// makeAlias suspends the account an identity left as an alias of userID, and
+// ends its sessions.
+//
+// The R-088 check applies: aliasing suspends, and an alias that was the last
+// administrator is the lockout reached another way. Moving its grants would be
+// a merge, which O-1 rules out; the administrator grants the surviving account
+// what it needs. So does R-409: unless confirm is set, an alias that is the
+// last active owner of an app is refused, naming the apps.
+func makeAlias(ctx context.Context, tx pgx.Tx, current, userID string, confirm bool) error {
+	if !confirm {
+		orphaned, err := lastOwnerOf(ctx, tx, current)
+		if err != nil {
+			return err
+		}
+		if len(orphaned) > 0 {
+			return errs.Newf(errs.ValidInvalid,
+				"Moving this identity suspends account %s, the last active owner of %s. "+
+					"An app with no active owner is stopped unless host policy turns that off.",
+				current, joinNames(orphaned)).
+				WithDetail("orphaned_apps", orphaned).
+				WithRemedy("Give this account Owner on them first, or link the identity again with confirm set.")
+		}
+	}
+	before, err := lockoutForUsers(ctx, tx, current)
+	if err != nil {
+		return errs.Wrap(errs.Internal, "Could not link the identity.", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE users SET alias_of = $2, status = 'suspended', suspended_by = 'alias', updated_at = now()
+		WHERE id = $1`, current, userID); err != nil {
+		return errs.Wrap(errs.Internal, "Could not link the identity.", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL`, current); err != nil {
+		return errs.Wrap(errs.Internal, "Could not link the identity.", err)
+	}
+	lost, err := before.managersLost(ctx, tx)
+	if err != nil {
+		return errs.Wrap(errs.Internal, "Could not link the identity.", err)
+	}
+	if lost {
+		return errs.New(errs.ValidInvalid,
+			"The account this identity leaves is the only one that can manage accounts, and it would be suspended.").
+			WithRemedy("Make this account an administrator first, then link the identity.")
+	}
+	return nil
 }
 
 // Unlink removes an identity from an account. An account left with no way in

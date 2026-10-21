@@ -121,6 +121,8 @@ var classes = map[string]Mapping{
 	"app.idle.stopped":                   appStop,
 	"app.icon.set":                       apiCreate,
 	"app.logs.read":                      apiRead,
+	"app.orphan.stopped":                 appStop,
+	"app.orphaned":                       apiOther,
 	"app.passcode.denied":                webAccessDeny,
 	"app.passcode.unlock":                webAccessGrant,
 	"app.reconciled":                     apiUpdate,

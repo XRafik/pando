@@ -1119,10 +1119,12 @@ pando identity-provider link <user-id> <provider-id> <external-id>
 ```
 
 Whoever signs in with that identity signs in to that account. Nothing is merged: with --replace,
-an account the identity already reaches is kept, suspended, as an alias.
+an account the identity already reaches is kept, suspended, as an alias. When that account is
+the last active owner of an app, --confirm is needed too.
 
 | Flag | Default | What it does |
 | --- | --- | --- |
+| `--confirm` |  | go ahead when the account it moves from is the last active owner of an app |
 | `--replace` |  | move the identity here if it already signs in to another account |
 
 #### `identity-provider link-group`

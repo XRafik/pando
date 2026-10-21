@@ -198,7 +198,7 @@ The settings are `source_allowlist`, `disabled_verbs`, `agent_disabled_verbs`,
 `deploy_approval_required`, `deploy_approval_apps`, `deploy_approval_count`,
 `deploy_approval_expiry_hours`, `require_backup_before_destroy`, `max_token_lifetime_days`,
 `max_log_disk_bytes`, `allow_cpu_oversubscription`, `allow_memory_oversubscription`,
-`max_concurrent_deploys`, `idle_stop_days`, `idle_delete_days`, `max_apps_per_user`, `disable_ai_screening`,
+`max_concurrent_deploys`, `idle_stop_days`, `idle_delete_days`, `stop_orphaned_apps`, `max_apps_per_user`, `disable_ai_screening`,
 `disable_anonymous_use_audit`, `disable_anonymous_denial_audit`,
 `disable_password_sign_in`, `disable_jit_provisioning`, `require_local_two_factor`, `min_security_score`, `insecure_action`,
 `insecure_grace_hours` and `ignore_unfixable_findings`.
@@ -214,6 +214,11 @@ come later than stopping. The owner is told 7 days before either. A stopped app 
 somebody starts it, and a deleted app's storage is backed up first when
 `require_backup_before_destroy` is on and discarded otherwise. An app sets its own with
 `PUT /api/v1/apps/{id}/idle` (R-393 – R-398).
+
+`stop_orphaned_apps`, on unless set to `false`, stops an app once none of its owners has an active
+account and no group owns it. It stays stopped until somebody starts it. Everyone holding the
+Administrator role is told either way (R-407 – R-409). For example,
+`PANDO_POLICY_STOP_ORPHANED_APPS=false`.
 
 `max_apps_per_user` is how many apps each person may own; 0, the default, is unlimited. A value set
 on an account (`PUT /api/v1/users/{id}/app-limit`) applies whatever its groups say; otherwise the
