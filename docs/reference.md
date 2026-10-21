@@ -217,7 +217,7 @@ somebody starts it, and a deleted app's storage is backed up first when
 
 `stop_orphaned_apps`, on unless set to `false`, stops an app once none of its owners has an active
 account and no group owns it. It stays stopped until somebody starts it. Everyone holding the
-Administrator role is told either way (R-406 – R-408). For example,
+Administrator role is told either way (R-407 – R-409). For example,
 `PANDO_POLICY_STOP_ORPHANED_APPS=false`.
 
 `max_apps_per_user` is how many apps each person may own; 0, the default, is unlimited. A value set

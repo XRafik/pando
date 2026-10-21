@@ -154,8 +154,8 @@ var ErrIdentityTaken = errs.New(errs.ValidInvalid,
 // (R-054).
 //
 // An alias that is the last active owner of an app leaves the app with none,
-// which host policy may stop (R-407). Unless confirm is set, that is refused,
-// naming the apps (R-408).
+// which host policy may stop (R-408). Unless confirm is set, that is refused,
+// naming the apps (R-409).
 //
 // Returns the account that became an alias, if any.
 func (s *Identities) Link(ctx context.Context, userID, adapterID, externalID, by string, replace, confirm bool) (string, error) {
@@ -254,7 +254,7 @@ func checkLinkable(ctx context.Context, tx pgx.Tx, userID, adapterID string) err
 // The R-088 check applies: aliasing suspends, and an alias that was the last
 // administrator is the lockout reached another way. Moving its grants would be
 // a merge, which O-1 rules out; the administrator grants the surviving account
-// what it needs. So does R-408: unless confirm is set, an alias that is the
+// what it needs. So does R-409: unless confirm is set, an alias that is the
 // last active owner of an app is refused, naming the apps.
 func makeAlias(ctx context.Context, tx pgx.Tx, current, userID string, confirm bool) error {
 	if !confirm {

@@ -422,7 +422,7 @@ interface PolicyDoc {
   idle_stop_days?: number;
   idle_delete_days?: number;
   max_apps_per_user?: number;
-  // R-407: on unless set false.
+  // R-408: on unless set false.
   stop_orphaned_apps?: boolean;
 
   // Audit retention (R-347, R-348).
@@ -1034,7 +1034,7 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
           </Fixed>
         </PolicySection>
 
-        {/* R-407, R-408: unset is on. Administrators are told either way. */}
+        {/* R-408, R-409: unset is on. Administrators are told either way. */}
         <PolicySection heading="Apps without an owner">
           <Fixed field="stop_orphaned_apps">
             <Switch

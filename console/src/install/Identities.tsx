@@ -100,7 +100,7 @@ function LinkDialog({ userID, onClose }: { userID: string; onClose: () => void }
     },
   });
 
-  // R-408: moving the identity would suspend the last active owner of these
+  // R-409: moving the identity would suspend the last active owner of these
   // apps. Asked once; linking again goes ahead. Changing the form clears it,
   // so a confirmation is only ever for the identity it warned about.
   const orphans = link.error instanceof RequestFailed && link.error.envelope?.details?.orphaned_apps !== undefined;

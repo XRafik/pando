@@ -71,7 +71,7 @@ export function statusSymbol(state: string): Symbol {
 /**
  * stoppedForIdle says Pando stopped the app because nobody used it (R-396),
  * stoppedForDisk because it stayed over its disk limit (R-403), and
- * stoppedForOrphan because none of its owners was active (R-407), which is
+ * stoppedForOrphan because none of its owners was active (R-408), which is
  * said in the word: the symbol is the same dash, and a stop nobody chose is
  * not mistaken for one somebody did, or for a failure.
  */

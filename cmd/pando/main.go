@@ -70,6 +70,7 @@ import (
 	"github.com/trypando/pando/internal/core/backup"
 	"github.com/trypando/pando/internal/core/bootstrap"
 	"github.com/trypando/pando/internal/core/capacity"
+	"github.com/trypando/pando/internal/core/clisignin"
 	"github.com/trypando/pando/internal/core/clock"
 	"github.com/trypando/pando/internal/core/cluster"
 	"github.com/trypando/pando/internal/core/deploy"
@@ -1054,7 +1055,15 @@ func serve(ctx context.Context, configPath string) error {
 		Authent:   authenticator,
 		TwoFactor: twoFactor,
 		Minter:    minter,
-		AppProxy:  appProxy,
+
+		// The CLI signs in through the browser (R-406): approved by a
+		// session, collected with the CLI's verifier, minted like any
+		// delegated token under host policy's lifetime (R-061).
+		CLISignIn: &clisignin.Service{
+			Store: state.NewCLISignIns(db), Users: users, Tokens: tokens,
+			Policy: policyStore, Clock: clock.System{},
+		},
+		AppProxy: appProxy,
 
 		// Decides whether the session cookie is marked Secure (O-19).
 		ExternalURL: externalURL,
@@ -1495,7 +1504,7 @@ func serve(ctx context.Context, configPath string) error {
 	job("disk", diskPass(db, registry, notifyRouter, auditor, logger).Run)
 
 	// Apps none of whose owners is active: stopped at once unless host policy
-	// says otherwise, and administrators told either way (R-406 – R-408).
+	// says otherwise, and administrators told either way (R-407 – R-409).
 	job("orphans", orphanPass(db, policyStore, notifyRouter, auditor, logger).Run)
 
 	// Metrics about this process, pushed to the operator's collector (R-399).

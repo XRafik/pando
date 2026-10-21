@@ -1,8 +1,8 @@
 // Package orphan stops apps none of whose owners is active, and tells
-// administrators (R-406 – R-408).
+// administrators (R-407 – R-409).
 //
 // The pass runs on the leader. It is woken when who owns an app may have
-// changed — migration 78's triggers notify state.AppOwnersChannel when an
+// changed — migration 79's triggers notify state.AppOwnersChannel when an
 // account is suspended or deleted, an Owner grant is added or removed — so an
 // app stops when its last owner goes, and it also runs on a schedule in case a
 // notification was lost.
@@ -16,7 +16,7 @@
 //  3. Administrators are told of every marked app they have not been told of,
 //     in one notice.
 //
-// Nothing here starts an app. Starting one clears the stop (migration 78) and
+// Nothing here starts an app. Starting one clears the stop (migration 79) and
 // leaves the mark, so an administrator who starts an orphaned app keeps it
 // running.
 package orphan
@@ -77,7 +77,7 @@ type Pass struct {
 	Policy PolicyLoader
 
 	// Notifier, Auditor and Changes are optional. Production wires all
-	// three: R-408 is a promise that administrators hear of every orphaned
+	// three: R-409 is a promise that administrators hear of every orphaned
 	// app, and Changes is what makes a stop immediate.
 	Notifier Notifier
 	Auditor  Auditor
@@ -215,7 +215,7 @@ func (p *Pass) announce(ctx context.Context) {
 
 // Notice is what administrators are told of apps with no active owner: which
 // were stopped, which are still running, and what gives an app an owner again
-// (R-105, R-408). Recipients are left to the caller.
+// (R-105, R-409). Recipients are left to the caller.
 func Notice(apps []state.OrphanApp) api.Notification {
 	var stopped, running []string
 	for _, app := range apps {

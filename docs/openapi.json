@@ -6162,6 +6162,120 @@
         "x-pando-verb": "install.view"
       }
     },
+    "/api/v1/cli-sign-ins": {
+      "post": {
+        "operationId": "approveCLISignIn",
+        "summary": "Approve a CLI sign-in",
+        "description": "Let the CLI that opened this browser sign in as you: the console's approval page sends on what `pando login` put in its address — `code_challenge` (base64url SHA-256 of the CLI's verifier), `code_challenge_method` (`S256`), `name` (the token's) and `port`, the loopback port the CLI listens on, with `state`; or `port` 0 when the code will be pasted. Answers with a one-time `code`, valid 5 minutes, and `redirect_url`, the CLI's `http://127.0.0.1:{port}/callback` address carrying it, empty when pasted. A session only: a token cannot approve.",
+        "tags": [
+          "Session"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClisigninRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "redirect_url": {
+                      "type": "string"
+                    },
+                    "expires_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "redirect_url",
+                    "expires_at"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/cli-sign-ins/token": {
+      "post": {
+        "operationId": "exchangeCLISignIn",
+        "summary": "Collect a CLI sign-in",
+        "description": "Trade an approved sign-in's `code` and the `code_verifier` behind its challenge for a delegated token acting as whoever approved it, bounded by their live grants and host policy's token lifetime. Answers with `token`, `secret` (shown once) and `username`. A code is tried once: any attempt spends it, so a wrong verifier ends the sign-in. Public: the verifier is the proof.",
+        "tags": [
+          "Session"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "code_verifier": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "code",
+                  "code_verifier"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "token": {
+                      "$ref": "#/components/schemas/Token"
+                    },
+                    "secret": {
+                      "type": "string"
+                    },
+                    "username": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "token",
+                    "secret",
+                    "username"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": []
+      }
+    },
     "/api/v1/config": {
       "get": {
         "operationId": "getConfig",
@@ -10987,7 +11101,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/Request"
+                "$ref": "#/components/schemas/UpgradeRequest"
               }
             }
           }
@@ -13080,6 +13194,34 @@
         "required": [
           "id",
           "kind"
+        ]
+      },
+      "ClisigninRequest": {
+        "type": "object",
+        "properties": {
+          "code_challenge": {
+            "type": "string"
+          },
+          "code_challenge_method": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "state": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code_challenge",
+          "code_challenge_method",
+          "name",
+          "port",
+          "state"
         ]
       },
       "CodeDoc": {
@@ -16215,28 +16357,6 @@
           "private"
         ]
       },
-      "Request": {
-        "type": "object",
-        "properties": {
-          "version": {
-            "type": "string"
-          },
-          "confirm_breaking": {
-            "type": "string"
-          },
-          "passphrase": {
-            "type": "string",
-            "description": "Always `[redacted]`: a secret's value is never written to a response."
-          },
-          "skip_backup": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "version",
-          "passphrase"
-        ]
-      },
       "Resolution": {
         "type": "object",
         "properties": {
@@ -17640,6 +17760,28 @@
           "version",
           "command",
           "instructions"
+        ]
+      },
+      "UpgradeRequest": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "string"
+          },
+          "confirm_breaking": {
+            "type": "string"
+          },
+          "passphrase": {
+            "type": "string",
+            "description": "Always `[redacted]`: a secret's value is never written to a response."
+          },
+          "skip_backup": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "version",
+          "passphrase"
         ]
       },
       "User": {

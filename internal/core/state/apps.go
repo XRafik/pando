@@ -50,11 +50,11 @@ type App struct {
 	StoppedForDisk bool `json:"stopped_for_disk,omitempty"`
 
 	// StoppedForOrphan says Pando stopped this app because none of its owners
-	// was active any more (R-407). Starting it clears this (migration 78).
+	// was active any more (R-408). Starting it clears this (migration 79).
 	StoppedForOrphan bool `json:"stopped_for_orphan,omitempty"`
 
 	// Orphaned says none of the app's owners is active: every account that
-	// owns it is suspended or deleted and no group owns it (R-406).
+	// owns it is suspended or deleted and no group owns it (R-407).
 	Orphaned bool `json:"orphaned,omitempty"`
 
 	// Source is where the app comes from, recorded at creation so detection has

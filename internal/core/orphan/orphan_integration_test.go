@@ -14,11 +14,11 @@ import (
 	"github.com/trypando/pando/internal/core/state/statetest"
 )
 
-// TestR407_SuspendingTheLastOwnerStopsTheAppAtOnce asserts R-407 end to end
+// TestR408_SuspendingTheLastOwnerStopsTheAppAtOnce asserts R-408 end to end
 // on Postgres: suspending an app's only owner wakes the pass through migration
 // 78's trigger, and the app is stopped within seconds, not at the next
 // scheduled pass.
-func TestR407_SuspendingTheLastOwnerStopsTheAppAtOnce(t *testing.T) {
+func TestR408_SuspendingTheLastOwnerStopsTheAppAtOnce(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	db, _ := statetest.Connect(t)

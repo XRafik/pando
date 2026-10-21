@@ -60,7 +60,7 @@ function type(input: HTMLInputElement, value: string) {
   input.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
-// R-408: linking that would suspend an app's last active owner says which
+// R-409: linking that would suspend an app's last active owner says which
 // apps, and goes ahead only when asked again.
 describe('linking away the last owner of an app', () => {
   it('names the apps, then links anyway with confirm', async () => {

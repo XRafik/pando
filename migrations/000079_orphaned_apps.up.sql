@@ -1,4 +1,4 @@
--- Apps with no active owner (R-406 – R-408).
+-- Apps with no active owner (R-407 – R-409).
 --
 -- An app is orphaned when its owner of record and every account holding Owner
 -- on it are suspended or deleted, and no group holds Owner on it. The orphan
@@ -9,14 +9,14 @@
 --
 -- stopped_for_orphan records that Pando stopped it, as stopped_for_idle does.
 -- Starting the app clears it and leaves orphaned_at alone: an administrator
--- who starts an orphaned app keeps it running (R-407).
+-- who starts an orphaned app keeps it running (R-408).
 ALTER TABLE apps
     ADD COLUMN orphaned_at         timestamptz,
     ADD COLUMN orphan_announced_at timestamptz,
     ADD COLUMN stopped_for_orphan  boolean NOT NULL DEFAULT false;
 
 -- Apps already orphaned are marked and not stopped: an upgrade does not take
--- apps down (R-407). orphan_announced_at stays NULL, so the first pass tells
+-- apps down (R-408). orphan_announced_at stays NULL, so the first pass tells
 -- administrators about them.
 UPDATE apps SET orphaned_at = now()
 FROM (

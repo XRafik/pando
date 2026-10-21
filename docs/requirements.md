@@ -147,7 +147,7 @@ exactly this.
 
 **R-048 [D]** **SCIM support** is the enterprise revocation and provisioning path. Where an IdP supports SCIM, Pando accepts pushed user and group lifecycle events (SCIM 2.0, a bearer token per provider). A pushed deactivation suspends and ends sessions at once; a pushed group change takes effect on the next request. On the proxy's path, "the next request" is the next one after the change reaches the proxy, which is told when it commits; if that message is lost, at most 30 seconds (design 06 §3.1, amended with issue #93).
 
-**R-049 [D]** **Suspended is not deleted.** Pando must model at minimum: active, suspended, deleted. A suspended user loses access immediately but their data-destruction rules (R-280) do not fire. Their apps keep running unless none of their owners is left active (R-407).
+**R-049 [D]** **Suspended is not deleted.** Pando must model at minimum: active, suspended, deleted. A suspended user loses access immediately but their data-destruction rules (R-280) do not fire. Their apps keep running unless none of their owners is left active (R-408).
 
 **R-050 [P]** For adapters that cannot push revocation, Pando falls back to expiry at next token refresh. The adapter's declared session lifetime is therefore the effective revocation window and must be documented as such.
 
@@ -189,6 +189,8 @@ exactly this.
 **R-062 [P]** Tokens record a last-used timestamp so stale credentials are reviewable.
 
 **R-063 [P]** Token secrets are displayed once at creation and never retrievable afterward.
+
+**R-406 [D]** **The CLI signs in through the browser.** `pando login` opens Pando's console, where the person signs in however their account signs in — a password and second factor, or an identity provider — and approves the CLI by name; the CLI then stores a delegated token (R-058) bounded by host policy's token lifetime (R-061). This is OAuth 2.0's authorization code grant for a native app (RFC 8252) with PKCE (RFC 7636, `S256` only): the CLI sends the console only its verifier's digest, the approval returns a one-time code to the CLI's listener on `127.0.0.1`, or for the person to paste when the browser is on another machine, and the code is traded once, within a few minutes [P: 5], with the verifier, which never leaves the CLI — so a code that reaches anyone else signs nobody in. Only a signed-in session approves, never a token; an account that must change its password or set up a required second factor does that first (R-046, R-405). Approving and collecting are audited, and so is a refused code that named an approval, against the account that approved it; a code that names nothing is refused without an audit row, so a public endpoint cannot be used to grow the log. Password sign-in in the terminal stays (`--username`), and MCP uses the token the CLI stores (R-262). *(Added by the owner, 2026-10-20: an account from an identity provider had no way to sign the CLI or MCP in except by copying a token out of the console.)*
 
 ---
 
@@ -678,11 +680,11 @@ Added by issue #131, so that an install does not fill up with apps nobody uses.
 Added so that an app whose owners have all left, typically deactivated at the identity provider, is not
 left running with nobody to look after it.
 
-**R-406 [D]** **An app is orphaned when none of its owners is active:** its owner of record (R-031) and every account holding Owner on it are suspended or deleted, and no group holds Owner on it. A group's grant always counts, whoever is in the group. It does not matter how the last owner went: a pushed deactivation (R-048), an administrator suspending or deleting the account, linking its identity to another account so it becomes an alias (O-1), or an Owner grant removed. An app that never had an owner is not orphaned.
+**R-407 [D]** **An app is orphaned when none of its owners is active:** its owner of record (R-031) and every account holding Owner on it are suspended or deleted, and no group holds Owner on it. A group's grant always counts, whoever is in the group. It does not matter how the last owner went: a pushed deactivation (R-048), an administrator suspending or deleting the account, linking its identity to another account so it becomes an alias (O-1), or an Owner grant removed. An app that never had an owner is not orphaned.
 
-**R-407 [D]** **Host policy `stop_orphaned_apps`, on by default, stops an app as soon as it is orphaned.** It stays stopped until somebody starts it, as an idle app does (R-396), and the app, in the console and the API, and its address, to a visitor, say why. Its data is kept (R-282). It is stopped once per orphaning: an administrator who starts it while it is still orphaned keeps it running, and it is stopped again only after it has an active owner and loses them again. Apps already orphaned when the setting is turned on, or when the upgrade that added it ran, are not stopped; administrators are told of them (R-408).
+**R-408 [D]** **Host policy `stop_orphaned_apps`, on by default, stops an app as soon as it is orphaned.** It stays stopped until somebody starts it, as an idle app does (R-396), and the app, in the console and the API, and its address, to a visitor, say why. Its data is kept (R-282). It is stopped once per orphaning: an administrator who starts it while it is still orphaned keeps it running, and it is stopped again only after it has an active owner and loses them again. Apps already orphaned when the setting is turned on, or when the upgrade that added it ran, are not stopped; administrators are told of them (R-409).
 
-**R-408 [D]** **Everyone holding the built-in Administrator role is told when an app is orphaned**, through the notification adapters (R-230), as `app_orphaned`, whether or not it was stopped. The notice says which, and that granting Owner to somebody gives the app an owner again. Apps a pass finds together are one notice. Each orphaning and each stop is an audit event. Linking an identity that would make the last active owner of an app an alias is refused until confirmed, naming the apps.
+**R-409 [D]** **Everyone holding the built-in Administrator role is told when an app is orphaned**, through the notification adapters (R-230), as `app_orphaned`, whether or not it was stopped. The notice says which, and that granting Owner to somebody gives the app an owner again. Apps a pass finds together are one notice. Each orphaning and each stop is an audit event. Linking an identity that would make the last active owner of an app an alias is refused until confirmed, naming the apps.
 
 ---
 

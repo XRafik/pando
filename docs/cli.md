@@ -70,6 +70,12 @@ docker compose exec pando pando app list
 pando login https://pando.example.com
 ```
 
+`pando login` opens Pando in your browser, where you sign in however your account
+signs in — including through your organization's identity provider — and approve
+the CLI. On a machine without a browser, `--no-browser` prints the address to open
+elsewhere and asks for the code it shows; `--username` signs in with a password
+instead. `pando mcp` uses the same token.
+
 `pando login` stores a delegated token under your home directory, which is right
 for a person at a terminal and no use to CI or a container. Those get the same
 thing from the environment — make a token in the console under **API and tools** ›
@@ -1208,12 +1214,20 @@ Sign in and store a token for this machine
 pando login [server-url]
 ```
 
-Signs in with a username and password, then creates a token and stores it.
-The token acts as you and holds nothing you do not.
+Opens Pando in your browser, where you sign in however your account signs in —
+a password, two-factor authentication, or your organization's identity provider —
+and approve this CLI. The CLI then stores a token that acts as you and holds
+nothing you do not. `pando mcp` uses the same token.
+
+On a machine with no browser, such as over SSH, --no-browser prints the address to
+open on another computer and asks for the code shown there.
+
+--username signs in with a username and password in the terminal instead.
 
 | Flag | Default | What it does |
 | --- | --- | --- |
-| `--username` |  | username to sign in as |
+| `--no-browser` |  | print the address to open on another computer, and paste the code it shows |
+| `--username` |  | sign in with this username and a password instead of a browser |
 
 ### `logs`
 

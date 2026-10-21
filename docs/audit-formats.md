@@ -138,6 +138,8 @@ is encoded as 6003 API Activity, 99 Other.
 | `backup.restore.start` | 6003 API Activity | 1 Create | 600301 |
 | `backup.verify` | 6003 API Activity | 2 Read | 600302 |
 | `backup.verify.failed` | 6003 API Activity | 2 Read | 600302 |
+| `cli_sign_in.approve` | 3002 Authentication | 1 Logon | 300201 |
+| `cli_sign_in.denied` | 3002 Authentication | 1 Logon | 300201 |
 | `deploy.approve` | 6003 API Activity | 3 Update | 600303 |
 | `deploy.expire` | 6003 API Activity | 4 Delete | 600304 |
 | `deploy.finish` | 6002 Application Lifecycle | 8 Update | 600208 |

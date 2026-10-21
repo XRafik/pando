@@ -81,6 +81,8 @@ var Actions = []string{
 	"backup.restore.start",
 	"backup.verify",
 	"backup.verify.failed",
+	"cli_sign_in.approve",
+	"cli_sign_in.denied",
 	"deploy.approve",
 	"deploy.expire",
 	"deploy.finish",

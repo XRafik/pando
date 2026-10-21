@@ -57,7 +57,7 @@ func newTwoStepAPI(t *testing.T, signedIn map[string]any) *twoStepAPI {
 // CLI: the password, then a code, then the same sign-in again with both.
 func TestR405_LoginAsksForACodeWhenTheAccountHasTwoFactor(t *testing.T) {
 	api := newTwoStepAPI(t, map[string]any{"user_id": "usr_01HQ8"})
-	got := run(t, &fakeAPI{url: api.url}, "ben\nhunter2\n123456\n", "login", api.url)
+	got := run(t, &fakeAPI{url: api.url}, "hunter2\n123456\n", "login", api.url, "--username", "ben")
 	require.NoError(t, got.err)
 	require.Len(t, api.sessions, 2)
 	require.JSONEq(t, `{"username":"ben","password":"hunter2","code":"123456"}`, api.sessions[1])
@@ -70,7 +70,7 @@ func TestR405_LoginAsksForACodeWhenTheAccountHasTwoFactor(t *testing.T) {
 func TestR405_LoginStopsOnAnAccountThatMustSetUpTwoFactor(t *testing.T) {
 	api := newAPI(t).reply("POST /sessions",
 		map[string]any{"user_id": "usr_01HQ8", "two_factor_setup_required": true})
-	got := run(t, api, "ben\nhunter2\n", "login")
+	got := run(t, api, "hunter2\n", "login", "--username", "ben")
 	require.ErrorContains(t, got.err, "requires two-factor authentication")
 	require.False(t, api.sawPath("/tokens"), "no token is minted")
 }

@@ -651,6 +651,10 @@ pando policy show|set
 pando admin reset-password [user]          server-side; needs the host, not a token
 ```
 
+**[D]** `pando login` signs in through the browser (R-406, design 06 §3.5), so an account from an identity
+provider can sign the CLI and MCP in; `--no-browser` pastes the code instead, and `--username` keeps the
+password prompt in the terminal.
+
 **[D]** `pando deploy ./` must work from a local path, since R-262's agent workflow depends on it — a generated app cannot drop a config file, but an agent can invoke a command.
 
 **[D] The console sends files the same way (issue #41).** Add app takes a folder or files — chosen, or

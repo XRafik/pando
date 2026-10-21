@@ -41,11 +41,11 @@ func orphanIDs(t *testing.T, list []state.OrphanApp) []string {
 	return out
 }
 
-// TestR406_AnAppIsOrphanedWhenNoneOfItsOwnersIsActive asserts R-406 at the
+// TestR407_AnAppIsOrphanedWhenNoneOfItsOwnersIsActive asserts R-407 at the
 // database: an app is orphaned when its owner of record and every account
 // holding Owner on it are suspended or deleted; an active co-owner keeps it
 // owned, and a group holding Owner keeps it owned whoever is in the group.
-func TestR406_AnAppIsOrphanedWhenNoneOfItsOwnersIsActive(t *testing.T) {
+func TestR407_AnAppIsOrphanedWhenNoneOfItsOwnersIsActive(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	db := connected(t)
@@ -83,11 +83,11 @@ func TestR406_AnAppIsOrphanedWhenNoneOfItsOwnersIsActive(t *testing.T) {
 	assert.ElementsMatch(t, []string{solo.ID, shared.ID}, orphanIDs(t, list), "a deleted co-owner is not an owner")
 }
 
-// TestR407_AnOrphanedAppIsStoppedOnceAndStartedClear asserts R-407 at the
+// TestR408_AnOrphanedAppIsStoppedOnceAndStartedClear asserts R-408 at the
 // database: marking an orphaned app stops it in the same write and records why;
 // starting it clears the stop and keeps the mark, so it is not stopped again;
 // an owner coming back unmarks it, and losing them again is a new orphaning.
-func TestR407_AnOrphanedAppIsStoppedOnceAndStartedClear(t *testing.T) {
+func TestR408_AnOrphanedAppIsStoppedOnceAndStartedClear(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	db := connected(t)
@@ -157,10 +157,10 @@ func TestR407_AnOrphanedAppIsStoppedOnceAndStartedClear(t *testing.T) {
 	assert.False(t, got.StoppedForOrphan)
 }
 
-// TestR408_AdministratorsAreThoseHoldingTheBuiltInRole asserts R-408's
+// TestR409_AdministratorsAreThoseHoldingTheBuiltInRole asserts R-409's
 // recipients: active accounts holding the built-in Administrator role directly
 // or through a group, and nobody holding another role.
-func TestR408_AdministratorsAreThoseHoldingTheBuiltInRole(t *testing.T) {
+func TestR409_AdministratorsAreThoseHoldingTheBuiltInRole(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	db := connected(t)
@@ -191,11 +191,11 @@ func TestR408_AdministratorsAreThoseHoldingTheBuiltInRole(t *testing.T) {
 	assert.ElementsMatch(t, []string{direct.ID, member.ID}, got)
 }
 
-// TestR408_LinkingAwayAnAppsLastOwnerNeedsConfirming asserts R-408: moving an
+// TestR409_LinkingAwayAnAppsLastOwnerNeedsConfirming asserts R-409: moving an
 // identity suspends the account it leaves as an alias, and when that account
 // is the last active owner of an app, linking is refused, naming the app,
 // until it is confirmed.
-func TestR408_LinkingAwayAnAppsLastOwnerNeedsConfirming(t *testing.T) {
+func TestR409_LinkingAwayAnAppsLastOwnerNeedsConfirming(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	db := connected(t)
@@ -220,12 +220,12 @@ func TestR408_LinkingAwayAnAppsLastOwnerNeedsConfirming(t *testing.T) {
 	assert.Equal(t, old.ID, aliased, "confirmed, the identity moves and the account it left is an alias")
 }
 
-// TestR407_TheUpgradeMarksAppsAlreadyOrphanedWithoutStoppingThem asserts
-// migration 78's upgrade step, run as written against apps made after the
+// TestR408_TheUpgradeMarksAppsAlreadyOrphanedWithoutStoppingThem asserts
+// migration 79's upgrade step, run as written against apps made after the
 // fact: an app already without an active owner is marked and left running,
 // to be announced; one with an active owner, a group owner or no owner at all
 // is left alone.
-func TestR407_TheUpgradeMarksAppsAlreadyOrphanedWithoutStoppingThem(t *testing.T) {
+func TestR408_TheUpgradeMarksAppsAlreadyOrphanedWithoutStoppingThem(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	db := connected(t)
@@ -247,7 +247,7 @@ func TestR407_TheUpgradeMarksAppsAlreadyOrphanedWithoutStoppingThem(t *testing.T
 	require.NoError(t, err)
 	require.NoError(t, users.SetStatusBy(ctx, gone.ID, "suspended", "test"))
 
-	up, err := os.ReadFile("../../../migrations/000078_orphaned_apps.up.sql")
+	up, err := os.ReadFile("../../../migrations/000079_orphaned_apps.up.sql")
 	require.NoError(t, err)
 	sql := string(up)
 	start := strings.Index(sql, "UPDATE apps SET orphaned_at = now()")

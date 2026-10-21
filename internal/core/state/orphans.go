@@ -11,15 +11,15 @@ import (
 	"github.com/trypando/pando/internal/errs"
 )
 
-// Apps with no active owner (R-406 – R-408).
+// Apps with no active owner (R-407 – R-409).
 //
 // An app is orphaned when its owner of record (R-031) and every account
 // holding Owner on it are suspended or deleted, and no group holds Owner on
-// it. A group's grant always counts, whoever is in the group (R-406). An app
+// it. A group's grant always counts, whoever is in the group (R-407). An app
 // that never had an owner — none of record and no Owner grant to an account —
 // is not orphaned: nobody left it.
 
-// AppOwnersChannel is the channel migration 78's triggers notify when who owns
+// AppOwnersChannel is the channel migration 79's triggers notify when who owns
 // an app may have changed.
 const AppOwnersChannel = "pando_app_owners"
 
@@ -28,7 +28,7 @@ const ownerGrant = `SELECT 1 FROM grants g
 	WHERE g.app_id = a.id AND g.plane = 'control' AND g.role_id = 'role_owner' AND g.principal_kind = `
 
 // noActiveOwner is true of an app, aliased a, with no active owner other than
-// the account in parameter $1 (” for none). Migration 78 writes the same
+// the account in parameter $1 (” for none). Migration 79 writes the same
 // predicate with no exclusion.
 const noActiveOwner = `
 	NOT EXISTS (` + ownerGrant + `'group')
@@ -93,7 +93,7 @@ func (o *Orphans) list(ctx context.Context, where string, args ...any) ([]Orphan
 
 // MarkOrphaned marks an app orphaned and, with stop set, stops it in the same
 // write, recording why: the visitor page says why in the same moment the app
-// stops (R-407). Only an app still without an active owner and not already
+// stops (R-408). Only an app still without an active owner and not already
 // marked, so a pass that read it before an owner came back writes nothing.
 // Only a running app that has not failed (R-151) is stopped.
 func (o *Orphans) MarkOrphaned(ctx context.Context, appID string, stop bool) (marked, stopped bool, err error) {
@@ -121,7 +121,7 @@ func (o *Orphans) MarkOrphaned(ctx context.Context, appID string, stop bool) (ma
 
 // ClearOwned unmarks every marked app that has an active owner again, so
 // losing that owner is a new orphaning. A stop it made stays until somebody
-// starts the app (R-407). Returns the apps unmarked.
+// starts the app (R-408). Returns the apps unmarked.
 func (o *Orphans) ClearOwned(ctx context.Context) ([]string, error) {
 	rows, err := o.db.Query(ctx, `
 		UPDATE apps a SET orphaned_at = NULL, orphan_announced_at = NULL
@@ -156,7 +156,7 @@ func (o *Orphans) MarkAnnounced(ctx context.Context, appIDs []string) error {
 }
 
 // Administrators returns the active people holding the built-in Administrator
-// role, directly or through a group (R-408). For telling them something, never
+// role, directly or through a group (R-409). For telling them something, never
 // for deciding what they may do.
 func (o *Orphans) Administrators(ctx context.Context) ([]string, error) {
 	rows, err := o.db.Query(ctx, `
@@ -187,7 +187,7 @@ func (o *Orphans) Administrators(ctx context.Context) ([]string, error) {
 
 // lastOwnerOf lists, by name, the apps that suspending userID would leave with
 // no active owner: those it owns and that have an owner now. Linking asks
-// before it suspends an account as an alias (R-408).
+// before it suspends an account as an alias (R-409).
 func lastOwnerOf(ctx context.Context, tx pgx.Tx, userID string) ([]string, error) {
 	rows, err := tx.Query(ctx, `
 		SELECT a.name FROM apps a

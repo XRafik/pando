@@ -718,7 +718,7 @@ func newDialTransport(dials *sync.Map) *http.Transport {
 
 // notRunning is what a visitor to an app that is not running is told. A stop
 // Pando made is said apart from "not running right now", which promises it
-// comes back: that one waits for a person (R-396, R-403, R-407).
+// comes back: that one waits for a person (R-396, R-403, R-408).
 func notRunning(app state.App) string {
 	switch {
 	case app.StoppedForOrphan:

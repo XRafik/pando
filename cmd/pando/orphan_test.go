@@ -17,10 +17,10 @@ func (defaultPolicy) Load(context.Context) (corepolicy.Document, error) {
 	return corepolicy.Default(), nil
 }
 
-// TestR407_TheOrphanPassListensForOwnerChanges asserts the wiring the leader's
+// TestR408_TheOrphanPassListensForOwnerChanges asserts the wiring the leader's
 // orphan job runs with: the database store, and the database as the listener
 // that makes a stop immediate.
-func TestR407_TheOrphanPassListensForOwnerChanges(t *testing.T) {
+func TestR408_TheOrphanPassListensForOwnerChanges(t *testing.T) {
 	db := &state.DB{}
 	p := orphanPass(db, defaultPolicy{}, nil, nil, zap.NewNop())
 	require.IsType(t, &state.Orphans{}, p.Store)

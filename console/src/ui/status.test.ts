@@ -16,7 +16,7 @@ describe('statusLabel', () => {
     expect(statusLabel('running', false, true)).toBe('Running');
   });
 
-  // R-407: and one stopped because none of its owners was active says that.
+  // R-408: and one stopped because none of its owners was active says that.
   it('says an app was stopped without an owner', () => {
     expect(statusLabel('stopped', false, false, true)).toBe('Stopped without an owner');
     expect(statusLabel('running', false, false, true)).toBe('Running');

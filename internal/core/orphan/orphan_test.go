@@ -156,11 +156,11 @@ func (a *audits) actions() []string {
 	return out
 }
 
-// TestR407_AnAppWithNoActiveOwnerIsStopped asserts R-407 and R-408: with the
+// TestR408_AnAppWithNoActiveOwnerIsStopped asserts R-408 and R-409: with the
 // policy unset, which is on, an app whose last owner went is stopped, each
 // is an audit event, and administrators are told it was stopped and how to
 // bring it back.
-func TestR407_AnAppWithNoActiveOwnerIsStopped(t *testing.T) {
+func TestR408_AnAppWithNoActiveOwnerIsStopped(t *testing.T) {
 	store := newStore("notes")
 	store.orphaned["app_notes"] = true
 	n, a := &notes{}, &audits{}
@@ -186,10 +186,10 @@ func TestR407_AnAppWithNoActiveOwnerIsStopped(t *testing.T) {
 	assert.Len(t, a.events, 2)
 }
 
-// TestR407_WithThePolicyOffAnOrphanedAppKeepsRunning asserts R-407 and R-408:
+// TestR408_WithThePolicyOffAnOrphanedAppKeepsRunning asserts R-408 and R-409:
 // stop_orphaned_apps false leaves the app running, and administrators are told
 // all the same.
-func TestR407_WithThePolicyOffAnOrphanedAppKeepsRunning(t *testing.T) {
+func TestR408_WithThePolicyOffAnOrphanedAppKeepsRunning(t *testing.T) {
 	store := newStore("notes")
 	store.orphaned["app_notes"] = true
 	n, a := &notes{}, &audits{}
@@ -205,10 +205,10 @@ func TestR407_WithThePolicyOffAnOrphanedAppKeepsRunning(t *testing.T) {
 	assert.Contains(t, n.sent[0].Body, "It is still running")
 }
 
-// TestR407_AnOwnerComingBackMakesTheNextLossANewOrphaning asserts that once an
+// TestR408_AnOwnerComingBackMakesTheNextLossANewOrphaning asserts that once an
 // app has an active owner again it is unmarked, so losing them again is told
 // again.
-func TestR407_AnOwnerComingBackMakesTheNextLossANewOrphaning(t *testing.T) {
+func TestR408_AnOwnerComingBackMakesTheNextLossANewOrphaning(t *testing.T) {
 	store := newStore("notes")
 	store.orphaned["app_notes"] = true
 	n := &notes{}
@@ -224,9 +224,9 @@ func TestR407_AnOwnerComingBackMakesTheNextLossANewOrphaning(t *testing.T) {
 	assert.Len(t, n.sent, 2, "a second orphaning is a second notice")
 }
 
-// TestR408_SeveralAppsAreOneNotice asserts administrators hear of the apps a
+// TestR409_SeveralAppsAreOneNotice asserts administrators hear of the apps a
 // pass found in one notice, saying which were stopped and which still run.
-func TestR408_SeveralAppsAreOneNotice(t *testing.T) {
+func TestR409_SeveralAppsAreOneNotice(t *testing.T) {
 	n := Notice([]state.OrphanApp{
 		{AppID: "app_a", Name: "wiki", Stopped: true},
 		{AppID: "app_b", Name: "notes", Stopped: true},
@@ -244,9 +244,9 @@ func TestR408_SeveralAppsAreOneNotice(t *testing.T) {
 	assert.Contains(t, n.Body, "a, b and c.")
 }
 
-// TestR408_AFailedNoticeIsSentAgain asserts a notice that does not go out is
+// TestR409_AFailedNoticeIsSentAgain asserts a notice that does not go out is
 // not recorded as given, so the next pass sends it.
-func TestR408_AFailedNoticeIsSentAgain(t *testing.T) {
+func TestR409_AFailedNoticeIsSentAgain(t *testing.T) {
 	store := newStore("notes")
 	store.orphaned["app_notes"] = true
 	n := &notes{err: errDown}
@@ -261,9 +261,9 @@ func TestR408_AFailedNoticeIsSentAgain(t *testing.T) {
 	assert.True(t, store.announced["app_notes"])
 }
 
-// TestR408_NoAdministratorsStillRecordsTheNotice asserts an install with no
+// TestR409_NoAdministratorsStillRecordsTheNotice asserts an install with no
 // administrator, or no notifier, does not hold apps unannounced forever.
-func TestR408_NoAdministratorsStillRecordsTheNotice(t *testing.T) {
+func TestR409_NoAdministratorsStillRecordsTheNotice(t *testing.T) {
 	store := newStore("notes")
 	store.orphaned["app_notes"] = true
 	store.admins = nil
@@ -357,10 +357,10 @@ func (l fakeListener) Listen(ctx context.Context, channel string, changed func(s
 	connected(false)
 }
 
-// TestR407_ANotificationRunsAPassAtOnce asserts the pass runs when the
+// TestR408_ANotificationRunsAPassAtOnce asserts the pass runs when the
 // database says who owns an app changed, not only on its schedule: that is
 // what stops an app when its last owner goes.
-func TestR407_ANotificationRunsAPassAtOnce(t *testing.T) {
+func TestR408_ANotificationRunsAPassAtOnce(t *testing.T) {
 	store := &countingStore{fakeStore: newStore(), passes: make(chan struct{}, 16)}
 	l := fakeListener{notify: make(chan func(), 1)}
 	p := &Pass{Store: store, Policy: fakePolicy{}, Changes: l, Every: time.Hour}

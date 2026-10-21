@@ -3,6 +3,7 @@ package policy
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/trypando/pando/internal/core/audit"
 	"github.com/trypando/pando/internal/core/authz"
@@ -132,9 +133,9 @@ type Document struct {
 	IdleDeleteDays int `json:"idle_delete_days,omitempty"`
 
 	// StopOrphanedApps stops an app the moment none of its owners is active
-	// (R-407). On unless set false: nil is on, so an install whose stored
+	// (R-408). On unless set false: nil is on, so an install whose stored
 	// policy predates the setting has it. Administrators are told either way
-	// (R-408).
+	// (R-409).
 	StopOrphanedApps *bool `json:"stop_orphaned_apps,omitempty"`
 
 	// MaxAppsPerUser is how many apps a person may own unless their account or
@@ -335,9 +336,20 @@ func (d Document) GraceHours() int {
 }
 
 // StopsOrphanedApps reports whether an app with no active owner is stopped
-// (R-407). On unless turned off.
+// (R-408). On unless turned off.
 func (d Document) StopsOrphanedApps() bool {
 	return d.StopOrphanedApps == nil || *d.StopOrphanedApps
+}
+
+// TokenExpiry is when a token asked for without an expiry expires: never,
+// unless policy caps how long a token may live (R-061), in which case the cap
+// counted from now.
+func (d Document) TokenExpiry(now time.Time) *time.Time {
+	if d.MaxTokenLifetimeDays <= 0 {
+		return nil
+	}
+	at := now.UTC().AddDate(0, 0, d.MaxTokenLifetimeDays)
+	return &at
 }
 
 // StopsInsecureApps reports whether policy says to stop them (R-316).

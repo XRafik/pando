@@ -379,6 +379,61 @@ administrator lost their phone and their codes.
 on an app's own hostname (R-172), where a passkey for the console's would not work; they are left for
 later. A "trust this browser" cookie is not offered: a session already lasts 12 hours.
 
+### 3.5 Signing the CLI in through the browser (R-406)
+
+An account from an identity provider has no password for `pando login` to ask for, so the CLI signs in
+where that account can: the console. The shape is OAuth 2.0's authorization code grant for a native app
+(RFC 8252) with PKCE (RFC 7636), Pando being its own authorization server and the console its consent
+page. The logic is `internal/core/clisignin`.
+
+```
+1. pando login                      verifier = 32 random bytes; challenge = base64url(SHA-256(verifier))
+     listens on 127.0.0.1:0         state = 24 random bytes
+     opens {server}/admin/cli?code_challenge=…&code_challenge_method=S256&name={host} CLI&port=…&state=…
+2. console, signed in               shows who the CLI will act as; Approve →
+     POST /api/v1/cli-sign-ins      session only; stores SHA-256(code), user, challenge, name, 5 minutes
+                                    → { code, redirect_url: http://127.0.0.1:{port}/callback?code=…&state=… }
+     browser → redirect_url         the CLI checks state, and sends the browser back to /admin/cli?signed_in=1
+3. pando login
+     POST /api/v1/cli-sign-ins/token { code, code_verifier }   public
+                                    the approval is deleted on the first try, whatever the outcome;
+                                    SHA-256(verifier) must equal the challenge; the account must still be
+                                    active → a delegated token, under host policy's lifetime
+```
+
+**[D] The verifier is the binding.** R-043's rule for provider sign-in — it finishes only where it
+started — holds here through the verifier rather than a cookie: the code travels through the browser,
+and so may be seen by anything that can read a URL there, but it is useless without the verifier, which
+never leaves the process that opened the page. A link to the approval page sent to someone else
+approves a sign-in whose code goes to *their* loopback port and whose verifier is the sender's, which
+gains the sender nothing unless the person pastes the code back to them; the page says to approve
+only a `pando login` you just ran.
+
+**[D] The browser is only ever sent to `127.0.0.1`.** The redirect is built from a port number and a
+state of plain characters, never from an address the request spelled out (RFC 8252 §7.3), and on
+`127.0.0.1` rather than `localhost`, which a hosts file can point elsewhere (§8.3). Cancel sends
+`error=access_denied` to the same address so the CLI stops waiting.
+
+**[D] Approving is a session's.** A token approving would be a token minting a token, which POST /tokens
+refuses. `twoFactorGate` refuses a session that must set up its second factor, and the service refuses
+an account that must change its password, so neither requirement can be stepped around by a token.
+Cross-site posts are refused by `sameOriginWrites` like any other.
+
+**[D] Nothing waits as a credential.** The token is made at the exchange, not at approval, so no token
+secret is stored to be collected. One wrong attempt spends the code, and is audited as
+`cli_sign_in.denied` against the account whose approval it spent. A code that matches no approval is
+refused with nothing written: the exchange is public, and a row per guess would let anyone grow the
+audit log. Approvals nobody collected are
+removed by the retention job with expired sign-in flows.
+
+**[P]** `--no-browser` prints the address and reads the code the page shows instead, for a CLI on a
+machine with no browser — over SSH, in a container. The device authorization grant (RFC 8628) would do
+the same with a code typed into the console, and is not offered: it is the flow device-code phishing
+uses, and pasting a code back into the terminal one is using needs nothing new on the server.
+
+**Not here.** MCP over HTTP with its own OAuth (dynamic client registration, protected resource
+metadata) is a separate change; `pando mcp` runs over stdio with the token this flow stores (R-262).
+
 ---
 
 ## 4. The proxy

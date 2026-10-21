@@ -9,7 +9,7 @@ import (
 )
 
 // orphanPass is the leader's job for apps none of whose owners is active
-// (R-406 – R-408). It listens for changes to who owns an app, so an app stops
+// (R-407 – R-409). It listens for changes to who owns an app, so an app stops
 // when its last owner goes.
 func orphanPass(db *state.DB, policy orphan.PolicyLoader, notifier orphan.Notifier, auditor *audit.Writer, logger *zap.Logger) *orphan.Pass {
 	return &orphan.Pass{

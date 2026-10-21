@@ -52,9 +52,9 @@ func TestO1_LinkingFromTheCLISaysWhatBecameAnAlias(t *testing.T) {
 	require.Contains(t, got.out, "usr_2 is now a suspended alias")
 }
 
-// R-408: --confirm goes ahead when the account the identity leaves is the last
+// R-409: --confirm goes ahead when the account the identity leaves is the last
 // active owner of an app.
-func TestR408_LinkingFromTheCLICanConfirm(t *testing.T) {
+func TestR409_LinkingFromTheCLICanConfirm(t *testing.T) {
 	api := newAPI(t).reply("POST /users/usr_1/identities", map[string]any{"aliased_user_id": "usr_2"})
 	got := run(t, api, "", "identity-provider", "link", "usr_1", "idp_1", "00u1", "--replace", "--confirm")
 	require.NoError(t, got.err, got.errOut)

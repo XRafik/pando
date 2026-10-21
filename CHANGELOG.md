@@ -21,7 +21,12 @@ Unreleased above it. -->
 
 ### Added
 
-- **An app whose owners are all gone is stopped** (R-406 – R-408). When every account that owns an
+- **`pando login` signs in through the browser.** It opens Pando, where you sign in however your
+  account does — including through your identity provider, which had no way to sign the CLI in
+  before — and approve the CLI. `pando mcp` uses the token it stores. `--no-browser` prints the
+  address to open on another computer and asks for the code shown there.
+
+- **An app whose owners are all gone is stopped** (R-407 – R-409). When every account that owns an
   app is suspended or deleted (for example, deactivated in Okta and pushed by SCIM) and no group owns
   it, Pando stops the app at once and tells everyone holding the Administrator role. The app keeps its
   data and stays stopped until somebody starts it; giving someone Owner on it gives it an owner again.
@@ -29,6 +34,10 @@ Unreleased above it. -->
   way. Linking an identity that would leave an app with no active owner now needs confirming.
 
 ### Changed
+
+- **`pando login` needs `--username` to sign in with a password in the terminal.** Without it, it
+  opens the browser. A script that pipes a username and password into `pando login` passes
+  `--username` and pipes only the password.
 
 - **Adding an app from a source connection picks the repository in one field.** Type part of its
   name and choose it from the list under the field; the separate search box is gone.
