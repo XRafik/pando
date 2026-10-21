@@ -19,13 +19,27 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+### Security
+
+- **Built with Go 1.27.3**, which fixes GO-2026-6809 (CVE-2026-111943) in `crypto/x509`: certificate
+  verification now refuses a set of intermediate certificates that are no longer trusted, where a
+  system trust store has not been updated to drop them. Pando 0.12.0 and earlier were built with
+  Go 1.27.2 or older and are affected.
+
 ### Added
 
 - **`pando login` signs in through the browser.** It opens Pando, where you sign in however your
   account does — including through your identity provider, which had no way to sign the CLI in
   before — and approve the CLI. `pando mcp` uses the token it stores. `--no-browser` prints the
   address to open on another computer and asks for the code shown there.
-
+- **Agents can set secrets and change a configured app.** New MCP tools set, list and remove an app's
+  secrets, and list, read, write, pin and compare spec revisions — how an agent changes a configured
+  app's variables or narrows its outbound access. `pando_accept_proposal` takes `confirm` to accept
+  over an app that is already configured, and `secrets`, `optional` and `hostname` as the CLI does.
+  Reading a secret's value is still not a tool.
+- **`pando app spec`** lists, shows, creates, pins and compares spec revisions; `pando app spec
+  create` reads a whole spec as JSON from a file or stdin. **`pando secret delete`** removes a
+  secret.
 - **An app whose owners are all gone is stopped** (R-407 – R-409). When every account that owns an
   app is suspended or deleted (for example, deactivated in Okta and pushed by SCIM) and no group owns
   it, Pando stops the app at once and tells everyone holding the Administrator role. The app keeps its
@@ -38,9 +52,21 @@ Unreleased above it. -->
 - **`pando login` needs `--username` to sign in with a password in the terminal.** Without it, it
   opens the browser. A script that pipes a username and password into `pando login` passes
   `--username` and pipes only the password.
-
+- **Setting a secret says whether the app reads it.** `PUT /apps/{id}/secrets/{key}` answers 200
+  rather than 204, with `read_by_spec` and, when no workload references the secret, a `note` saying
+  what to add. `pando secret set` prints it. Before, a secret nothing referenced was stored, a
+  deploy after it changed nothing, and the old container kept running without a word.
 - **Adding an app from a source connection picks the repository in one field.** Type part of its
   name and choose it from the list under the field; the separate search box is gone.
+
+### Fixed
+
+- **A CLI or MCP deploy after an edit no longer ships the old version quietly.** Editing writes a
+  revision without pinning it, and the console's Deploy named the newest one; `pando deploy` and
+  `pando_deploy` shipped the pinned one. Both now take the revision to deploy (`--revision`,
+  `spec_revision`), and a deploy of the pinned revision answers with `newer_revision` when an edit
+  is waiting. That includes making a variable a secret in the console: the old revision did not read
+  the secret, so the container that was already running was left running.
 
 ### Upgrade notes
 

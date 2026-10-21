@@ -397,6 +397,7 @@ func appCmd(client func() (*Client, error)) *cobra.Command {
 	cmd.AddCommand(registryCredentialCmd(client))
 	cmd.AddCommand(autoDeployCmd(client))
 	cmd.AddCommand(appDetectionCmd(client))
+	cmd.AddCommand(appSpecCmd(client))
 
 	del := &cobra.Command{
 		Use:   "delete <app>",
@@ -745,6 +746,7 @@ func partHealth(healthy *bool) string {
 func deployCmd(client func() (*Client, error)) *cobra.Command {
 	var asApp string
 	var env []string
+	var revision int
 
 	cmd := &cobra.Command{
 		Use:   "deploy <app|path>",
@@ -770,9 +772,18 @@ func deployCmd(client func() (*Client, error)) *cobra.Command {
 				}
 			}
 
+			body := map[string]any{}
+			if revision > 0 {
+				body["spec_revision"] = revision
+			}
 			var dep waitingDeploy
-			if err := c.Do("POST", "/apps/"+target+"/deployments", map[string]any{}, &dep); err != nil {
+			if err := c.Do("POST", "/apps/"+target+"/deployments", body, &dep); err != nil {
 				return err
+			}
+			if dep.NewerRevision > 0 {
+				fmt.Fprintf(cmd.OutOrStdout(),
+					"This deploys the pinned revision. Revision %d is newer and not deployed; "+
+						"`pando deploy %s --revision %d` deploys it.\n", dep.NewerRevision, target, dep.NewerRevision)
 			}
 			if dep.Status == "awaiting_approval" {
 				printAwaiting(cmd.OutOrStdout(), target, dep)
@@ -782,6 +793,7 @@ func deployCmd(client func() (*Client, error)) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().IntVar(&revision, "revision", 0, "the spec revision to deploy (defaults to the pinned one)")
 	cmd.Flags().StringVar(&asApp, "app", "", "deploy a directory as an existing app, instead of creating one")
 	cmd.Flags().StringArrayVar(&env, "env", nil,
 		"KEY=VALUE, set when a new directory's setup is accepted; repeat for more (e.g. --env API_URL=https://api)")
@@ -1093,11 +1105,34 @@ func secretCmd(client func() (*Client, error)) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			var out struct {
+				Note string `json:"note"`
+			}
 			if err := c.Do("PUT", "/apps/"+args[0]+"/secrets/"+args[1],
-				map[string]string{"value": value}, nil); err != nil {
+				map[string]string{"value": value}, &out); err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Set %s.\n", args[1])
+			if out.Note != "" {
+				fmt.Fprintln(cmd.OutOrStdout(), out.Note)
+			}
+			return nil
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "delete <app> <key>",
+		Short: "Remove a secret",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			if err := c.Do("DELETE", "/apps/"+url.PathEscape(args[0])+"/secrets/"+url.PathEscape(args[1]), nil, nil); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Removed %s.\n", args[1])
 			return nil
 		},
 	})

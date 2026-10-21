@@ -83,6 +83,13 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, err)
 		return
 	}
+	// Read before PrepareRevision, which can itself write a newer revision
+	// (the pinned one with its ref resolved). That one is this deploy's.
+	newer, err := s.newerRevision(r, app, req.SpecRevision, rev)
+	if err != nil {
+		Error(w, r, err)
+		return
+	}
 
 	p := PrincipalFrom(r.Context())
 
@@ -113,6 +120,7 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	dep.NewerRevision = newer
 	s.remember(r, idempotencyKey, "POST /apps/{id}/deployments", http.StatusAccepted, dep)
 	deps := []state.Deployment{dep}
 	if err := s.Approvals.Describe(r.Context(), p, deps); err != nil {
@@ -146,6 +154,28 @@ func (s *Server) revisionToDeploy(r *http.Request, app state.App, requested int)
 		return state.Revision{}, errs.New(errs.NotFound, "This app's pinned spec is missing.")
 	}
 	return rev, nil
+}
+
+// newerRevision is the newest revision of the app's spec, when a deploy that
+// named none ships the pinned one and a newer one exists; otherwise zero.
+//
+// Editing writes a revision and leaves the pinned one alone (R-152), so a
+// deploy that names no revision ships what was pinned before the edit. The
+// console names the newest; a client that did not is told there is one,
+// rather than having shipped the old version quietly.
+func (s *Server) newerRevision(r *http.Request, app state.App, requested int, rev state.Revision) (int, error) {
+	if requested > 0 {
+		return 0, nil
+	}
+	revisions, err := s.Apps.ListRevisions(r.Context(), app.ID)
+	if err != nil {
+		return 0, err
+	}
+	// Newest first.
+	if len(revisions) > 0 && revisions[0].Revision > rev.Revision {
+		return revisions[0].Revision, nil
+	}
+	return 0, nil
 }
 
 // handleRollback deploys a previous revision (R-152).
@@ -443,14 +473,8 @@ func queueLine(ahead int) string {
 // the replica that takes it starts one, and until then no replica could write
 // a line every reader would see.
 func (s *Server) waitInQueue(w http.ResponseWriter, r *http.Request, rc *http.ResponseController, appID, depID string) (open, done bool) {
-	every := s.QueuePollEvery
-	if every <= 0 {
-		every = time.Second
-	}
-	reauthEvery := s.DeployLogReauthEvery
-	if reauthEvery <= 0 {
-		reauthEvery = logstream.DefaultReauthEvery
-	}
+	every := orDefault(s.QueuePollEvery, time.Second)
+	reauthEvery := orDefault(s.DeployLogReauthEvery, logstream.DefaultReauthEvery)
 	allowed := s.stillAllowed(r, appID, authz.AppLogsRead)
 	lastCheck := time.Now()
 	last := -1
@@ -458,13 +482,7 @@ func (s *Server) waitInQueue(w http.ResponseWriter, r *http.Request, rc *http.Re
 	for {
 		ahead, waiting, err := s.Deployments.QueuePosition(r.Context(), depID)
 		if err != nil {
-			if open {
-				fmt.Fprint(w, "event: end\ndata: \n\n")
-				_ = rc.Flush()
-				return true, true
-			}
-			Error(w, r, err)
-			return false, true
+			return endQueueWait(w, r, rc, open, err)
 		}
 		if !waiting {
 			return open, false
@@ -494,6 +512,26 @@ func (s *Server) waitInQueue(w http.ResponseWriter, r *http.Request, rc *http.Re
 		case <-time.After(every):
 		}
 	}
+}
+
+// endQueueWait finishes a queue wait whose queue could not be read: the
+// stream ends when it was started, and the error is the answer when not.
+func endQueueWait(w http.ResponseWriter, r *http.Request, rc *http.ResponseController, open bool, err error) (bool, bool) {
+	if open {
+		fmt.Fprint(w, "event: end\ndata: \n\n")
+		_ = rc.Flush()
+		return true, true
+	}
+	Error(w, r, err)
+	return false, true
+}
+
+// orDefault is d, or def when d is unset.
+func orDefault(d, def time.Duration) time.Duration {
+	if d <= 0 {
+		return def
+	}
+	return d
 }
 
 // --- secrets ---------------------------------------------------------------
@@ -545,7 +583,29 @@ func (s *Server) handlePutSecret(w http.ResponseWriter, r *http.Request) {
 		TargetKind:    "secret",
 		TargetID:      key,
 	})
-	JSON(w, http.StatusNoContent, nil)
+
+	JSON(w, http.StatusOK, s.secretReply(r, app, key))
+}
+
+// secretReply says whether the app reads a secret just set. A secret reaches
+// the app only through a reference in its spec; one nothing references is
+// stored and never read, and deploying after setting it changes nothing
+// (R-193). Judged on the newest revision, the one an edit builds on and the
+// console deploys. A read that fails costs the reply its answer, not the write.
+func (s *Server) secretReply(r *http.Request, app state.App, key string) map[string]any {
+	reply := map[string]any{"key": key}
+	newest, err := s.latestRevisionSpec(r, app)
+	if err != nil {
+		return reply
+	}
+	read := spec.ReadsSecret(newest, key)
+	reply["read_by_spec"] = read
+	if !read {
+		reply["note"] = fmt.Sprintf("No workload reads %s, so the app does not get this value. "+
+			"Add {\"key\": %q, \"secret_ref\": %q} to a workload's env in a new spec revision, then deploy that revision.",
+			key, key, key)
+	}
+	return reply
 }
 
 func (s *Server) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
