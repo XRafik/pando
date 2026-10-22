@@ -15,8 +15,10 @@ export function Tabs({ items = [], value, defaultValue, onChange, style, ...rest
         const link = it.href
           ? {
               href: it.href,
+              // Controlled and without onChange, nothing handles it in place,
+              // so the browser follows the link.
               onClick: (e) => {
-                if (!isPlainClick(e)) return;
+                if ((value !== undefined && !onChange) || !isPlainClick(e)) return;
                 e.preventDefault();
                 pick(it.value);
               },

@@ -16,6 +16,13 @@ export function Table({ columns = [], rows = [], dense = false, onRowClick, rowH
   );
 }
 
+// Whether a click landed on a control inside the row rather than on the row:
+// a button, link or field there acts for itself, and the row stays out of it.
+function onControl(e) {
+  const control = e.target.closest && e.target.closest('button, a, input, select, textarea, [role="button"], [role="menuitem"]');
+  return Boolean(control && control !== e.currentTarget && e.currentTarget.contains(control));
+}
+
 // A row holds buttons and menus, so it cannot be one link. With rowHref it
 // opens the way a link would on ⌘- or Ctrl-click and on the middle button, and
 // keeps onRowClick for a plain click.
@@ -23,21 +30,23 @@ function Row({ row, columns, grid, height, onRowClick, rowHref }) {
   const [hover, setHover] = useState(false);
   const href = rowHref ? rowHref(row) : undefined;
   const elsewhere = () => window.open(href, '_blank', 'noopener');
+  const leads = Boolean(onRowClick || href);
   return (
     <div
-      onClick={onRowClick ? (e) => {
-        if (href && (e.metaKey || e.ctrlKey)) elsewhere();
-        else onRowClick(row);
+      onClick={leads ? (e) => {
+        if (href && (e.metaKey || e.ctrlKey)) {
+          if (!onControl(e)) elsewhere();
+        } else if (onRowClick) onRowClick(row);
       } : undefined}
-      onAuxClick={href ? (e) => { if (e.button === 1) elsewhere(); } : undefined}
-      onMouseDown={href ? (e) => { if (e.button === 1) e.preventDefault(); } : undefined}
+      onAuxClick={href ? (e) => { if (e.button === 1 && !onControl(e)) elsewhere(); } : undefined}
+      onMouseDown={href ? (e) => { if (e.button === 1 && !onControl(e)) e.preventDefault(); } : undefined}
       onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
       style={{
         display: 'grid', gridTemplateColumns: grid, alignItems: 'center', gap: 'var(--space-4)',
         minHeight: height, padding: '0 var(--space-3)',
         borderBottom: '1px solid var(--rule)',
-        background: hover && onRowClick ? 'var(--paper-raised)' : 'transparent',
-        cursor: onRowClick ? 'pointer' : undefined,
+        background: hover && leads ? 'var(--paper-raised)' : 'transparent',
+        cursor: leads ? 'pointer' : undefined,
         transition: 'background-color var(--dur-fast) var(--ease)',
       }}
     >

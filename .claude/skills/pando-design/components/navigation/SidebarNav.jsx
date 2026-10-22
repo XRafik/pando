@@ -23,10 +23,12 @@ export function SidebarNav({ items = [], value, onChange, header, footer, style,
             ? {
                 href: it.href,
                 'aria-current': on ? 'page' : undefined,
+                // Without onChange nothing handles it in place, so the
+                // browser follows the link.
                 onClick: (e) => {
-                  if (!isPlainClick(e)) return;
+                  if (!onChange || !isPlainClick(e)) return;
                   e.preventDefault();
-                  if (onChange) onChange(it.value);
+                  onChange(it.value);
                 },
               }
             : { onClick: () => onChange && onChange(it.value) };

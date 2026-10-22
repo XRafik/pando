@@ -95,6 +95,11 @@ describe('SidebarNav', () => {
     expect(onChange).toHaveBeenCalledWith('audit');
   });
 
+  it('lets the browser follow an item no onChange handles', () => {
+    render(<SidebarNav value="a" items={[{ value: 'b', label: 'B', href: '/admin/b' }]} />);
+    expect(click(link('B'))).toBe(true);
+  });
+
   it('keeps an item without an href a button', () => {
     const onChange = vi.fn();
     render(<SidebarNav value="a" onChange={onChange} items={[{ value: 'a', label: 'A' }]} />);
@@ -127,16 +132,21 @@ describe('Tabs', () => {
     expect(click(logs)).toBe(false);
     expect(onChange).toHaveBeenCalledWith('logs');
   });
+
+  it('lets the browser follow a controlled tab no onChange handles', () => {
+    render(<Tabs value="a" items={[{ value: 'b', label: 'B', href: '/b' }]} />);
+    expect(click(link('B'))).toBe(true);
+  });
 });
 
 describe('Table rowHref', () => {
   const rows = [{ id: 'app_1', name: 'shop' }];
   const columns = [{ key: 'name', header: 'Name' }];
 
-  function table(onRowClick: (row: unknown) => void) {
+  function table(onRowClick?: (row: unknown) => void, cols: typeof columns = columns) {
     render(
       <Table
-        columns={columns}
+        columns={cols}
         rows={rows}
         onRowClick={onRowClick}
         rowHref={(r: { id: string }) => `/admin/apps/${r.id}`}
@@ -175,5 +185,26 @@ describe('Table rowHref', () => {
     expect(scrolled).toBe(false);
     expect(open).toHaveBeenCalledTimes(1);
     expect(onRowClick).not.toHaveBeenCalled();
+  });
+
+  it('opens the row on ⌘-click with no onRowClick', () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    const row = table();
+    click(row, { metaKey: true });
+    click(row);
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves a click on a control inside the row to the control', () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    const onRowClick = vi.fn();
+    table(onRowClick, [{ key: 'name', header: 'Name', render: () => <button type="button">Tip</button> } as never]);
+    const button = container.querySelector('button')!;
+
+    click(button, { metaKey: true });
+    act(() => {
+      button.dispatchEvent(new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 }));
+    });
+    expect(open).not.toHaveBeenCalled();
   });
 });
