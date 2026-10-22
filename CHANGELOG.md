@@ -21,7 +21,16 @@ Unreleased above it. -->
 
 ### Security
 
-No new advisories.
+- **No image Pando ships or runs trusts the roots removed after the eMudhra compromise**
+  (CVE-2026-111943). Pando's own server was fixed in 0.13.0; the programs beside it were not:
+  - The server image carries Alpine's current CA bundle (20261020) in place of its base image's,
+    which still trusted emSign ECC Root CA - G3. git, Railpack, mise and psql use it.
+  - The BuildKit Pando starts is 0.34.1, built with Go 1.26.10, in place of 0.33.1 (Go 1.26.8).
+  - The Trivy scanner is 0.76.1, built with Go 1.27.3, in place of 0.74.0 (Go 1.26.6).
+  - The bundled Postgres and the nginx that static sites are built on are on digests with the
+    current CA bundle.
+- **A release fails if any of those images trusts a distrusted root**, and so does a pull request
+  that pins one.
 
 ### Added
 
@@ -57,6 +66,9 @@ No new advisories.
 
 - A syslog collector that parses or filters on the structured-data ID `pando@32473` must match
   `pando@67299` instead.
+- A static site keeps the nginx base it was built on until it is built again. Redeploy one that makes
+  outbound HTTPS requests.
+- On Kubernetes, apply `deploy/kubernetes/buildkit.yaml` again for BuildKit 0.34.1.
 
 ## [0.13.0] - 2026-10-21
 

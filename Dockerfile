@@ -129,6 +129,11 @@ RUN --mount=type=cache,target=/cache/go-mod --mount=type=cache,target=/cache/go-
 #   MISE_VERSION, their checksums and the image digests in
 #   internal/adapter/builder/buildkit/railpack.go together. curl fetches them
 #   and is removed again.
+# - The CA bundle, upgraded to Alpine's current one and copied over the runtime
+#   base's. A base digest is only as current as its last rebuild, and git,
+#   Railpack, mise and psql trust whatever bundle it carries: Go's own fix for
+#   the eMudhra compromise (GO-2026-6809) covers the server and nothing else.
+#   scripts/check-trust-store.py fails the image if a distrusted root is left.
 #
 # apk-tools is removed before staging, so the package database copied below
 # lists what the image actually holds: a scanner reads it to know what is
@@ -138,7 +143,8 @@ FROM dhi.io/alpine-base:3.24-dev@sha256:08d37dc414e07a688b0c3b9405e0b33688507e41
 ARG RAILPACK_VERSION=0.40.0
 ARG MISE_VERSION=2026.9.12
 ARG TARGETARCH
-RUN apk add --no-cache bash curl git postgresql17-client su-exec tzdata \
+RUN apk upgrade --no-cache ca-certificates-bundle ca-certificates \
+    && apk add --no-cache bash curl git postgresql17-client su-exec tzdata \
     && case "$TARGETARCH" in \
          arm64) rp=arm64;   rpsum=86c5a3db888c710b2014262de55fc87a56c85c4e96ba7cd10894e5df210a212b; \
                 mise=arm64; misesum=22e7ecd3c6c84ef36e4d0c78c4eef49a79e3fb83aa88e091e2993fd9c9a3f8a1 ;; \
@@ -163,7 +169,7 @@ RUN apk add --no-cache bash curl git postgresql17-client su-exec tzdata \
     && mkdir /staging \
     && tar -cf - /lib /usr/lib /usr/libexec /usr/bin/pg_dump /usr/bin/pg_restore /usr/bin/psql \
          /sbin/su-exec /usr/share/zoneinfo /usr/bin/git /bin/bash /usr/share/git-core \
-         /usr/local/bin/railpack 2>/dev/null \
+         /usr/local/bin/railpack /etc/ssl/certs/ca-certificates.crt 2>/dev/null \
        | tar -xf - -C /staging
 
 FROM dhi.io/alpine-base:3.24@sha256:a741d4f1ccaf31f9394a36477e50df4620a8030dbff3d9a2ea8e84672b683ada
