@@ -74,6 +74,26 @@ func TestR372_CheckURLRefusesPrivateTargets(t *testing.T) {
 	}
 }
 
+// TestR372_AZoneDoesNotGetAWebhookPastTheCheck asserts R-372 for an address
+// written with an IPv6 zone: refused whatever it names, at save time and on
+// the dial, including the metadata service behind NAT64 and the deprecated
+// site-local range.
+func TestR372_AZoneDoesNotGetAWebhookPastTheCheck(t *testing.T) {
+	ctx := context.Background()
+	r := fixedResolver{"zoned.example.com": {netip.MustParseAddr("2001:4860:4860::8888%eth0")}}
+	for _, raw := range []string{
+		"http://[64:ff9b::a9fe:a9fe%25x]/latest", "http://[fec0::1%25eth0]/", "http://[fe80::1%25eth0]/",
+		"https://zoned.example.com/hook",
+	} {
+		_, err := CheckURL(ctx, raw, false, r)
+		require.Equal(t, errs.PolicyWebhookPrivateAddress, errs.CodeOf(err), raw)
+	}
+	for _, s := range []string{"64:ff9b::a9fe:a9fe%x", "fec0::1%x", "2001:4860:4860::8888%x", "198.18.0.1", "240.0.0.1"} {
+		require.True(t, forbidden(netip.MustParseAddr(s)), s)
+	}
+	require.False(t, forbidden(netip.MustParseAddr("2001:4860:4860::8888")))
+}
+
 // TestR372_TheDialerChecksTheAddressItConnectsTo asserts R-372 at send time:
 // the check is on the dialed address, so a name that resolves somewhere
 // private — however it was checked earlier — is not reached.

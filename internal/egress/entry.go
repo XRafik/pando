@@ -208,7 +208,9 @@ func (e Entry) MatchesAddr(a netip.Addr, port int) bool {
 	if e.Any {
 		return true
 	}
-	return e.Prefix.IsValid() && e.Prefix.Contains(a.Unmap())
+	// Without its zone: netip.Prefix.Contains is false for any zoned
+	// address, so fe80::1%x would otherwise miss every range entry.
+	return e.Prefix.IsValid() && e.Prefix.Contains(a.WithZone("").Unmap())
 }
 
 func (e Entry) portMatches(port int) bool { return e.Port == 0 || e.Port == port }
@@ -245,20 +247,20 @@ func (e Entry) Key() string {
 
 // Private reports whether an address is one R-181's private-range switch
 // refuses: RFC 1918, loopback, link-local, unique-local, carrier-grade NAT,
-// "this network" (0.0.0.0/8, which Linux connects to the local host) and the
-// deprecated IPv6 site-local range. Link-local covers 169.254.169.254, the
-// cloud metadata address, which is the destination this switch most often
-// exists to protect.
+// "this network" (0.0.0.0/8, which Linux connects to the local host), the
+// deprecated IPv6 site-local range, and the IANA special-purpose ranges that
+// are never a public destination: IETF protocol assignments (192.0.0.0/24),
+// benchmarking (198.18.0.0/15), reserved (240.0.0.0/4) and IPv6 discard-only
+// (100::/64). Link-local covers 169.254.169.254, the cloud metadata address,
+// which is the destination this switch most often exists to protect.
 //
 // An IPv4 address carried inside IPv6 — mapped (::ffff:10.0.0.1) or behind
 // NAT64 (64:ff9b::a00:1) — is judged by the IPv4 address it carries, or a
-// private address could be reached by spelling it differently.
+// private address could be reached by spelling it differently. An IPv6 zone
+// (fe80::1%eth0) is ignored: it names an interface, not a different address,
+// and netip.Prefix.Contains is false for every zoned address.
 func Private(a netip.Addr) bool {
-	a = a.Unmap()
-	if a.Is6() && nat64.Contains(a) {
-		b := a.As16()
-		a = netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]})
-	}
+	a = Carried(a)
 	if a.IsPrivate() || a.IsLoopback() || a.IsLinkLocalUnicast() ||
 		a.IsLinkLocalMulticast() || a.IsUnspecified() || a.IsInterfaceLocalMulticast() {
 		return true
@@ -271,14 +273,31 @@ func Private(a netip.Addr) bool {
 	return false
 }
 
+// Carried is the address a connection to a really goes to, for deciding
+// whether it may: without an IPv6 zone, which names an interface rather than
+// another address, and as the IPv4 address it carries when it is one written
+// as IPv6 — mapped (::ffff:10.0.0.1) or behind well-known NAT64
+// (64:ff9b::a00:1).
+func Carried(a netip.Addr) netip.Addr {
+	a = a.WithZone("").Unmap()
+	if a.Is6() && nat64.Contains(a) {
+		b := a.As16()
+		a = netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]})
+	}
+	return a
+}
+
 var (
 	nat64 = netip.MustParsePrefix("64:ff9b::/96")
 
 	privateRanges = []netip.Prefix{
-		netip.MustParsePrefix("100.64.0.0/10"), // carrier-grade NAT
-		netip.MustParsePrefix("0.0.0.0/8"),     // this network
-		netip.MustParsePrefix("255.255.255.255/32"),
+		netip.MustParsePrefix("100.64.0.0/10"),  // carrier-grade NAT
+		netip.MustParsePrefix("0.0.0.0/8"),      // this network
+		netip.MustParsePrefix("192.0.0.0/24"),   // IETF protocol assignments
+		netip.MustParsePrefix("198.18.0.0/15"),  // benchmarking
+		netip.MustParsePrefix("240.0.0.0/4"),    // reserved, and the broadcast address
 		netip.MustParsePrefix("fec0::/10"),      // site-local, deprecated
 		netip.MustParsePrefix("64:ff9b:1::/48"), // local-use NAT64
+		netip.MustParsePrefix("100::/64"),       // discard-only
 	}
 )

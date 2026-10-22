@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"sync/atomic"
 	"syscall"
+
+	"github.com/trypando/pando/internal/egress"
 )
 
 // What a repository fetch may connect to (R-092; 2026-10-16 assessment,
@@ -67,14 +69,18 @@ func SetGuard(g Guard) { guard.Store(&g) }
 // refusedClass is an address no repository is ever at: link-local (the
 // metadata service among them), unspecified and multicast.
 func refusedClass(a netip.Addr) bool {
-	a = a.Unmap()
+	// As the IPv4 address it carries, when it is one behind NAT64: the
+	// metadata service is as near at 64:ff9b::a9fe:a9fe as at 169.254.169.254.
+	a = egress.Carried(a)
 	return a.IsLinkLocalUnicast() || a.IsLinkLocalMulticast() || a.IsInterfaceLocalMulticast() ||
 		a.IsUnspecified() || a.IsMulticast()
 }
 
 // check refuses an address a fetch must not connect to.
 func (g *Guard) check(ctx context.Context, ap netip.AddrPort) error {
-	a := ap.Addr().Unmap()
+	// Without its zone, which names an interface and not another address:
+	// fe80::1%eth0 is compared with this machine's addresses as fe80::1.
+	a := ap.Addr().WithZone("").Unmap()
 	if refusedClass(a) {
 		return errRefusedAddress
 	}
@@ -131,7 +137,7 @@ func (g *Guard) resolve(ctx context.Context, host string) []netip.Addr {
 }
 
 func containsAddr(addrs []netip.Addr, a netip.Addr) bool {
-	return slices.ContainsFunc(addrs, func(x netip.Addr) bool { return x.Unmap() == a })
+	return slices.ContainsFunc(addrs, func(x netip.Addr) bool { return x.WithZone("").Unmap() == a })
 }
 
 func interfaceAddrs() ([]netip.Addr, error) {

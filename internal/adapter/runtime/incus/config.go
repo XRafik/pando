@@ -235,6 +235,9 @@ func (c *Config) validateSizes() error {
 	if _, err := netip.ParsePrefix(c.NetworkPool); err != nil {
 		return refuse("The app network range %q is not an address range, such as the default %s.", c.NetworkPool, docker.DefaultNetworkPool())
 	}
+	if err := docker.CheckNetworkPool(c.NetworkPool); err != nil {
+		return refuse("The Incus runtime cannot be set up: %s.", err)
+	}
 	return nil
 }
 

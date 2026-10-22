@@ -384,6 +384,7 @@ func TestConfigurationIsCheckedBeforeAnythingIsContacted(t *testing.T) {
 			c["credentials"] = map[string]string{"agent_authority": string(ca), "ssh_key": "k"}
 		},
 		"the app range turned off": func(c map[string]any) { c["network_pool"] = "off" },
+		"a public app range":       func(c map[string]any) { c["network_pool"] = "8.8.0.0/16" },
 		"no agent authority": func(c map[string]any) {
 			c["credentials"] = map[string]string{"docker_tls": "placeholder"}
 		},

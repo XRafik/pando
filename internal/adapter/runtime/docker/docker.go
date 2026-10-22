@@ -180,6 +180,9 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 			return errs.Wrap(errs.ValidInvalid, "The Docker runtime's configuration could not be read.", err)
 		}
 	}
+	if err := CheckNetworkPool(a.config.NetworkPool); err != nil {
+		return errs.Newf(errs.ValidInvalid, "The Docker runtime cannot be set up: %s.", err)
+	}
 
 	// The client negotiates the API version by default, which is what lets it
 	// talk to Podman's older one.
