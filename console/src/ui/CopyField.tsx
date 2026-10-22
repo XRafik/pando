@@ -62,9 +62,9 @@ export function CopyField({ label, value, helper }: Readonly<{ label: string; va
         </IconButton>
       </div>
       {(done === 'selected' || helper) && (
-        <span role="status" style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)' }}>
+        <output style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)' }}>
           {done === 'selected' ? 'Your browser blocked copying. It is selected; copy it from here.' : helper}
-        </span>
+        </output>
       )}
     </div>
   );

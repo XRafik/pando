@@ -46,7 +46,7 @@ export function CodeBlock({ lines = [], prompt = false, title, copyable = true, 
       )}
       {copyable && (
         <div style={{ position: 'absolute', top: 'var(--space-2)', right: 'var(--space-2)', display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-          {copied && <span role="status" style={{ font: 'var(--type-code-sm)', color: 'rgba(236,232,222,0.55)' }}>{copied}</span>}
+          {copied && <output style={{ font: 'var(--type-code-sm)', color: 'rgba(236,232,222,0.55)' }}>{copied}</output>}
           <IconButton label="Copy" onTerminal onClick={() => void copy()}><Icon name={copied === 'Copied' ? 'check' : 'copy'} size={14} color="var(--terminal-text)" /></IconButton>
         </div>
       )}
