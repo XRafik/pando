@@ -173,6 +173,7 @@ func TestR411_ABodyLeftUnreadCannotHoldTheConnection(t *testing.T) {
 			require.NoError(t, conn.SetReadDeadline(time.Now().Add(5*time.Second)))
 			resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
 			require.NoError(t, err)
+			_ = resp.Body.Close()
 			require.Equal(t, http.StatusNoContent, resp.StatusCode)
 
 			// The server gives up on the rest of the body and closes the
