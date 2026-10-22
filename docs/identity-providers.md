@@ -34,7 +34,8 @@ You need an account holding `install.adapters.manage` — the built-in Administr
 1. **Add a provider.** It starts **off**, so nobody sees a button that does not work yet. Choose a
    preset for a known provider; it fills in what that provider needs and says where to find the rest.
 2. **Register Pando with the provider**, using the addresses the provider's card shows:
-   - OpenID Connect: the **redirect URI**, `…/api/v1/auth/providers/<id>/callback`.
+   - OpenID Connect: the **redirect URI**, `…/api/v1/auth/providers/<id>/callback`, and, to start a
+     sign-in from the provider's dashboard, the **initiate login URI**, `…/api/v1/auth/providers/<id>/start`.
    - SAML: the **ACS URL** (the same address) and the **entity ID**, which is also where Pando's SP
      metadata is published: `…/api/v1/auth/providers/<id>/metadata`.
 3. **Test sign-in.** You sign in at the provider and come back to a report of every claim it sent, the
@@ -58,7 +59,9 @@ sign-in** refuses it everywhere, whatever each provider says.
 
 1. In the Okta Admin Console, **Applications → Create App Integration → OIDC → Web Application**.
 2. **Sign-in redirect URI**: Pando's redirect URI. **Assignments**: the people or groups who may use
-   Pando.
+   Pando. To sign in from the Okta dashboard, set **Login initiated by** to *Either Okta or App*,
+   **Login flow** to *Redirect to app to initiate login (OIDC Compliant)* and **Initiate login URI** to
+   Pando's initiate login URI.
 3. To send groups: **Sign On → OpenID Connect ID Token → Groups claim type: Filter**, name `groups`,
    filter *Matches regex* `.*` (or narrower).
 4. In Pando, add an OpenID Connect provider with the **Okta** preset. Issuer is
@@ -187,9 +190,10 @@ What Pando requires:
 
 ## SCIM provisioning
 
-**Turn on SCIM** on a provider's card to get a SCIM base URL and a bearer token. The token is shown
-once; *Replace SCIM token* retires it. It works only for SCIM, and only for that provider's people and
-groups.
+**Turn on SCIM** on a provider's card to get a SCIM base URL and a bearer token, with where each goes
+at the provider. The token is active at once and shown once; *Replace SCIM token* retires it. It works
+only for SCIM, and only for that provider's people and groups. **SCIM requests are refused while the
+provider is off in Pando**, so turn it on before the provider tests the connection.
 
 With SCIM on:
 

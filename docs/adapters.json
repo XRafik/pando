@@ -197,6 +197,9 @@
                 },
                 {
                   "text": "On the **General** tab, copy the **Client ID** and the client secret."
+                },
+                {
+                  "text": "To sign in from the Okta dashboard, choose **Edit** under **General Settings**, set **Login initiated by** to **Either Okta or App**, **Login flow** to **Redirect to app to initiate login (OIDC Compliant)** and **Initiate login URI** to `{login_url}`, then choose **Save**."
                 }
               ],
               "links": [
@@ -258,6 +261,9 @@
                 },
                 {
                   "text": "Choose **Web**, set **Redirect URI** to `{callback_url}`, and choose **Configure**."
+                },
+                {
+                  "text": "To sign in from My Apps, open **Branding & properties** and set **Home page URL** to `{login_url}`."
                 }
               ],
               "links": [
@@ -405,7 +411,7 @@
                   "text": "Turn on **Client authentication**, keep **Standard flow** on, and choose **Next**."
                 },
                 {
-                  "text": "Set **Valid redirect URIs** to `{callback_url}`, then choose **Save**."
+                  "text": "Set **Valid redirect URIs** to `{callback_url}` and **Home URL** to `{login_url}`, then choose **Save**."
                 },
                 {
                   "text": "On the **Credentials** tab, copy the **Client Secret**."
@@ -463,7 +469,10 @@
                   "text": "In the Admin interface, open **Applications** → **Applications** and choose **New Application**."
                 },
                 {
-                  "text": "Name the application, note its **Slug**, and choose **Next**."
+                  "text": "Name the application and note its **Slug**."
+                },
+                {
+                  "text": "Under **UI Settings**, set **Launch URL** to `{login_url}`, then choose **Next**."
                 },
                 {
                   "text": "Choose **OAuth2/OpenID Connect**, then choose **Next**."
@@ -506,6 +515,9 @@
                 },
                 {
                   "text": "Set its redirect URI to `{callback_url}`."
+                },
+                {
+                  "text": "To sign in from the provider's dashboard, set its initiate login URI to `{login_url}`."
                 },
                 {
                   "text": "Copy its issuer, client ID and client secret."

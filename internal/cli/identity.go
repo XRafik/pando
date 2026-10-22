@@ -122,6 +122,7 @@ func identityCmd(client func() (*Client, error)) *cobra.Command {
 				ID          string `json:"id"`
 				CallbackURL string `json:"callback_url"`
 				EntityID    string `json:"entity_id"`
+				LoginURL    string `json:"login_url"`
 			}
 			if err := c.Do("POST", "/identity-providers", body, &created); err != nil {
 				return err
@@ -131,7 +132,10 @@ func identityCmd(client func() (*Client, error)) *cobra.Command {
 			if info.Kind == "saml" {
 				fmt.Fprintf(out, "Register with the provider:\n  ACS URL:   %s\n  Entity ID: %s\n", created.CallbackURL, created.EntityID)
 			} else {
-				fmt.Fprintf(out, "Register this redirect URI with the provider:\n  %s\n", created.CallbackURL)
+				fmt.Fprintf(out, "Register with the provider:\n  Redirect URI:       %s\n", created.CallbackURL)
+				if created.LoginURL != "" {
+					fmt.Fprintf(out, "  Initiate login URI: %s\n", created.LoginURL)
+				}
 			}
 			if !enable {
 				fmt.Fprintf(out, "Test it with: pando idp test %s — then turn it on with: pando idp set %s --enable\n", created.ID, created.ID)
@@ -291,7 +295,8 @@ func identityCmd(client func() (*Client, error)) *cobra.Command {
 			if err := c.Do("POST", path, nil, &out); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "SCIM base URL: %s\nToken:         %s\nPando will not show this token again.\n", out.BaseURL, out.Token)
+			fmt.Fprintf(cmd.OutOrStdout(), "SCIM base URL: %s\nToken:         %s\nPando will not show this token again.\n"+
+				"SCIM requests are refused while the provider is off in Pando: pando idp set %s --enable\n", out.BaseURL, out.Token, args[0])
 			return nil
 		},
 	}

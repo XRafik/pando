@@ -235,7 +235,8 @@ func (s *Server) handleListIdentityProviders(w http.ResponseWriter, r *http.Requ
 	// registered with the provider while it is set up, before it is saved.
 	next := s.IDP.Endpoints(s.origin(r), "{id}")
 	JSON(w, http.StatusOK, map[string]any{"providers": providers, "kinds": s.IDP.KindInfos(),
-		"endpoints": map[string]string{"callback_url": next.CallbackURL, "entity_id": next.EntityID}})
+		"endpoints": map[string]string{"callback_url": next.CallbackURL, "entity_id": next.EntityID,
+			"login_url": s.IDP.LoginURL(s.origin(r), "{id}")}})
 }
 
 func (s *Server) handleGetIdentityProvider(w http.ResponseWriter, r *http.Request) {

@@ -28,6 +28,12 @@ type ProviderView struct {
 	EntityID    string `json:"entity_id,omitempty"`
 	MetadataURL string `json:"metadata_url,omitempty"`
 
+	// LoginURL is where an OIDC provider sends a browser to start a sign-in
+	// from its own dashboard: OIDC's initiate login URI. It begins the same
+	// sign-in the button on Pando's sign-in page does, so the sign-in is still
+	// bound to the browser that started it (R-043).
+	LoginURL string `json:"login_url,omitempty"`
+
 	// SCIMBaseURL is where a SCIM client sends pushes, with the token.
 	SCIMBaseURL string `json:"scim_base_url,omitempty"`
 
@@ -102,6 +108,8 @@ func (s *Service) view(ctx context.Context, o Origin, p state.IdentityProvider, 
 		if p.Kind == "saml" {
 			v.EntityID = e.EntityID
 			v.MetadataURL = e.EntityID
+		} else {
+			v.LoginURL = s.LoginURL(o, p.ID)
 		}
 		v.SCIMBaseURL = s.SCIMBaseURL(o)
 	}

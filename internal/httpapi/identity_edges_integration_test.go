@@ -316,11 +316,13 @@ func TestR261_AProviderCanBeRegisteredBeforeItIsSaved(t *testing.T) {
 		Endpoints struct {
 			CallbackURL string `json:"callback_url"`
 			EntityID    string `json:"entity_id"`
+			LoginURL    string `json:"login_url"`
 		} `json:"endpoints"`
 	}
 	list.JSON(t, &got)
 	require.Contains(t, got.Endpoints.CallbackURL, "/api/v1/auth/providers/{id}/callback")
 	require.Contains(t, got.Endpoints.EntityID, "/api/v1/auth/providers/{id}/metadata")
+	require.Contains(t, got.Endpoints.LoginURL, "/api/v1/auth/providers/{id}/start")
 
 	const chosen = "idp_01J9ZQ5Y8W3V7T2R6N4M1K0H8G"
 	id := oidcProvider(t, i, admin, "Chosen", map[string]any{"id": chosen})
@@ -328,6 +330,7 @@ func TestR261_AProviderCanBeRegisteredBeforeItIsSaved(t *testing.T) {
 	one := i.do(admin, http.MethodGet, "/identity-providers/"+id, nil)
 	require.Equal(t, http.StatusOK, one.Code, one.String())
 	require.Contains(t, one.String(), strings.ReplaceAll(got.Endpoints.CallbackURL, "{id}", chosen))
+	require.Contains(t, one.String(), strings.ReplaceAll(got.Endpoints.LoginURL, "{id}", chosen))
 
 	for name, bad := range map[string]string{"taken": chosen, "not an ID": "okta", "another kind": "app_01J9ZQ5Y8W3V7T2R6N4M1K0H8G", "local": "idp_local"} {
 		refused := i.do(admin, http.MethodPost, "/identity-providers", map[string]any{

@@ -19,11 +19,31 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+### Security
+
+No new advisories.
+
+### Added
+
+- **An identity provider's dashboard can start a sign-in.** Each OpenID Connect provider shows its
+  initiate login URI beside its redirect URI, and the setup steps for Okta, Microsoft Entra ID,
+  Keycloak and Authentik say where it goes. `pando idp add` prints it too (R-043).
+- **Turning on SCIM says how to set it up**: where the base URL and token go at the provider, as
+  separate fields, and that SCIM requests fail while the provider is off in Pando.
+
 ### Changed
 
 - **Giving an account or group access to an app picks the app in one field.** Type part of its name
   and choose it from the list under the field; the separate search box is gone, and so is the limit
   of the first 50 apps in the list.
+- **A sign-in option is turned on and off with a switch**, green and labeled *On* when on, in place of
+  the *Turn on* and *Turn off* buttons.
+
+### Fixed
+
+- **Copy buttons copy.** A code block's copy button said *Copied* without copying anything; it now
+  copies, or selects the text where the browser has no clipboard. Provider addresses and the SCIM
+  token copy one value at a time, without their labels.
 
 ### Fixed
 
