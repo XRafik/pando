@@ -29,7 +29,8 @@ export interface Search {
   find: (q: string) => Promise<Picked[]>;
 }
 
-const SHOWN = 8;
+/** How many options the list holds at once. */
+export const SHOWN = 8;
 
 export function SearchPicker({
   label,

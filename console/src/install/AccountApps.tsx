@@ -17,7 +17,7 @@ import { Banner, Button, Checkbox, Dialog, EmptyState, Select, Tag } from '@desi
 import { api } from '@api/client';
 import { InstallVerb, useInstallVerb } from '../app/principal';
 import { Table } from '../ui/Table';
-import { SearchPicker, type Search } from '../ui/SearchPicker';
+import { SHOWN, SearchPicker, type Search } from '../ui/SearchPicker';
 import { ShowMore, usePaged, withParams, type PageOf } from '../ui/paged';
 import type { Role } from './Accounts';
 import { Quiet, messageOf, sentence } from './Accounts';
@@ -55,6 +55,25 @@ const listKey = (p: Principal) => [p.kind === 'user' ? 'users' : 'groups', p.id,
  *  group. Every grant in a group's list is the group's own. */
 /** Apps offered at once in the picker; a search finds the rest. */
 const PICK_LIMIT = 50;
+
+/**
+ * Up to `want` apps matching q that the principal has nothing on. The API can
+ * only include IDs, not leave them out, so pages are read until enough are
+ * found or there are none left: a first page of apps it already has does not
+ * mean there is nothing to add.
+ */
+export async function appsLeft(q: string, has: ReadonlySet<string>, want: number): Promise<{ id: string; name: string }[]> {
+  const left: { id: string; name: string }[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await api.get<{ apps: { id: string; name: string }[] | null; next_cursor?: string }>(
+      withParams('/apps', { q, limit: PICK_LIMIT, cursor }),
+    );
+    left.push(...(page.apps ?? []).filter((a) => !has.has(a.id)));
+    cursor = page.next_cursor || undefined;
+  } while (cursor && left.length < want);
+  return left.slice(0, want);
+}
 
 const isOwn = (p: Principal) => (g: Grant) => p.kind === 'group' || g.via === 'user';
 
@@ -298,25 +317,14 @@ export function GiveAccess({
 }) {
   // Searched by the server, a screenful at a time: the install may hold
   // twenty thousand apps, and a picker of all of them is not one (issue #72).
+  // Keyed by what the principal has, since that is what the answer leaves out.
+  const held = [...has];
   const search: Search = {
-    key: (q) => ['apps', 'pick', q],
-    find: async (q) => {
-      const found = await api.get<{ apps: { id: string; name: string }[] | null }>(
-        withParams('/apps', { q, limit: PICK_LIMIT }),
-      );
-      return (found.apps ?? []).filter((a) => !has.has(a.id)).map((a) => ({ id: a.id, label: a.name }));
-    },
+    key: (q) => ['apps', 'pick', held, q],
+    find: async (q) => (await appsLeft(q, has, SHOWN)).map((a) => ({ id: a.id, label: a.name })),
   };
-  // Whether any app is left to add: none on the first page and no page after.
-  const first = useQuery({
-    queryKey: ['apps', 'pick-left', [...has]],
-    queryFn: async () => {
-      const found = await api.get<{ apps: { id: string }[] | null; next_cursor?: string }>(
-        withParams('/apps', { limit: PICK_LIMIT }),
-      );
-      return (found.apps ?? []).some((a) => !has.has(a.id)) || Boolean(found.next_cursor);
-    },
-  });
+  // Whether any app is left to add at all.
+  const left = useQuery({ queryKey: ['apps', 'pick-left', held], queryFn: () => appsLeft('', has, 1) });
   const [appID, setAppID] = useState('');
   const [role, setRole] = useState('');
   const [opens, setOpens] = useState(true);
@@ -355,7 +363,7 @@ export function GiveAccess({
       }
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-        {first.data === false ? (
+        {left.data?.length === 0 ? (
           <Quiet>This {noun} already has access to every app.</Quiet>
         ) : (
           <SearchPicker label="App" noun="apps" search={search} onChange={(chosen) => setAppID(chosen?.id ?? '')} />

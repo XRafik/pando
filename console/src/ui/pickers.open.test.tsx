@@ -264,13 +264,17 @@ describe('Adding an app to an account', () => {
     get.mockRestore();
   });
 
-  it('offers the picker while more apps lie past the first page', async () => {
-    const get = vi.spyOn(api, 'get').mockResolvedValue({ apps: [{ id: 'app_1', name: 'inventory' }], next_cursor: 'c' });
+  it('reads past a first page of apps the account already has', async () => {
+    const get = vi.spyOn(api, 'get').mockImplementation(async (path: string) =>
+      path.includes('cursor=c2')
+        ? { apps: [{ id: 'app_3', name: 'payroll' }] }
+        : { apps: [{ id: 'app_1', name: 'inventory' }], next_cursor: 'c2' },
+    );
     render(<GiveAccess principal={dana} has={new Set(['app_1'])} roles={[]} onClose={() => {}} />);
-    await vi.waitFor(() => expect(get).toHaveBeenCalledTimes(2));
-    await act(async () => {});
+    await vi.waitFor(() => expect(input()).not.toBeNull());
+    focus(input());
+    await vi.waitFor(() => expect(options().map((o) => o.textContent)).toEqual(['payroll']));
     expect(container.textContent).not.toContain('already has access to every app');
-    expect(input()).not.toBeNull();
     get.mockRestore();
   });
 });
