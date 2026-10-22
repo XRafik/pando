@@ -64,7 +64,7 @@ func TestR382_SyslogOverPlainTCP(t *testing.T) {
 	defer cancel()
 	require.NoError(t, a.Send(short, api.AuditBatch{Events: []json.RawMessage{json.RawMessage(`{"status_id":1}`)}}))
 	// local0 (16) * 8 + informational (6) = 134.
-	require.Equal(t, `<134>1 2026-10-08T12:00:00.000000Z pando-1 pando-test - - [pando@32473 outcome="success"] {"status_id":1}`, receive(t, frames))
+	require.Equal(t, `<134>1 2026-10-08T12:00:00.000000Z pando-1 pando-test - - [pando@67299 outcome="success"] {"status_id":1}`, receive(t, frames))
 }
 
 // TestR382_SyslogUnreachableCollectorSaysWhatToCheck asserts the errors a

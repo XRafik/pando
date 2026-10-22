@@ -39,8 +39,9 @@ const (
 )
 
 // enterpriseID is the private enterprise number structured data is named
-// under, as RFC 5424 §7.2.2 requires of an SD-ID that is not IANA's own.
-const enterpriseID = "pando@32473"
+// under, as RFC 5424 §7.2.2 requires of an SD-ID that is not IANA's own:
+// 67299 is the number IANA assigned to Pando.
+const enterpriseID = "pando@67299"
 
 // RFC 5424 severities this adapter sends.
 const (

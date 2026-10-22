@@ -162,8 +162,8 @@ func TestR382_SyslogFramesRFC5424OverTLS(t *testing.T) {
 	require.NoError(t, a.Send(ctx, batch))
 	first, second := receive(t, frames), receive(t, frames)
 	// authpriv (10) * 8 + informational (6) = 86; + warning (4) = 84.
-	require.Equal(t, `<86>1 2026-10-08T12:00:00.000000Z pando-1 pando - app.deploy [pando@32473 id="41" outcome="success"] {"id":41,"action":"app.deploy","outcome":"success"}`, first)
-	require.True(t, strings.HasPrefix(second, `<84>1 2026-10-08T12:00:00.000000Z pando-1 pando - app.use.deniedwithspacesandavery [pando@32473 id="42" outcome="denied"] `), second)
+	require.Equal(t, `<86>1 2026-10-08T12:00:00.000000Z pando-1 pando - app.deploy [pando@67299 id="41" outcome="success"] {"id":41,"action":"app.deploy","outcome":"success"}`, first)
+	require.True(t, strings.HasPrefix(second, `<84>1 2026-10-08T12:00:00.000000Z pando-1 pando - app.use.deniedwithspacesandavery [pando@67299 id="42" outcome="denied"] `), second)
 
 	// The connection is reused, and a dropped one is replaced.
 	a.mu.Lock()

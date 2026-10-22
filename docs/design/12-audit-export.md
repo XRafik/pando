@@ -193,7 +193,7 @@ Two kinds ship:
   when the operator says so. Settings: `address`, `tls` (`on`, `off`), `ca_certificate`,
   `server_name`, `app_name`, `facility`. Credentials: `client_certificate`, `client_key` for mutual TLS.
   The message is the event, encoded, as MSG; `MSGID` is the action; structured data carries
-  `[pando@32473 id="…" outcome="…"]`.
+  `[pando@67299 id="…" outcome="…"]`.
 - **`audit_sink/https`** — a batch `POST` of newline-delimited JSON (or a JSON array, per `body`).
   Settings: `url`, `body` (`ndjson`, `json_array`, `splunk_hec`, `elastic_bulk`, `datadog`), `auth_header` (the header name),
   `auth_scheme` (`Bearer`, `Splunk`, none), `format`, `extra_headers` (non-secret), `max_body_bytes`. Credential:
