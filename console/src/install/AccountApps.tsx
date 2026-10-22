@@ -62,17 +62,18 @@ const PICK_LIMIT = 50;
  * found or there are none left: a first page of apps it already has does not
  * mean there is nothing to add.
  */
-async function appsLeft(q: string, has: ReadonlySet<string>, want: number): Promise<{ id: string; name: string }[]> {
-  const left: { id: string; name: string }[] = [];
-  let cursor: string | undefined;
-  do {
-    const page = await api.get<{ apps: { id: string; name: string }[] | null; next_cursor?: string }>(
-      withParams('/apps', { q, limit: PICK_LIMIT, cursor }),
-    );
-    left.push(...(page.apps ?? []).filter((a) => !has.has(a.id)));
-    cursor = page.next_cursor || undefined;
-  } while (cursor && left.length < want);
-  return left.slice(0, want);
+async function appsLeft(
+  q: string,
+  has: ReadonlySet<string>,
+  want: number,
+  cursor?: string,
+): Promise<{ id: string; name: string }[]> {
+  const page = await api.get<{ apps: { id: string; name: string }[] | null; next_cursor?: string }>(
+    withParams('/apps', { q, limit: PICK_LIMIT, cursor }),
+  );
+  const left = (page.apps ?? []).filter((a) => !has.has(a.id)).slice(0, want);
+  if (left.length === want || !page.next_cursor) return left;
+  return [...left, ...(await appsLeft(q, has, want - left.length, page.next_cursor))];
 }
 
 const isOwn = (p: Principal) => (g: Grant) => p.kind === 'group' || g.via === 'user';
@@ -309,12 +310,12 @@ export function GiveAccess({
   has,
   roles,
   onClose,
-}: {
+}: Readonly<{
   principal: Principal;
   has: Set<string>;
   roles: Role[];
   onClose: () => void;
-}) {
+}>) {
   // Searched by the server, a screenful at a time: the install may hold
   // twenty thousand apps, and a picker of all of them is not one (issue #72).
   // Keyed by what the principal has, since that is what the answer leaves out.
