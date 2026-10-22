@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 
-export function Table({ columns = [], rows = [], dense = false, onRowClick, empty = null, style, ...rest }) {
+export function Table({ columns = [], rows = [], dense = false, onRowClick, rowHref, empty = null, style, ...rest }) {
   const grid = columns.map((c) => c.width || '1fr').join(' ');
   const h = dense ? 'var(--row-height-dense)' : 'var(--row-height)';
   return (
@@ -11,16 +11,26 @@ export function Table({ columns = [], rows = [], dense = false, onRowClick, empt
         ))}
       </div>
       {rows.length === 0 && empty}
-      {rows.map((r, i) => <Row key={r.id || i} row={r} columns={columns} grid={grid} height={h} onRowClick={onRowClick} />)}
+      {rows.map((r, i) => <Row key={r.id || i} row={r} columns={columns} grid={grid} height={h} onRowClick={onRowClick} rowHref={rowHref} />)}
     </div>
   );
 }
 
-function Row({ row, columns, grid, height, onRowClick }) {
+// A row holds buttons and menus, so it cannot be one link. With rowHref it
+// opens the way a link would on ⌘- or Ctrl-click and on the middle button, and
+// keeps onRowClick for a plain click.
+function Row({ row, columns, grid, height, onRowClick, rowHref }) {
   const [hover, setHover] = useState(false);
+  const href = rowHref ? rowHref(row) : undefined;
+  const elsewhere = () => window.open(href, '_blank', 'noopener');
   return (
     <div
-      onClick={onRowClick ? () => onRowClick(row) : undefined}
+      onClick={onRowClick ? (e) => {
+        if (href && (e.metaKey || e.ctrlKey)) elsewhere();
+        else onRowClick(row);
+      } : undefined}
+      onAuxClick={href ? (e) => { if (e.button === 1) elsewhere(); } : undefined}
+      onMouseDown={href ? (e) => { if (e.button === 1) e.preventDefault(); } : undefined}
       onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
       style={{
         display: 'grid', gridTemplateColumns: grid, alignItems: 'center', gap: 'var(--space-4)',

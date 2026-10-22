@@ -60,7 +60,7 @@ import { DeleteApp } from './DeleteApp';
 import { DeployButton } from './DeployButton';
 import { Lifecycle } from './Lifecycle';
 import { AppVerb, AppVerbs, can, changesAnything, type AppWithVerbs } from './verbs';
-import type { Route, Section } from '../app/route';
+import { format, type Route, type Section } from '../app/route';
 import { MEASURE } from '../ui/layout';
 import { relative } from '../ui/time';
 import { ScoreBadge } from '../ui/ScoreBadge';
@@ -76,6 +76,7 @@ import { accessLabel, accessMeaning } from './share-access';
 import { useNarrow } from '../ui/narrow';
 import { Table } from '../ui/Table';
 import { TipButton } from '../ui/TipButton';
+import { RouteLink } from '../ui/RouteLink';
 import { FieldSkeleton, HeadingSkeleton, LineSkeleton, Loading } from '../ui/Loading';
 import { WithCode } from '../ui/ErrorCode';
 
@@ -214,6 +215,7 @@ export function AdminConsole({
   if (canView) {
     systemTabs.push({ value: 'updates', label: 'Updates', trailing: behind > 0 ? <Badge count={behind} /> : undefined });
   }
+  for (const t of systemTabs) t.href = format({ view: 'admin', section: 'system', tab: t.value });
   const systemTab = systemTabs.find((t) => t.value === route.tab)?.value ?? systemTabs[0]?.value;
   if (systemTabs.length > 0) {
     items.push({ value: 'system', label: 'System', trailing: behind > 0 ? <Badge count={behind} /> : undefined });
@@ -228,6 +230,8 @@ export function AdminConsole({
   // a token are not administration — a developer with one app shared with them
   // needs both.
   items.push({ value: 'api', label: 'API and tools' });
+  // Links, so each opens in a new tab as well as here.
+  for (const item of items) item.href = format({ view: 'admin', section: item.value as Section });
 
   const nav = (
     <SidebarNav
@@ -243,19 +247,7 @@ export function AdminConsole({
       // (R-264), the same place "Back to my apps" goes.
       header={
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <button
-            onClick={onLeave}
-            title="Back to my apps"
-            style={{
-              border: 'none',
-              background: 'transparent',
-              padding: 0,
-              cursor: 'pointer',
-              display: 'inline-flex',
-            }}
-          >
-            <Logo size={20} />
-          </button>
+          <HomeLink onLeave={onLeave} />
           {/* Where the launcher has it: opposite the logo. Settings belong to
               the person, not to anything this sidebar administers, so they
               are not one of its items. The inbox is the person's too. */}
@@ -309,13 +301,7 @@ export function AdminConsole({
               <IconButton label="Menu" aria-expanded={menuOpen} onClick={() => setMenuOpen(true)}>
                 <Icon name="menu" size={16} />
               </IconButton>
-              <button
-                onClick={onLeave}
-                title="Back to my apps"
-                style={{ border: 'none', background: 'transparent', padding: 0, cursor: 'pointer', display: 'inline-flex' }}
-              >
-                <Logo size={20} />
-              </button>
+              <HomeLink onLeave={onLeave} />
             </span>
             <span style={{ display: 'inline-flex', gap: 'var(--space-1)' }}>
               <FeedbackButton />
@@ -447,11 +433,21 @@ export function AdminConsole({
               onQuery={setAppSearch}
               more={<ShowMore query={apps.query} label="Show more apps" />}
               onOpen={(app) => setSelectedID(app.id)}
+              hrefOf={(app) => format({ view: 'admin', section: 'apps', appID: app.id })}
               onAdded={(app) => setSelectedID(app.id)}
             />
           ))}
       </main>
     </div>
+  );
+}
+
+/** The logo, as a link home: the launcher (R-264). */
+function HomeLink({ onLeave }: { onLeave: () => void }) {
+  return (
+    <RouteLink href="/" onFollow={onLeave} title="Back to my apps" style={{ display: 'inline-flex' }}>
+      <Logo size={20} />
+    </RouteLink>
   );
 }
 
@@ -487,6 +483,7 @@ function AppsList({
   onQuery,
   more,
   onOpen,
+  hrefOf,
   onAdded,
 }: {
   /** The pages read so far, already narrowed by the search. */
@@ -501,6 +498,7 @@ function AppsList({
   /** Reads the next page, while there is one. */
   more: React.ReactNode;
   onOpen: (app: App) => void;
+  hrefOf: (app: App) => string;
   onAdded: (app: App) => void;
 }) {
   const [adding, setAdding] = useState(false);
@@ -536,6 +534,7 @@ function AppsList({
           style={{ minWidth: 'min-content' }}
           loading={loading}
           onRowClick={onOpen}
+          rowHref={hrefOf}
           // A fresh install has no apps, and the list was a set of column
           // headers over nothing. R-002 is about the tenth app; the first one
           // is what makes the install anything at all.
@@ -813,7 +812,7 @@ function AppScreen({
   // A tab that is nothing but a control is left out for somebody who cannot
   // use it. The others stay, read-only: Settings and Sharing are also where
   // somebody finds out how the app is configured and who can reach it.
-  const tabs = [
+  const tabs: TabItem[] = [
     { value: 'overview', label: 'Overview' },
     ...(can(verbs, AppVerb.LogsRead) ? [{ value: 'logs', label: 'Logs' }] : []),
     // Anyone who can see the app reads its events and may subscribe (R-378).
@@ -823,6 +822,8 @@ function AppScreen({
     ...(can(verbs, AppVerb.Exec) ? [{ value: 'terminal', label: 'Terminal' }] : []),
     { value: 'detection', label: 'Configuration' },
   ];
+
+  for (const t of tabs) t.href = format({ view: 'admin', section: 'apps', appID, tab: t.value });
 
   // A link to a tab this person cannot open lands on the first one they can.
   const tab = tabs.some((t) => t.value === wanted) ? wanted : (tabs[0]?.value ?? 'detection');

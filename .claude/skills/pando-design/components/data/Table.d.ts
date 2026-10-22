@@ -18,6 +18,8 @@ export interface TableProps extends React.HTMLAttributes<HTMLDivElement> {
   rows?: any[];
   dense?: boolean;
   onRowClick?: (row: any) => void;
+  /** Where a row leads. ⌘-, Ctrl- and middle-click open it in a new tab; a plain click still calls `onRowClick`. */
+  rowHref?: (row: any) => string | undefined;
   /** Rendered in place of rows when the list is empty — usually an `EmptyState`. */
   empty?: React.ReactNode;
 }
