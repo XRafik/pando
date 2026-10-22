@@ -59,8 +59,9 @@ sign-in** refuses it everywhere, whatever each provider says.
 
 1. In the Okta Admin Console, **Applications → Create App Integration → OIDC → Web Application**.
 2. **Sign-in redirect URI**: Pando's redirect URI. **Assignments**: the people or groups who may use
-   Pando. To sign in from the Okta dashboard, set **Login initiated by** to *Either Okta or App* and
-   **Initiate login URI** to Pando's initiate login URI.
+   Pando. To sign in from the Okta dashboard, set **Login initiated by** to *Either Okta or App*,
+   **Login flow** to *Redirect to app to initiate login (OIDC Compliant)* and **Initiate login URI** to
+   Pando's initiate login URI.
 3. To send groups: **Sign On → OpenID Connect ID Token → Groups claim type: Filter**, name `groups`,
    filter *Matches regex* `.*` (or narrower).
 4. In Pando, add an OpenID Connect provider with the **Okta** preset. Issuer is

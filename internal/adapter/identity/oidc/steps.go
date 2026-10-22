@@ -19,7 +19,7 @@ func steps() []api.Step {
 				{Text: "Set **Sign-in redirect URIs** to `{callback_url}`."},
 				{Text: "Under **Assignments**, choose who can sign in, then choose **Save**."},
 				{Text: "On the **General** tab, copy the **Client ID** and the client secret."},
-				{Text: "To sign in from the Okta dashboard, choose **Edit** under **General Settings**, set **Login initiated by** to **Either Okta or App** and **Initiate login URI** to `{login_url}`, then choose **Save**."},
+				{Text: "To sign in from the Okta dashboard, choose **Edit** under **General Settings**, set **Login initiated by** to **Either Okta or App**, **Login flow** to **Redirect to app to initiate login (OIDC Compliant)** and **Initiate login URI** to `{login_url}`, then choose **Save**."},
 			},
 			Links:  []api.Link{{Label: "Okta OIDC app integrations", URL: "https://help.okta.com/en-us/content/topics/apps/apps_app_integration_wizard_oidc.htm"}},
 			Fields: []string{"issuer", "client_id", "client_secret"}},

@@ -199,7 +199,7 @@
                   "text": "On the **General** tab, copy the **Client ID** and the client secret."
                 },
                 {
-                  "text": "To sign in from the Okta dashboard, choose **Edit** under **General Settings**, set **Login initiated by** to **Either Okta or App** and **Initiate login URI** to `{login_url}`, then choose **Save**."
+                  "text": "To sign in from the Okta dashboard, choose **Edit** under **General Settings**, set **Login initiated by** to **Either Okta or App**, **Login flow** to **Redirect to app to initiate login (OIDC Compliant)** and **Initiate login URI** to `{login_url}`, then choose **Save**."
                 }
               ],
               "links": [

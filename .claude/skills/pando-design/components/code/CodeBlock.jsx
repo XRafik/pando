@@ -11,7 +11,8 @@ export function CodeBlock({ lines = [], prompt = false, title, copyable = true, 
   const say = (what) => { setCopied(what); window.setTimeout(() => setCopied(null), 1400); };
   // The clipboard is absent outside a secure context, and Pando reached over
   // plain HTTP on a private network is normal: the text is selected instead,
-  // so copying it is one keystroke away.
+  // so copying it is one keystroke away. The prompt and timestamps cannot be
+  // selected, so what is copied from the selection is what Copy would copy.
   const copy = async () => {
     try {
       if (!navigator.clipboard) throw new Error('no clipboard');
@@ -55,8 +56,8 @@ export function CodeBlock({ lines = [], prompt = false, title, copyable = true, 
         const line = typeof l === 'string' ? { text: l } : l;
         return (
           <div key={i} style={{ display: 'flex', gap: 'var(--space-2)', whiteSpace: 'pre-wrap', color: line.tone === 'muted' ? 'rgba(236,232,222,0.55)' : line.tone === 'ok' ? 'var(--vegetation-deep)' : line.tone === 'fail' ? 'var(--marker)' : 'var(--terminal-text)' }}>
-            {prompt && <span style={{ color: 'var(--terminal-prompt)', flex: '0 0 auto' }}>$</span>}
-            {line.time && <span style={{ color: 'rgba(236,232,222,0.38)', flex: '0 0 auto' }}>{line.time}</span>}
+            {prompt && <span style={{ color: 'var(--terminal-prompt)', flex: '0 0 auto', userSelect: 'none' }}>$</span>}
+            {line.time && <span style={{ color: 'rgba(236,232,222,0.38)', flex: '0 0 auto', userSelect: 'none' }}>{line.time}</span>}
             <span>{line.text}</span>
           </div>
         );
