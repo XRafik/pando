@@ -1,4 +1,5 @@
 import React from 'react';
+import { isPlainClick } from './plainClick.js';
 
 export function SidebarNav({ items = [], value, onChange, header, footer, style, ...rest }) {
   return (
@@ -15,9 +16,25 @@ export function SidebarNav({ items = [], value, onChange, header, footer, style,
       <div style={{ display: 'flex', flexDirection: 'column', padding: '0 var(--space-2)', gap: 2 }}>
         {items.map((it) => {
           const on = it.value === value;
+          // With an href the item is a link, so ⌘-click and the middle button
+          // open it in a new tab; a plain click still goes through onChange.
+          const Item = it.href ? 'a' : 'button';
+          const link = it.href
+            ? {
+                href: it.href,
+                'aria-current': on ? 'page' : undefined,
+                // Without onChange nothing handles it in place, so the
+                // browser follows the link.
+                onClick: (e) => {
+                  if (!onChange || !isPlainClick(e)) return;
+                  e.preventDefault();
+                  onChange(it.value);
+                },
+              }
+            : { onClick: () => onChange && onChange(it.value) };
           return (
-            <button
-              key={it.value} onClick={() => onChange && onChange(it.value)}
+            <Item
+              key={it.value} {...link}
               style={{
                 display: 'flex', alignItems: 'center', gap: 'var(--space-2)',
                 height: 'var(--control-console)', padding: '0 var(--space-2)',
@@ -25,14 +42,14 @@ export function SidebarNav({ items = [], value, onChange, header, footer, style,
                 background: on ? 'var(--paper-sunken)' : 'transparent',
                 color: on ? 'var(--ink)' : 'var(--ink-secondary)',
                 font: on ? 'var(--type-label)' : 'var(--type-body-ui)',
-                textAlign: 'left', cursor: 'pointer',
+                textAlign: 'left', textDecoration: 'none', cursor: 'pointer',
                 transition: 'background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)',
               }}
             >
               {it.icon}
               <span style={{ flex: 1 }}>{it.label}</span>
               {it.trailing}
-            </button>
+            </Item>
           );
         })}
       </div>

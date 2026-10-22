@@ -45,6 +45,12 @@ No new advisories.
   copies, or selects the text where the browser has no clipboard. Provider addresses and the SCIM
   token copy one value at a time, without their labels.
 
+### Fixed
+
+- **The console's sidebar, tabs and app and account lists open in a new tab** on ⌘-click, Ctrl-click
+  and middle-click, and a sidebar item or tab can be right-clicked to open or copy its link. They
+  did what a plain click does before (#294).
+
 ## [0.13.0] - 2026-10-21
 
 ### Security

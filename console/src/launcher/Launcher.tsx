@@ -34,6 +34,7 @@ import { Sheet } from '../ui/Sheet';
 import { InboxButton } from '../ui/Inbox';
 import { FeedbackButton } from '../ui/Feedback';
 import { Menu, MenuDivider, MenuItem } from '../ui/Menu';
+import { RouteLink } from '../ui/RouteLink';
 import { NoMatches, SearchField } from '../ui/SearchField';
 import { matches } from '../ui/search';
 import { useNarrow } from '../ui/narrow';
@@ -184,19 +185,17 @@ export function Launcher({
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
           {onAdmin && (
-            <button
-              onClick={onAdmin}
+            <RouteLink
+              href="/admin"
+              onFollow={onAdmin}
               style={{
-                border: 'none',
-                background: 'transparent',
-                padding: 0,
-                cursor: 'pointer',
                 font: 'var(--type-body-ui)',
                 color: 'var(--ink-secondary)',
+                textDecoration: 'none',
               }}
             >
               Admin
-            </button>
+            </RouteLink>
           )}
           <FeedbackButton />
           <InboxButton />

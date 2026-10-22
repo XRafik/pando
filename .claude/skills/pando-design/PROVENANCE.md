@@ -20,7 +20,7 @@ before a re-sync, which must not overwrite them.
 
 ### Local divergence, pending upstream
 
-Five changes have been made here and have **not** gone back to the design project.
+Six changes have been made here and have **not** gone back to the design project.
 A re-sync will revert them, so push them first.
 
 - `components/brand/MapCollar.jsx` (new, with its `.d.ts` and `.prompt.md`),
@@ -57,6 +57,15 @@ A re-sync will revert them, so push them first.
   it: every table cell does, so a tooltip in a table showed only a sliver of its
   shadow (found with the apps list's Access column, discussion #262).
 
+- `components/navigation/SidebarNav.jsx`, `Tabs.jsx` and `components/data/Table.jsx`
+  — an item, tab or row could not be opened in a new tab: each was a button, so
+  ⌘-, Ctrl- and middle-click did what a plain click does. A sidebar item or tab
+  given an `href` is now a link that a plain click still follows through
+  `onChange`, and a table given `rowHref` opens a row in a new tab on ⌘- or
+  Ctrl-click and the middle button. A row holds buttons and menus, so it cannot be
+  one link. `isPlainClick` (`components/navigation/plainClick.js`) is the test the
+  links use, exported for the console's own. Nothing changes without an `href`.
+
 - `components/code/CodeBlock.jsx` — its copy button said *Copied* and copied
   nothing. It now writes the block's text to the clipboard, or selects it where
   the browser has no clipboard (Pando over plain HTTP on a private network), and
@@ -68,7 +77,7 @@ A re-sync will revert them, so push them first.
   or *Off*, so the state never depends on color alone. This one is a change to the
   visual language.
 
-The `Dialog`, `Tooltip` and `CodeBlock` changes are correctness bugs rather than changes to the
+The `Dialog`, `Tooltip`, link and `CodeBlock` changes are correctness bugs rather than changes to the
 visual language, which is why they were fixed here rather than waiting — but all
 of these are still divergences, and the rule above is the rule.
 
