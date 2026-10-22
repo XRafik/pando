@@ -10,7 +10,8 @@ the digest. This makes that a failed check rather than something to remember.
 
 Every certificate under /etc/ssl is read, the bundle and any per-certificate
 files beside it, and matched by SHA-256 fingerprint, since a bundle carries no
-names. An image with no certificates under /etc/ssl passes: it trusts nothing,
+names. A per-certificate file linked from elsewhere is not followed; its
+certificate is in the bundle too. An image with no certificates under /etc/ssl passes: it trusts nothing,
 and whatever is built on it installs its own (debian:trixie-slim).
 
 Images are named on the command line, or read with --from from a Compose file
@@ -71,12 +72,20 @@ def references(path: Path) -> list[str]:
 
 
 def etc_ssl(image: str) -> bytes:
-    """A tar of the image's /etc/ssl, empty if the image has none."""
+    """A tar of the image's /etc/ssl, empty only if the image has none.
+
+    Any other failure to read it raises, so an image that could not be read is
+    never reported as one that trusts nothing.
+    """
     name = f"pando-trust-{uuid.uuid4().hex[:12]}"
     subprocess.run(["docker", "create", "--name", name, image], check=True, capture_output=True)
     try:
-        cp = subprocess.run(["docker", "cp", f"{name}:/etc/ssl", "-"], capture_output=True)
-        return cp.stdout if cp.returncode == 0 else b""
+        cp = subprocess.run(["docker", "cp", "-L", f"{name}:/etc/ssl", "-"], capture_output=True)
+        if cp.returncode == 0:
+            return cp.stdout
+        if b"Could not find the file /etc/ssl" in cp.stderr:
+            return b""
+        raise RuntimeError(f"could not read /etc/ssl from {image}: {cp.stderr.decode().strip()}")
     finally:
         subprocess.run(["docker", "rm", "-f", name], capture_output=True)
 

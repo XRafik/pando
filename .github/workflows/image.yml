@@ -113,13 +113,15 @@ jobs:
             image --no-progress --severity CRITICAL --ignore-unfixed --exit-code 1 \
             "pando-scan:${{ steps.v.outputs.version }}"
 
-      # And trusts no root that has been distrusted, nor do the images the
-      # release's compose file and builder pin (scripts/check-trust-store.py).
+      # And trusts no root that has been distrusted, nor do Trivy and the images
+      # the release's compose file and builder pin (scripts/check-trust-store.py).
+      # Not BuildKit: its bundle still lists the emSign roots, and what protects
+      # it is the Go it is built with (managed.go).
       - name: Trust store
         env:
           VERSION: ${{ steps.v.outputs.version }}
         run: |
-          python3 scripts/check-trust-store.py "pando-scan:$VERSION" \
+          python3 scripts/check-trust-store.py "pando-scan:$VERSION" "$TRIVY_IMAGE" \
             --from docker-compose.yml --from internal/adapter/builder/buildkit/bases/Dockerfile
 
       # And made to work before anything is pushed: the same image, run from a
