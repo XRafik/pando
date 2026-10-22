@@ -17,9 +17,8 @@ import { Banner, Button, Checkbox, Dialog, EmptyState, Select, Tag } from '@desi
 import { api } from '@api/client';
 import { InstallVerb, useInstallVerb } from '../app/principal';
 import { Table } from '../ui/Table';
-import { FieldSkeleton, LineSkeleton, Loading } from '../ui/Loading';
-import { SearchField } from '../ui/SearchField';
-import { ShowMore, usePaged, useSettled, withParams, type PageOf } from '../ui/paged';
+import { SearchPicker, type Search } from '../ui/SearchPicker';
+import { ShowMore, usePaged, withParams, type PageOf } from '../ui/paged';
 import type { Role } from './Accounts';
 import { Quiet, messageOf, sentence } from './Accounts';
 
@@ -286,7 +285,7 @@ function useInvalidate(principal: Principal, appID?: string) {
 
 /** Access to an app the principal has nothing on yet — for someone who manages
  *  every app, so every app offered is one they can grant. */
-function GiveAccess({
+export function GiveAccess({
   principal,
   has,
   roles,
@@ -299,18 +298,25 @@ function GiveAccess({
 }) {
   // Searched by the server, a screenful at a time: the install may hold
   // twenty thousand apps, and a picker of all of them is not one (issue #72).
-  const [search, setSearch] = useState('');
-  const settled = useSettled(search.trim());
-  const apps = useQuery({
-    queryKey: ['apps', 'pick', settled],
-    queryFn: () =>
-      api.get<{ apps: { id: string; name: string }[] | null; next_cursor?: string }>(
-        withParams('/apps', { q: settled, limit: PICK_LIMIT }),
-      ),
-    placeholderData: (previous) => previous,
+  const search: Search = {
+    key: (q) => ['apps', 'pick', q],
+    find: async (q) => {
+      const found = await api.get<{ apps: { id: string; name: string }[] | null }>(
+        withParams('/apps', { q, limit: PICK_LIMIT }),
+      );
+      return (found.apps ?? []).filter((a) => !has.has(a.id)).map((a) => ({ id: a.id, label: a.name }));
+    },
+  };
+  // Whether any app is left to add: none on the first page and no page after.
+  const first = useQuery({
+    queryKey: ['apps', 'pick-left', [...has]],
+    queryFn: async () => {
+      const found = await api.get<{ apps: { id: string }[] | null; next_cursor?: string }>(
+        withParams('/apps', { limit: PICK_LIMIT }),
+      );
+      return (found.apps ?? []).some((a) => !has.has(a.id)) || Boolean(found.next_cursor);
+    },
   });
-  const offered = (apps.data?.apps ?? []).filter((a) => !has.has(a.id));
-  const more = Boolean(apps.data?.next_cursor);
   const [appID, setAppID] = useState('');
   const [role, setRole] = useState('');
   const [opens, setOpens] = useState(true);
@@ -349,30 +355,10 @@ function GiveAccess({
       }
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-        {apps.isPending ? (
-          // The field in outline: a picker with only "Choose an app" in it
-          // reads as a list of no apps.
-          <Loading gap="var(--space-2)">
-            <LineSkeleton width="6ch" font="var(--type-label)" />
-            <FieldSkeleton />
-          </Loading>
-        ) : offered.length === 0 && settled === '' && !more ? (
+        {first.data === false ? (
           <Quiet>This {noun} already has access to every app.</Quiet>
         ) : (
-          <>
-            <SearchField value={search} onChange={setSearch} placeholder="Search apps" width="100%" />
-            {offered.length === 0 ? (
-              <Quiet>No apps match &ldquo;{settled}&rdquo;.</Quiet>
-            ) : (
-              <Select
-                label="App"
-                value={appID}
-                onChange={(e) => setAppID(e.target.value)}
-                helper={more ? `The first ${PICK_LIMIT} apps. Search to find another.` : undefined}
-                options={[{ value: '', label: 'Choose an app' }, ...offered.map((a) => ({ value: a.id, label: a.name }))]}
-              />
-            )}
-          </>
+          <SearchPicker label="App" noun="apps" search={search} onChange={(chosen) => setAppID(chosen?.id ?? '')} />
         )}
         <Select
           label="Role"
