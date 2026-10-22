@@ -27,6 +27,7 @@ import { Sheet } from '../ui/Sheet';
 import { SearchField } from '../ui/SearchField';
 import { ShowMore, usePaged, useSettled, type PageOf } from '../ui/paged';
 import { Table } from '../ui/Table';
+import { format } from '../app/route';
 import { FailedBanner } from '../ui/ErrorCode';
 
 export interface Account {
@@ -113,6 +114,7 @@ export function Accounts({ onOpen }: { onOpen: (account: Account) => void }) {
       <Table
         loading={accounts.query.isPending}
         onRowClick={onOpen}
+        rowHref={(a: Account) => format({ view: 'admin', section: 'accounts', userID: a.id })}
         columns={[
           { key: 'external_id', header: 'Username', width: 'minmax(0,22ch)', mono: true, filter: 'text' },
           {

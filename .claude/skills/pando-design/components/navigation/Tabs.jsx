@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { isPlainClick } from './plainClick.js';
 
 export function Tabs({ items = [], value, defaultValue, onChange, style, ...rest }) {
   const [internal, setInternal] = useState(defaultValue || (items[0] && items[0].value));
@@ -8,9 +9,24 @@ export function Tabs({ items = [], value, defaultValue, onChange, style, ...rest
     <div role="tablist" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-5)', borderBottom: '1px solid var(--rule)', ...style }} {...rest}>
       {items.map((it) => {
         const on = it.value === active;
+        // With an href the tab is a link, so ⌘-click and the middle button
+        // open it in a new tab; a plain click still goes through onChange.
+        const Item = it.href ? 'a' : 'button';
+        const link = it.href
+          ? {
+              href: it.href,
+              // Controlled and without onChange, nothing handles it in place,
+              // so the browser follows the link.
+              onClick: (e) => {
+                if ((value !== undefined && !onChange) || !isPlainClick(e)) return;
+                e.preventDefault();
+                pick(it.value);
+              },
+            }
+          : { onClick: () => pick(it.value) };
         return (
-          <button
-            key={it.value} role="tab" aria-selected={on} onClick={() => pick(it.value)}
+          <Item
+            key={it.value} role="tab" aria-selected={on} {...link}
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 'var(--space-2)',
               height: 36, padding: 0, marginBottom: -1,
@@ -18,12 +34,12 @@ export function Tabs({ items = [], value, defaultValue, onChange, style, ...rest
               background: 'transparent',
               color: on ? 'var(--ink)' : 'var(--ink-secondary)',
               font: on ? 'var(--type-label)' : 'var(--type-body-ui)',
-              cursor: 'pointer',
+              textDecoration: 'none', cursor: 'pointer',
               transition: 'color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease)',
             }}
           >
             {it.label}{it.trailing}
-          </button>
+          </Item>
         );
       })}
     </div>

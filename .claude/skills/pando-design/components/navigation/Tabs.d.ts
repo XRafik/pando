@@ -1,6 +1,12 @@
 import * as React from 'react';
 
-export interface TabItem { value: string; label: string; trailing?: React.ReactNode }
+export interface TabItem {
+  value: string;
+  label: string;
+  trailing?: React.ReactNode;
+  /** Makes the tab a link: a plain click still calls `onChange`, and ⌘-, Ctrl- or middle-click opens it in a new tab. */
+  href?: string;
+}
 
 /**
  * Switches sections within one screen. A 1px ink underline marks the active tab —

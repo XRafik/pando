@@ -36,3 +36,4 @@ export { Switch } from './components/forms/Switch.jsx';
 
 export { SidebarNav } from './components/navigation/SidebarNav.jsx';
 export { Tabs } from './components/navigation/Tabs.jsx';
+export { isPlainClick } from './components/navigation/plainClick.js';

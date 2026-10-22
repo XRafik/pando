@@ -25,6 +25,12 @@ Unreleased above it. -->
   and choose it from the list under the field; the separate search box is gone, and so is the limit
   of the first 50 apps in the list.
 
+### Fixed
+
+- **The console's sidebar, tabs and app and account lists open in a new tab** on ⌘-click, Ctrl-click
+  and middle-click, and a sidebar item or tab can be right-clicked to open or copy its link. They
+  did what a plain click does before (#294).
+
 ## [0.13.0] - 2026-10-21
 
 ### Security

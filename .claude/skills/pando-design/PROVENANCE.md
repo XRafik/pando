@@ -20,7 +20,7 @@ before a re-sync, which must not overwrite them.
 
 ### Local divergence, pending upstream
 
-Three changes have been made here and have **not** gone back to the design project.
+Four changes have been made here and have **not** gone back to the design project.
 A re-sync will revert them, so push them first.
 
 - `components/brand/MapCollar.jsx` (new, with its `.d.ts` and `.prompt.md`),
@@ -57,7 +57,16 @@ A re-sync will revert them, so push them first.
   it: every table cell does, so a tooltip in a table showed only a sliver of its
   shadow (found with the apps list's Access column, discussion #262).
 
-The `Dialog` and `Tooltip` changes are correctness bugs rather than changes to the
+- `components/navigation/SidebarNav.jsx`, `Tabs.jsx` and `components/data/Table.jsx`
+  — an item, tab or row could not be opened in a new tab: each was a button, so
+  ⌘-, Ctrl- and middle-click did what a plain click does. A sidebar item or tab
+  given an `href` is now a link that a plain click still follows through
+  `onChange`, and a table given `rowHref` opens a row in a new tab on ⌘- or
+  Ctrl-click and the middle button. A row holds buttons and menus, so it cannot be
+  one link. `isPlainClick` (`components/navigation/plainClick.js`) is the test the
+  links use, exported for the console's own. Nothing changes without an `href`.
+
+The `Dialog`, `Tooltip` and link changes are correctness bugs rather than changes to the
 visual language, which is why they were fixed here rather than waiting — but all
 of these are still divergences, and the rule above is the rule.
 

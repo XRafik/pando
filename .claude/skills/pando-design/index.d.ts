@@ -67,3 +67,4 @@ export { SidebarNav } from './components/navigation/SidebarNav';
 export type { SidebarNavProps, SidebarItem } from './components/navigation/SidebarNav';
 export { Tabs } from './components/navigation/Tabs';
 export type { TabsProps, TabItem } from './components/navigation/Tabs';
+export { isPlainClick } from './components/navigation/plainClick';
