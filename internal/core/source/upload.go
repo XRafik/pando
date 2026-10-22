@@ -170,9 +170,38 @@ func extract(r io.Reader, dir string) error {
 type unpackLimits struct {
 	file, total int64
 	entries     int
+	// archive bounds the whole tar stream once decompressed: headers,
+	// extension records and the data of entries that are skipped, which the
+	// tar reader reads past without them counting toward total.
+	archive int64
 }
 
-var uploadLimits = unpackLimits{file: maxUploadFileBytes, total: maxUnpackedBytes, entries: maxUploadEntries}
+var uploadLimits = unpackLimits{
+	file: maxUploadFileBytes, total: maxUnpackedBytes, entries: maxUploadEntries, archive: maxArchiveBytes,
+}
+
+// errArchiveTooLarge is what the capped stream answers past its limit, so the
+// refusal says why rather than that the archive could not be read.
+var errArchiveTooLarge = errors.New("archive larger than its limit once decompressed")
+
+// cappedReader fails, rather than ending cleanly, once more than left bytes
+// have been read: a clean end would make a cut-off archive look complete.
+type cappedReader struct {
+	r    io.Reader
+	left int64
+}
+
+func (c *cappedReader) Read(p []byte) (int, error) {
+	if c.left <= 0 {
+		return 0, errArchiveTooLarge
+	}
+	if int64(len(p)) > c.left {
+		p = p[:c.left]
+	}
+	n, err := c.r.Read(p)
+	c.left -= int64(n)
+	return n, err
+}
 
 func extractWithin(r io.Reader, dir string, limits unpackLimits) error {
 	gz, err := gzip.NewReader(r)
@@ -181,12 +210,15 @@ func extractWithin(r io.Reader, dir string, limits unpackLimits) error {
 	}
 	defer func() { _ = gz.Close() }()
 
-	tr := tar.NewReader(gz)
+	tr := tar.NewReader(&cappedReader{r: gz, left: limits.archive})
 	var unpacked int64
 	for entries := 1; ; entries++ {
 		header, err := tr.Next()
 		if errors.Is(err, io.EOF) {
 			return nil
+		}
+		if errors.Is(err, errArchiveTooLarge) {
+			return archiveTooLarge(limits)
 		}
 		if err != nil {
 			return errs.Wrap(errs.ValidInvalid, "That upload could not be read.", err)
@@ -215,11 +247,14 @@ func extractWithin(r io.Reader, dir string, limits unpackLimits) error {
 		switch header.Typeflag {
 		case tar.TypeDir:
 			if err := os.MkdirAll(target, 0o755); err != nil {
-				return errs.Wrap(errs.Internal, "Pando could not unpack the upload.", err)
+				return errs.Wrap(errs.Internal, couldNotUnpack, err)
 			}
 
 		case tar.TypeReg:
 			n, err := extractFile(tr, header, target, limits, limits.total-unpacked)
+			if errors.Is(err, errArchiveTooLarge) {
+				return archiveTooLarge(limits)
+			}
 			if err != nil {
 				return err
 			}
@@ -245,7 +280,18 @@ const (
 	maxUploadFileBytes = 1 << 30 // 1 GiB per file
 	maxUnpackedBytes   = 4 << 30 // 4 GiB in all
 	maxUploadEntries   = 200_000
+	// The tar stream itself: everything above plus 1 GiB for headers and
+	// extension records, several times what 200,000 entries' headers take.
+	maxArchiveBytes = maxUnpackedBytes + 1<<30
 )
+
+const couldNotUnpack = "Pando could not unpack the upload."
+
+func archiveTooLarge(limits unpackLimits) error {
+	return errs.Newf(errs.ValidInvalid,
+		"That upload is larger than %s once decompressed, which is more than Pando unpacks.", sizeWords(limits.archive)).
+		WithRemedy(uploadTooBigRemedy)
+}
 
 const uploadTooBigRemedy = "Check for build output, dependencies or a .git directory being included, or deploy from a repository instead."
 
@@ -269,21 +315,21 @@ func extractFile(tr io.Reader, header *tar.Header, target string, limits unpackL
 		return 0, tooBig()
 	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return 0, errs.Wrap(errs.Internal, "Pando could not unpack the upload.", err)
+		return 0, errs.Wrap(errs.Internal, couldNotUnpack, err)
 	}
 	out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, fileMode(header.Mode))
 	if err != nil {
-		return 0, errs.Wrap(errs.Internal, "Pando could not unpack the upload.", err)
+		return 0, errs.Wrap(errs.Internal, couldNotUnpack, err)
 	}
 	// Read one byte past the limit, so a file over it is refused rather than
 	// cut short: the header's size is the archive's word, not a promise.
 	n, err := io.Copy(out, io.LimitReader(tr, limit+1))
 	if err != nil {
 		_ = out.Close()
-		return n, errs.Wrap(errs.Internal, "Pando could not unpack the upload.", err)
+		return n, errs.Wrap(errs.Internal, couldNotUnpack, err)
 	}
 	if err := out.Close(); err != nil {
-		return n, errs.Wrap(errs.Internal, "Pando could not unpack the upload.", err)
+		return n, errs.Wrap(errs.Internal, couldNotUnpack, err)
 	}
 	if n > limit {
 		return n, tooBig()

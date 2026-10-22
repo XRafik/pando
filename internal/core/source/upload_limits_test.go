@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -52,7 +53,7 @@ func file(name, body string) entry { return entry{header: tar.Header{Name: name}
 // when one file or all of them unpack past their limit, or when it holds a
 // sparse file. A file over a limit is never written cut short.
 func TestR410_AnUploadIsBoundedWhenUnpacked(t *testing.T) {
-	limits := unpackLimits{file: 10, total: 15, entries: 3}
+	limits := unpackLimits{file: 10, total: 15, entries: 3, archive: 1 << 20}
 	refused := func(t *testing.T, archive *bytes.Buffer, says string) string {
 		t.Helper()
 		dir := t.TempDir()
@@ -97,6 +98,53 @@ func TestR410_AnUploadIsBoundedWhenUnpacked(t *testing.T) {
 	})
 }
 
+// TestR410_SkippedEntriesCountTowardTheArchiveLimit asserts R-410 for data
+// the tar reader reads past without unpacking: an entry Pando skips still
+// counts, and the whole decompressed stream is held to its limit.
+func TestR410_SkippedEntriesCountTowardTheArchiveLimit(t *testing.T) {
+	limits := unpackLimits{file: 1 << 20, total: 1 << 20, entries: 10, archive: 4096}
+	err := extractWithin(withDataOnASkippedEntry(t, 8192), t.TempDir(), limits)
+	require.Error(t, err)
+	require.Equal(t, errs.ValidInvalid, errs.CodeOf(err))
+	require.Contains(t, err.Error(), "larger than 4096 bytes once decompressed")
+
+	big := file("big", strings.Repeat("x", 8192))
+	err = extractWithin(tarball(t, big), t.TempDir(), limits)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "once decompressed")
+
+	require.NoError(t, extractWithin(tarball(t, file("small", "x")), t.TempDir(), limits))
+}
+
+// withDataOnASkippedEntry is an archive of one entry of an unknown type, which
+// Pando skips and the tar reader reads past, carrying size bytes of data: the
+// header of a regular file, retyped and its checksum redone.
+func withDataOnASkippedEntry(t *testing.T, size int) *bytes.Buffer {
+	t.Helper()
+	var raw bytes.Buffer
+	tw := tar.NewWriter(&raw)
+	require.NoError(t, tw.WriteHeader(&tar.Header{Name: "skipped", Typeflag: tar.TypeReg, Size: int64(size), Mode: 0o644, Format: tar.FormatUSTAR}))
+	_, err := tw.Write(bytes.Repeat([]byte("x"), size))
+	require.NoError(t, err)
+	require.NoError(t, tw.Close())
+
+	b := raw.Bytes()
+	b[156] = 'Z'
+	copy(b[148:156], "        ")
+	var sum int
+	for _, c := range b[:512] {
+		sum += int(c)
+	}
+	copy(b[148:156], fmt.Sprintf("%06o\x00 ", sum))
+
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	_, err = gz.Write(b)
+	require.NoError(t, err)
+	require.NoError(t, gz.Close())
+	return &buf
+}
+
 // TestR410_AFileLongerThanItsHeaderIsNotCutShort asserts the per-file limit
 // is enforced on what is read, not on what the header claims, and a file over
 // it fails rather than being truncated.
@@ -104,7 +152,7 @@ func TestR410_AFileLongerThanItsHeaderIsNotCutShort(t *testing.T) {
 	dir := t.TempDir()
 	tr := strings.NewReader(strings.Repeat("x", 20))
 	n, err := extractFile(tr, &tar.Header{Name: "lying", Size: 1}, filepath.Join(dir, "lying"),
-		unpackLimits{file: 10, total: 100, entries: 10}, 100)
+		unpackLimits{file: 10, total: 100, entries: 10, archive: 1 << 20}, 100)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "larger than 10 bytes")
 	require.EqualValues(t, 11, n)

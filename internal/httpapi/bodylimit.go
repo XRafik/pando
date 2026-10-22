@@ -45,6 +45,7 @@ type boundedBody struct {
 	over    bool
 	ended   bool
 	failed  error // what every read answers once the body has ended
+	sawEOF  bool
 }
 
 type boundedBodyKey struct{}
@@ -63,7 +64,7 @@ func boundBodies(next http.Handler) http.Handler {
 		}
 		r = r.WithContext(context.WithValue(r.Context(), boundedBodyKey{}, b))
 		r.Body = b
-		defer b.end()
+		defer b.finish()
 		next.ServeHTTP(w, r)
 	})
 }
@@ -142,15 +143,30 @@ func (b *boundedBody) Read(p []byte) (int, error) {
 	return n, err
 }
 
+// Close closes the body under one more idle period, since closing a body not
+// read to its end may read what is left of it, then clears the deadline.
 func (b *boundedBody) Close() error {
+	b.mu.Lock()
+	if !b.sawEOF {
+		_ = b.rc.SetReadDeadline(time.Now().Add(bodyIdleTimeout))
+		if b.started.IsZero() {
+			b.started = time.Now()
+		}
+	}
+	b.mu.Unlock()
+	err := b.body.Close()
 	b.end()
-	return b.body.Close()
+	return err
 }
 
-// end clears the read deadline once the body is done with: read to its end,
-// refused, failed, closed, or the handler returned.
+// end marks the body done with when the handler closes it. The deadline is
+// cleared, because the handler may go on to stream a response; finish bounds
+// what is left of the body once the handler returns.
 func (b *boundedBody) end() { b.endWith(nil) }
 
+// endWith marks the body done with. Read to its end or closed, the read
+// deadline is cleared. Refused or failed, the deadline last set stays, so a
+// body the server goes on to drain is still bounded.
 func (b *boundedBody) endWith(err error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -158,11 +174,25 @@ func (b *boundedBody) endWith(err error) {
 		return
 	}
 	b.ended = true
-	if !errors.Is(err, io.EOF) {
+	if errors.Is(err, io.EOF) {
+		b.sawEOF = true
+	} else {
 		b.failed = err
 	}
-	if !b.started.IsZero() {
+	if (err == nil || b.sawEOF) && !b.started.IsZero() {
 		_ = b.rc.SetReadDeadline(time.Time{})
+	}
+}
+
+// finish runs when the handler has returned. A body not read to its end may
+// be drained by the server before the connection is reused, and a client
+// sending it slowly would hold that drain, so it gets one more idle period.
+func (b *boundedBody) finish() {
+	b.endWith(nil)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.sawEOF {
+		_ = b.rc.SetReadDeadline(time.Now().Add(bodyIdleTimeout))
 	}
 }
 

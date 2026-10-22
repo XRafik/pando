@@ -1,9 +1,12 @@
 package httpapi
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -137,4 +140,47 @@ func TestR411_ABodyRefusedForItsSizeStaysRefused(t *testing.T) {
 	require.ErrorIs(t, err, io.EOF)
 	_, err = done.Read(buf)
 	require.ErrorIs(t, err, io.EOF)
+}
+
+// TestR411_ABodyLeftUnreadCannotHoldTheConnection asserts R-411 after the
+// handler: a body the handler did not read, sent partly and then stalled, does
+// not hold the server draining it, and a handler that closes its body and then
+// takes its time still answers.
+func TestR411_ABodyLeftUnreadCannotHoldTheConnection(t *testing.T) {
+	idle := bodyIdleTimeout
+	bodyIdleTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { bodyIdleTimeout = idle })
+
+	srv := httptest.NewServer(boundBodies(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/close" {
+			buf := make([]byte, 4)
+			_, _ = r.Body.Read(buf)
+			_ = r.Body.Close()
+			time.Sleep(3 * bodyIdleTimeout)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})))
+	t.Cleanup(srv.Close)
+
+	for _, path := range []string{"/", "/close"} {
+		t.Run(path, func(t *testing.T) {
+			conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = conn.Close() })
+			_, err = fmt.Fprintf(conn, "POST %s HTTP/1.1\r\nHost: x\r\nContent-Length: 1000\r\n\r\n0123456789", path)
+			require.NoError(t, err)
+
+			require.NoError(t, conn.SetReadDeadline(time.Now().Add(5*time.Second)))
+			resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+			require.NoError(t, err)
+			require.Equal(t, http.StatusNoContent, resp.StatusCode)
+
+			// The server gives up on the rest of the body and closes the
+			// connection, well before the client's own deadline.
+			start := time.Now()
+			_, err = io.ReadAll(conn)
+			require.NoError(t, err, "the server closed the connection")
+			require.Less(t, time.Since(start), 4*time.Second)
+		})
+	}
 }
