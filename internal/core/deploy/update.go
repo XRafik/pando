@@ -22,9 +22,10 @@ type ImageCheck struct {
 }
 
 // CheckImage reports whether the tag the app's pinned revision names now
-// points at a different build. It writes nothing (R-143a).
+// points at a different build. It writes nothing (R-143a), so a newer saved
+// revision does not stop it; only the upgrade would bury one.
 func (r *Runner) CheckImage(ctx context.Context, app state.App) (ImageCheck, error) {
-	rev, err := r.pinnedOnly(ctx, app)
+	rev, err := r.pinned(ctx, app)
 	if err != nil {
 		return ImageCheck{}, err
 	}
@@ -50,15 +51,9 @@ func (r *Runner) UpgradeImage(ctx context.Context, app state.App, digest, by str
 // pinnedOnly is the app's pinned revision, refused when a newer one is saved
 // and not deployed: an upgrade on top of the pinned one would bury that edit.
 func (r *Runner) pinnedOnly(ctx context.Context, app state.App) (state.Revision, error) {
-	if app.PinnedSpecID == "" {
-		return state.Revision{}, errs.New(errs.StateInvalid, "This app has not been deployed yet, so there is no image to check.")
-	}
-	pinned, found, err := r.apps.RevisionByID(ctx, app.PinnedSpecID)
+	pinned, err := r.pinned(ctx, app)
 	if err != nil {
 		return state.Revision{}, err
-	}
-	if !found {
-		return state.Revision{}, errs.New(errs.NotFound, "This app's pinned spec is missing.")
 	}
 	// Newest first, and without bodies: only the numbers are compared.
 	revs, err := r.apps.ListRevisions(ctx, app.ID)
@@ -71,6 +66,21 @@ func (r *Runner) pinnedOnly(ctx context.Context, app state.App) (state.Revision,
 			WithRemedy("Deploy or replace those changes first, then check for an update again.")
 	}
 	return pinned, nil
+}
+
+// pinned is the app's pinned revision, with its body.
+func (r *Runner) pinned(ctx context.Context, app state.App) (state.Revision, error) {
+	if app.PinnedSpecID == "" {
+		return state.Revision{}, errs.New(errs.StateInvalid, "This app has not been deployed yet, so there is no image to check.")
+	}
+	rev, found, err := r.apps.RevisionByID(ctx, app.PinnedSpecID)
+	if err != nil {
+		return state.Revision{}, err
+	}
+	if !found {
+		return state.Revision{}, errs.New(errs.NotFound, "This app's pinned spec is missing.")
+	}
+	return rev, nil
 }
 
 func checkImage(ctx context.Context, images *oci.Images, appID string, s *spec.AppSpec) (ImageCheck, error) {

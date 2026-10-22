@@ -3019,7 +3019,7 @@
       "post": {
         "operationId": "upgradeImage",
         "summary": "Upgrade to a newer image",
-        "description": "Write a revision running `digest`, the `latest_digest` a check returned, and deploy it; also needs app.deploy. Refused when the tag has moved since the check, when nothing is newer, or while a newer revision is saved and not deployed. Answers as POST /deployments does, approval included.\n\nNeeds `app.spec.edit`.",
+        "description": "Write a revision running `digest`, the `latest_digest` a check returned, and deploy it; also needs app.deploy. Refused when the tag has moved since the check, when nothing is newer, or while a newer revision is saved and not deployed. Answers as POST /deployments does, approval included, and a retry with the same idempotency key replays the first answer.\n\nNeeds `app.spec.edit`.",
         "tags": [
           "Deploys"
         ],

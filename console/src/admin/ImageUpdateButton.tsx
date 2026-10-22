@@ -55,7 +55,7 @@ export function ImageUpdateButton({
     // What a deploy changes, as Deploy invalidates it, plus the new revision.
     onSuccess: (deployment) => {
       if (deployment?.status === 'awaiting_approval') onWaiting?.();
-      queries.removeQueries({ queryKey: key });
+      void queries.resetQueries({ queryKey: key });
       void queries.invalidateQueries({ queryKey: ['apps', app.id], exact: true });
       for (const part of ['deployments', 'status', 'security', 'specs']) {
         void queries.invalidateQueries({ queryKey: ['apps', app.id, part] });
@@ -63,6 +63,8 @@ export function ImageUpdateButton({
       void queries.invalidateQueries({ queryKey: APP_LIST_KEY });
       void queries.invalidateQueries({ queryKey: ['approvals'] });
     },
+    // A refused upgrade, most often a tag that moved, needs a fresh check: drop the stale one.
+    onError: () => void queries.resetQueries({ queryKey: key }),
   });
 
   // Refusals go where Deploy's do, across the page under the header.
@@ -83,7 +85,10 @@ export function ImageUpdateButton({
       disabled={check.isFetching || upgrade.isPending || app.state === 'deploying'}
       onClick={() => {
         if (found?.update_available) upgrade.mutate(found.latest_digest);
-        else void check.refetch();
+        else {
+          upgrade.reset();
+          void check.refetch();
+        }
       }}
     >
       {imageUpdateLabel(found, check.isFetching, upgrade.isPending)}

@@ -107,8 +107,8 @@ func TestR143a_AnUpgradeToAStaleCheckIsRefused(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, got.Code, "no revision was written")
 }
 
-// A saved edit that is not deployed blocks the check, rather than an upgrade
-// built on the pinned revision burying it.
+// A saved edit that is not deployed blocks the upgrade, which would bury it,
+// and not the check, which writes nothing.
 func TestR143a_AnUndeployedEditIsNotBuriedByAnUpgrade(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(registry.New())
@@ -128,7 +128,48 @@ func TestR143a_AnUndeployedEditIsNotBuriedByAnUpgrade(t *testing.T) {
 	body["name"] = "web, edited"
 	i.writeSpec(admin, appID, body)
 
+	second := publish(t, image)
 	got := i.do(admin, http.MethodGet, "/apps/"+appID+"/image-update", nil)
+	require.Equal(t, http.StatusOK, got.Code, got.String())
+
+	got = i.do(admin, http.MethodPost, "/apps/"+appID+"/image-update", map[string]any{"digest": second})
 	require.Equal(t, http.StatusConflict, got.Code, got.String())
 	require.Contains(t, got.String(), "not deployed yet (revision 2)")
+}
+
+// A retried upgrade replays the deploy it started rather than writing a
+// second revision (R-262).
+func TestR143a_ARetriedUpgradeReplaysTheFirst(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(registry.New())
+	t.Cleanup(srv.Close)
+	image := strings.TrimPrefix(srv.URL, "http://") + "/acme/web:latest"
+	first := publish(t, image)
+
+	i := newInstall(t)
+	withEgressAdapters(t, i)
+	i.Server.Deployer.WithImages(&oci.Images{Inspector: oci.Inspector{Insecure: true}})
+	admin := i.admin()
+
+	appID := i.createApp(admin, "web")
+	body := minimalSpec()
+	body["source"] = map[string]any{"type": "image", "image": image, "digest": first}
+	i.pinSpec(admin, appID, i.writeSpec(admin, appID, body))
+
+	second := publish(t, image)
+	upgrade := map[string]any{"digest": second, "idempotency_key": "upgrade-1"}
+	got := i.do(admin, http.MethodPost, "/apps/"+appID+"/image-update", upgrade)
+	require.Equal(t, http.StatusAccepted, got.Code, got.String())
+	var dep state.Deployment
+	got.JSON(t, &dep)
+
+	again := i.do(admin, http.MethodPost, "/apps/"+appID+"/image-update", upgrade)
+	require.Equal(t, http.StatusAccepted, again.Code, again.String())
+	require.Equal(t, "true", again.Hdr.Get("Idempotent-Replay"))
+	var replayed state.Deployment
+	again.JSON(t, &replayed)
+	require.Equal(t, dep.ID, replayed.ID)
+
+	got = i.do(admin, http.MethodGet, "/apps/"+appID+"/specs/3", nil)
+	require.Equal(t, http.StatusNotFound, got.Code, "the retry wrote no revision")
 }

@@ -41,8 +41,13 @@ func (s *Server) handleUpgradeImage(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Digest string `json:"digest"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		Error(w, r, errs.New(errs.ValidInvalid, "The request body is not valid JSON."))
+	key, err := decodeWithKey(r, &req)
+	if err != nil {
+		Error(w, r, err)
+		return
+	}
+	// A retry replays the deploy it started (R-262), before a second revision is written.
+	if s.replayed(w, r, key, "POST /apps/{id}/deployments") {
 		return
 	}
 
@@ -65,7 +70,7 @@ func (s *Server) handleUpgradeImage(w http.ResponseWriter, r *http.Request) {
 	}
 	s.auditApp(r, app.ID, "spec.create")
 
-	body, _ := json.Marshal(deployRequest{SpecRevision: rev.Revision})
+	body, _ := json.Marshal(map[string]any{"spec_revision": rev.Revision, "idempotency_key": key})
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	s.handleDeploy(w, r)
 }
