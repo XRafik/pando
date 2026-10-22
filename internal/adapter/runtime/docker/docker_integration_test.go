@@ -352,6 +352,53 @@ func TestR193_ChangedEnvironmentCausesRecreate(t *testing.T) {
 		"a rotated secret must recreate the workload")
 }
 
+// TestR193_ARemovedSecretLeavesTheContainer asserts that a variable the plan
+// no longer sets is gone from the container after the next apply.
+func TestR193_ARemovedSecretLeavesTheContainer(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	a := adapter(t)
+	id := "test-envrm-" + time.Now().Format("150405")
+	cleanup(t, a, id)
+
+	_, err := a.Apply(ctx, bundle(id, map[string]secret.Value{
+		"KEEP": secret.New("kept"), "TOKEN": secret.New("removed-value"),
+	}))
+	require.NoError(t, err)
+	_, err = a.Apply(ctx, bundle(id, map[string]secret.Value{"KEEP": secret.New("kept")}))
+	require.NoError(t, err)
+
+	env := dockerInspect(t, "pando-"+id+"-web", "{{json .Config.Env}}")
+	require.Contains(t, env, "KEEP=kept")
+	require.NotContains(t, env, "TOKEN", "a secret removed from the plan stayed in the container")
+}
+
+// TestR193_AnUnchangedAppWithVariablesIsNotRecreated asserts that comparing
+// the variables exactly does not count the image's own (alpine sets PATH) as
+// drift: a plan applied again leaves the workload running.
+func TestR193_AnUnchangedAppWithVariablesIsNotRecreated(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	a := adapter(t)
+	id := "test-envsame-" + time.Now().Format("150405")
+	cleanup(t, a, id)
+	env := map[string]secret.Value{"KEEP": secret.New("kept"), "TOKEN": secret.New("t")}
+
+	_, err := a.Apply(ctx, bundle(id, env))
+	require.NoError(t, err)
+	first, err := a.Observe(ctx, api.BundleRef{BundleID: id})
+	require.NoError(t, err)
+
+	for range 2 {
+		_, err = a.Apply(ctx, bundle(id, env))
+		require.NoError(t, err)
+	}
+	second, err := a.Observe(ctx, api.BundleRef{BundleID: id})
+	require.NoError(t, err)
+	require.Equal(t, first.Workloads[0].StartedAt, second.Workloads[0].StartedAt,
+		"an unchanged plan must not restart the workload")
+}
+
 // R-026: workloads are reachable only inside the bundle's own network. Nothing
 // is published to the host, because traffic arrives through Pando's proxy.
 func TestR026_NoPortsArePublishedToTheHost(t *testing.T) {

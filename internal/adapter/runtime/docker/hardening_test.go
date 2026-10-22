@@ -197,7 +197,7 @@ func TestR240_AContainerFromBeforeTheLimitsIsRecreated(t *testing.T) {
 		require.NoError(t, err)
 		return ok
 	}
-	require.True(t, matches(map[string]string{labelHardening: hardeningLevel}))
+	require.True(t, matches(map[string]string{labelHardening: hardeningLevel, labelEnv: ""}))
 	require.False(t, matches(map[string]string{}), "created before the limits existed")
 	require.False(t, matches(map[string]string{labelHardening: "0"}), "created under an older set")
 }
@@ -220,7 +220,7 @@ func TestR403_AChangedDiskLimitRecreatesASizedContainer(t *testing.T) {
 		}
 		f.on("GET /containers/c1/json", respond(http.StatusOK, map[string]any{
 			"Id": "c1", "HostConfig": hostCfg,
-			"Config": map[string]any{"Image": "nginx:1", "Labels": map[string]string{labelHardening: hardeningLevel}},
+			"Config": map[string]any{"Image": "nginx:1", "Labels": map[string]string{labelHardening: hardeningLevel, labelEnv: ""}},
 		}))
 		w := api.WorkloadPlan{Name: "web", Image: "nginx:1", Resources: api.ResourcePlan{DiskBytes: diskBytes}}
 		ok, err := a.matchesPlan(context.Background(), "c1", w, "pando-app", nil)
@@ -253,7 +253,7 @@ func TestR240_AChangedProcessLimitRecreatesTheContainer(t *testing.T) {
 		}
 		f.on("GET /containers/c1/json", respond(http.StatusOK, map[string]any{
 			"Id": "c1", "HostConfig": hostCfg,
-			"Config": map[string]any{"Image": "nginx:1", "Labels": map[string]string{labelHardening: hardeningLevel}},
+			"Config": map[string]any{"Image": "nginx:1", "Labels": map[string]string{labelHardening: hardeningLevel, labelEnv: ""}},
 		}))
 		ok, err := a.matchesPlan(context.Background(), "c1", api.WorkloadPlan{Name: "web", Image: "nginx:1"}, "pando-app", nil)
 		require.NoError(t, err)
