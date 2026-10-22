@@ -116,6 +116,7 @@ type Step struct {
 const (
 	RefCallbackURL = "callback_url" // where the provider sends the browser back: the OIDC redirect URI, the SAML ACS URL
 	RefEntityID    = "entity_id"    // the SAML service provider's entity ID, also its metadata URL
+	RefLoginURL    = "login_url"    // where the provider starts a sign-in from its dashboard: OIDC's initiate login URI
 )
 
 // PresetOther stands, in a step's Presets, for a provider none of the kind's
@@ -386,7 +387,7 @@ func (k KindInfo) validateStep(where string, i int, st Step, stepIDs map[string]
 // value Pando fills in, and false; or "" and true when every one is known.
 func (k KindInfo) unknownRef(s string) (string, bool) {
 	for _, m := range suggestRef.FindAllStringSubmatch(s, -1) {
-		if !k.hasField(m[1]) && m[1] != RefCallbackURL && m[1] != RefEntityID {
+		if !k.hasField(m[1]) && m[1] != RefCallbackURL && m[1] != RefEntityID && m[1] != RefLoginURL {
 			return m[1], false
 		}
 	}

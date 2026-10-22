@@ -214,6 +214,13 @@ func (s *Service) Endpoints(o Origin, providerID string) api.Endpoints {
 	return api.Endpoints{CallbackURL: b + "/callback", EntityID: b + "/metadata"}
 }
 
+// LoginURL is where a provider starts a sign-in from its own dashboard: the
+// start of an ordinary redirect sign-in, which the provider's iss parameter
+// does not change.
+func (s *Service) LoginURL(o Origin, providerID string) string {
+	return s.base(o) + "/api/v1/auth/providers/" + providerID + "/start"
+}
+
 // SCIMBaseURL is what an administrator gives a SCIM client.
 func (s *Service) SCIMBaseURL(o Origin) string { return s.base(o) + "/api/v1/scim/v2" }
 

@@ -72,6 +72,8 @@ describe('adding a sign-in provider one step at a time', () => {
 
     const id = /providers\/(idp_[0-9A-Z]{26})\/callback/.exec(s.text())?.[1];
     expect(id).toBeDefined();
+    // The redirect URI in the step copies with a button of its own.
+    expect(document.querySelector('button[aria-label="Copy"]')).not.toBeNull();
     expect(s.text()).toContain('Add OpenID Connect provider');
     await s.press('Continue');
     expect(s.text()).toContain('Replace {your-okta-domain} with your own value.');

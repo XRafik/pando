@@ -10,7 +10,7 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Banner, Button, Card, Checkbox, CodeBlock, Dialog, Input, Select, StatusIndicator, Tag } from '@design';
+import { Banner, Button, Card, Checkbox, CodeBlock, Dialog, Input, Select, StatusIndicator, Switch, Tag } from '@design';
 
 import { api, base } from '@api/client';
 import type { ProviderView, TestReport } from '@api/types.gen';
@@ -19,6 +19,7 @@ import { FieldInput } from './AdapterDialog';
 import { AdapterGuide } from './AdapterGuide';
 import { isShown, kindKey } from './adapters';
 import { LineSkeleton, Loading } from '../ui/Loading';
+import { CopyField } from '../ui/CopyField';
 import { Term } from '../ui/Term';
 import {
   groupsText,
@@ -39,10 +40,11 @@ interface Listing {
   endpoints?: Endpoints;
 }
 
-/** A new provider's callback URL and entity ID, with {id} for its ID. */
+/** A new provider's addresses, with {id} for its ID. */
 interface Endpoints {
   callback_url: string;
   entity_id: string;
+  login_url?: string;
 }
 
 const KIND_LABEL: Record<string, string> = { local: 'Username and password', oidc: 'OpenID Connect', saml: 'SAML 2.0' };
@@ -189,12 +191,26 @@ function ProviderCard({
   });
   const failure = toggle.error ?? passwords.error ?? scim.error ?? scimOff.error ?? remove.error;
 
-  const status = p.problem ? (
-    <StatusIndicator status="failed" label="Not usable" title={p.problem} />
-  ) : p.enabled ? (
-    <StatusIndicator status="running" label="On" />
-  ) : (
-    <StatusIndicator status="stopped" label="Off" />
+  // On or off is what the card is read for, so whoever can change it gets a
+  // switch drawn in the running color when on, rather than a button.
+  const canToggle = external ? canEdit : canManagePolicy;
+  const flipping = toggle.isPending || passwords.isPending;
+  const status = (
+    <>
+      {p.problem && <StatusIndicator status="failed" label="Not usable" title={p.problem} />}
+      {canToggle ? (
+        <Switch
+          tone="status"
+          checked={p.enabled}
+          disabled={flipping}
+          label={p.enabled ? 'On' : 'Off'}
+          aria-label={`${p.name} sign-in`}
+          onChange={() => (external ? toggle.mutate() : passwords.mutate())}
+        />
+      ) : (
+        !p.problem && <StatusIndicator status={p.enabled ? 'running' : 'stopped'} label={p.enabled ? 'On' : 'Off'} />
+      )}
+    </>
   );
 
   return (
@@ -235,16 +251,10 @@ function ProviderCard({
               </Term>
             </dl>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
               <p style={{ font: 'var(--type-label)', color: 'var(--ink)', margin: 0 }}>Register with the provider</p>
-              <CodeBlock
-                copyable
-                lines={[
-                  p.kind === 'saml' ? `ACS URL: ${p.callback_url}` : `Redirect URI: ${p.callback_url}`,
-                  ...(p.kind === 'saml' ? [`Entity ID and metadata: ${p.entity_id}`] : []),
-                  ...(p.scim_enabled ? [`SCIM base URL: ${p.scim_base_url}`] : []),
-                ]}
-              />
+              <ProviderAddresses provider={p} />
+              {p.scim_enabled && p.scim_base_url && <CopyField label="SCIM base URL" value={p.scim_base_url} />}
             </div>
           </>
         )}
@@ -256,21 +266,10 @@ function ProviderCard({
         )}
         {failure && <Banner tone="failed">{refusal(failure)}</Banner>}
 
-        {canManagePolicy && !external && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-2)' }}>
-            <Button onClick={() => passwords.mutate()} disabled={passwords.isPending}>
-              {p.enabled ? 'Turn off password sign-in' : 'Turn on password sign-in'}
-            </Button>
-          </div>
-        )}
-
         {canEdit && external && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-2)' }}>
             <Button onClick={() => window.location.assign(`${base}/identity-providers/${p.id}/test`)}>
               Test sign-in
-            </Button>
-            <Button onClick={() => toggle.mutate()} disabled={toggle.isPending}>
-              {p.enabled ? 'Turn off' : 'Turn on'}
             </Button>
             <Button variant="ghost" onClick={onEdit}>
               Edit
@@ -294,19 +293,12 @@ function ProviderCard({
       </div>
 
       {token && (
-        <Dialog
-          open
-          title="SCIM token"
-          description="Give the provider this token and base URL. Pando shows the token once."
+        <SCIMSetup
+          token={token}
+          identityAttribute={p.scim_identity_attribute}
+          providerOn={p.enabled}
           onClose={() => setToken(null)}
-          footer={
-            <Button variant="primary" onClick={() => setToken(null)}>
-              Done
-            </Button>
-          }
-        >
-          <CodeBlock copyable lines={[`Base URL: ${token.scim_base_url}`, `Token: ${token.token}`]} />
-        </Dialog>
+        />
       )}
       {removing && (
         <Dialog
@@ -333,6 +325,97 @@ function ProviderCard({
         />
       )}
     </Card>
+  );
+}
+
+/** What a provider is told about Pando, one value to a field so each copies
+ *  alone. */
+function ProviderAddresses({ provider: p }: Readonly<{ provider: ProviderView }>) {
+  if (!p.callback_url) return null;
+  if (p.kind === 'saml') {
+    return (
+      <>
+        <CopyField label="ACS URL" value={p.callback_url} />
+        {p.entity_id && <CopyField label="Entity ID and metadata URL" value={p.entity_id} />}
+      </>
+    );
+  }
+  return (
+    <>
+      <CopyField label="Redirect URI" value={p.callback_url} />
+      {p.login_url && <CopyField label="Initiate login URI" value={p.login_url} />}
+    </>
+  );
+}
+
+const STEP_LIST: React.CSSProperties = {
+  margin: 0,
+  paddingLeft: 'var(--space-5)',
+  font: 'var(--type-body-ui)',
+  color: 'var(--ink)',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 'var(--space-2)',
+};
+
+const MARK: React.CSSProperties = { font: 'var(--type-code-sm)' };
+
+/** A new SCIM token, with where it goes at the provider. */
+function SCIMSetup({
+  token,
+  identityAttribute,
+  providerOn,
+  onClose,
+}: Readonly<{
+  token: { token: string; scim_base_url: string };
+  identityAttribute: string;
+  providerOn: boolean;
+  onClose: () => void;
+}>) {
+  return (
+    <Dialog
+      open
+      width={640}
+      title="Set up SCIM"
+      description="Pando shows the token once."
+      onClose={onClose}
+      footer={
+        <Button variant="primary" onClick={onClose}>
+          Done
+        </Button>
+      }
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+        {!providerOn && (
+          <Banner tone="info">SCIM requests fail while this provider is off. Turn it on before testing the connection.</Banner>
+        )}
+        <ol style={STEP_LIST}>
+          <li>
+            In the provider&rsquo;s app for Pando, turn on SCIM provisioning. In Microsoft Entra ID, it is{' '}
+            <strong>Provisioning</strong> &rarr; <strong>Automatic</strong>.
+          </li>
+          <li>
+            Set the SCIM base URL: <strong>SCIM connector base URL</strong> in Okta, <strong>Tenant URL</strong> in
+            Entra ID.
+          </li>
+          <li>
+            Authenticate with the token as a bearer token: <strong>HTTP Header</strong> in Okta,{' '}
+            <strong>Secret Token</strong> in Entra ID.
+          </li>
+          <li>
+            Pando matches people by <code style={MARK}>{identityAttribute}</code>.
+            {identityAttribute === 'externalId' && (
+              <>
+                {' '}
+                In Entra ID, map <code style={MARK}>objectId</code> to it.
+              </>
+            )}
+          </li>
+        </ol>
+        <CopyField label="SCIM base URL" value={token.scim_base_url} />
+        <CopyField label="Token" value={token.token} />
+      </div>
+    </Dialog>
   );
 }
 
@@ -391,6 +474,7 @@ function ProviderGuide({
     ? {
         callback_url: endpoints.callback_url.replace('{id}', providerID),
         entity_id: endpoints.entity_id.replace('{id}', providerID),
+        ...(endpoints.login_url ? { login_url: endpoints.login_url.replace('{id}', providerID) } : {}),
       }
     : {};
   return (
@@ -621,15 +705,7 @@ function ProviderDialog({
           />
         )}
         {preset?.help && <Banner tone="info">{preset.help}</Banner>}
-        {existing?.callback_url && (
-          <CodeBlock
-            copyable
-            lines={[
-              existing.kind === 'saml' ? `ACS URL: ${existing.callback_url}` : `Redirect URI: ${existing.callback_url}`,
-              ...(existing.kind === 'saml' ? [`Entity ID: ${existing.entity_id}`] : []),
-            ]}
-          />
-        )}
+        {existing && <ProviderAddresses provider={existing} />}
         <Input
           label="Name (required)"
           value={name}

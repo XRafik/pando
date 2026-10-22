@@ -282,6 +282,7 @@ func TestR043_SignInThroughKeycloakWithOIDCAndSAML(t *testing.T) {
 		ID          string   `json:"id"`
 		Enabled     bool     `json:"enabled"`
 		CallbackURL string   `json:"callback_url"`
+		LoginURL    string   `json:"login_url"`
 		Credentials []string `json:"credentials"`
 		Config      map[string]any
 		Revocation  struct {
@@ -292,6 +293,7 @@ func TestR043_SignInThroughKeycloakWithOIDCAndSAML(t *testing.T) {
 	created.JSON(t, &oidcProvider)
 	require.False(t, oidcProvider.Enabled, "a new provider is off until it is tested and turned on")
 	require.Equal(t, pando+"/api/v1/auth/providers/"+oidcProvider.ID+"/callback", oidcProvider.CallbackURL)
+	require.Equal(t, pando+"/api/v1/auth/providers/"+oidcProvider.ID+"/start", oidcProvider.LoginURL)
 	require.Equal(t, []string{"client_secret"}, oidcProvider.Credentials, "the secret is named, never shown")
 	require.NotContains(t, created.String(), "pando-client-secret")
 	require.Equal(t, "expiry_only", oidcProvider.Revocation.Mode, "without SCIM the session lifetime is the window (R-050)")
@@ -370,6 +372,14 @@ func TestR043_SignInThroughKeycloakWithOIDCAndSAML(t *testing.T) {
 
 	ids := inst.do(admin, http.MethodGet, "/users/"+who.UserID+"/identities", nil)
 	require.Contains(t, ids.String(), `"origin":true`)
+
+	// A sign-in started from the provider's dashboard: it sends the browser to
+	// the initiate login URI with its issuer, and the sign-in runs as one from
+	// the sign-in page, bound to that browser (R-043).
+	dashboard := newBrowser(t)
+	dashboard.get(oidcProvider.LoginURL + "?iss=" + url.QueryEscape(kc+"/realms/"+realm))
+	dashboard.through("alice", "alice-password")
+	require.NotEmpty(t, dashboard.cookie(pando, httpapi.SessionCookie), "the provider's dashboard can start a sign-in")
 
 	// --- SAML -----------------------------------------------------------
 	samlCreated := inst.do(admin, http.MethodPost, "/identity-providers", map[string]any{

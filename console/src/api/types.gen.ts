@@ -311,6 +311,7 @@ export interface ProviderView {
   callback_url?: string;
   entity_id?: string;
   metadata_url?: string;
+  login_url?: string;
   scim_base_url?: string;
   revocation?: Revocation;
   problem?: string;

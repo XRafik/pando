@@ -1,14 +1,17 @@
 import React from 'react';
 
-export function Switch({ checked = false, disabled = false, label, description, onChange, style, ...rest }) {
+export function Switch({ checked = false, disabled = false, label, description, tone, onChange, style, ...rest }) {
+  // tone="status": on is drawn in the running status color, for a switch
+  // whose state is what a screen is read for — whether a sign-in option works.
+  const on = tone === 'status' ? 'var(--status-running)' : 'var(--ink)';
   return (
     <label style={{ display: 'inline-flex', alignItems: 'flex-start', gap: 'var(--space-3)', cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.55 : 1, ...style }}>
       <input type="checkbox" role="switch" checked={checked} disabled={disabled} onChange={onChange} style={{ position: 'absolute', opacity: 0, width: 0, height: 0 }} {...rest} />
       <span aria-hidden="true" style={{
         position: 'relative', flex: '0 0 auto', width: 34, height: 20, marginTop: 1,
         borderRadius: 'var(--radius-pill)',
-        background: checked ? 'var(--ink)' : 'var(--paper-sunken)',
-        border: '1px solid ' + (checked ? 'var(--ink)' : 'var(--field-border)'),
+        background: checked ? on : 'var(--paper-sunken)',
+        border: '1px solid ' + (checked ? on : 'var(--field-border)'),
         transition: 'background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease)',
       }}>
         <span style={{

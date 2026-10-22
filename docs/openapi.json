@@ -7300,11 +7300,15 @@
                         },
                         "entity_id": {
                           "type": "string"
+                        },
+                        "login_url": {
+                          "type": "string"
                         }
                       },
                       "required": [
                         "callback_url",
-                        "entity_id"
+                        "entity_id",
+                        "login_url"
                       ]
                     }
                   },
@@ -16113,6 +16117,9 @@
             "type": "string"
           },
           "metadata_url": {
+            "type": "string"
+          },
+          "login_url": {
             "type": "string"
           },
           "scim_base_url": {

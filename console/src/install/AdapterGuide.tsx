@@ -10,6 +10,7 @@ import { useState } from 'react';
 import { Banner, Button, Checkbox, Dialog, Icon, Input, Select } from '@design';
 
 import { refusal } from './Accounts';
+import { CopyInline } from '../ui/CopyField';
 import { Disclosure } from '../ui/Disclosure';
 import { useNarrow } from '../ui/narrow';
 import {
@@ -294,6 +295,7 @@ export function AdapterGuide({
             <StepBody
               step={screen.step}
               fill={(text) => fillText(kind, form.values, text, supplied)}
+              copyable={Object.values(supplied)}
               links={(screen.step.links ?? []).flatMap((l) => {
                 const url = fillRefs(kind, form.values, l.url, supplied);
                 return url ? [{ label: l.label, url }] : [];
@@ -681,12 +683,14 @@ function TilePicker({
 }
 
 /** Step text, with its two marks: bold for a name on the provider's screen,
- *  code for something typed exactly. */
-function Marked({ text }: Readonly<{ text: string }>) {
+ *  code for something typed exactly. An address Pando supplies, such as the
+ *  redirect URI, gets a copy button of its own. */
+function Marked({ text, copyable = [] }: Readonly<{ text: string; copyable?: readonly string[] }>) {
   return (
     <>
       {keyed(runs(text), (r) => `${r.kind}:${r.text}`).map(([key, r]) => {
         if (r.kind === 'bold') return <strong key={key} style={{ fontWeight: 600 }}>{r.text}</strong>;
+        if (r.kind === 'code' && copyable.includes(r.text)) return <CopyInline key={key} value={r.text} />;
         if (r.kind === 'code')
           return (
             <code
@@ -724,10 +728,13 @@ function keyed<T>(items: readonly T[], name: (item: T) => string): [string, T][]
 function StepBody({
   step,
   fill,
+  copyable,
   links,
   children,
 }: Readonly<{
   step: KindStep;
+  /** Values in the step's text to copy with a button: the supplied addresses. */
+  copyable?: readonly string[];
   /** Step text with its {key}s filled in. */
   fill: (text: string) => string;
   links: { label: string; url: string }[];
@@ -739,7 +746,7 @@ function StepBody({
         <h4 style={{ font: 'var(--type-h4)', margin: 0 }}>{step.title}</h4>
         {step.lede && (
           <p style={{ font: 'var(--type-body-ui)', color: 'var(--ink-secondary)', margin: 0 }}>
-            <Marked text={fill(step.lede)} />
+            <Marked text={fill(step.lede)} copyable={copyable} />
           </p>
         )}
       </div>
@@ -756,7 +763,7 @@ function StepBody({
         >
           {keyed(step.do ?? [], (a) => a.text).map(([key, a]) => (
             <li key={key}>
-              <Marked text={fill(a.text)} />
+              <Marked text={fill(a.text)} copyable={copyable} />
               {a.table && <StepTable table={a.table} />}
             </li>
           ))}

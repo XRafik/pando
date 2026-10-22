@@ -24,7 +24,9 @@ var identityKinds = map[string]any{"providers": []any{}, "kinds": []map[string]a
 func TestR043_AnIdentityProviderCanBeAddedFromTheCLI(t *testing.T) {
 	api := newAPI(t).
 		reply("GET /identity-providers", identityKinds).
-		reply("POST /identity-providers", map[string]any{"id": "idp_1", "callback_url": "https://pando.example.com/api/v1/auth/providers/idp_1/callback"})
+		reply("POST /identity-providers", map[string]any{"id": "idp_1",
+			"callback_url": "https://pando.example.com/api/v1/auth/providers/idp_1/callback",
+			"login_url":    "https://pando.example.com/api/v1/auth/providers/idp_1/start"})
 
 	got := run(t, api, "s3cret\n", "identity-provider", "add", "oidc", "--preset", "okta",
 		"--set", "issuer=https://example.okta.com", "--set", "client_id=0oa1", "--jit")
@@ -35,6 +37,7 @@ func TestR043_AnIdentityProviderCanBeAddedFromTheCLI(t *testing.T) {
 		"credentials": {"client_secret": "s3cret"}
 	}`, api.bodyFor("POST /identity-providers"))
 	require.Contains(t, got.out, "/api/v1/auth/providers/idp_1/callback")
+	require.Contains(t, got.out, "Initiate login URI: https://pando.example.com/api/v1/auth/providers/idp_1/start")
 	require.Contains(t, got.out, "pando idp test idp_1")
 	require.NotContains(t, got.out, "s3cret")
 
@@ -120,6 +123,7 @@ func TestR048_TheCLIManagesSCIMTokensAndLinks(t *testing.T) {
 		{[]string{"check", "idp_1"}, "The provider answers"},
 		{[]string{"test", "idp_1"}, "/api/v1/identity-providers/idp_1/test"},
 		{[]string{"scim-token", "idp_1"}, "Token:         pando_scim_x"},
+		{[]string{"scim-token", "idp_1"}, "refused while the provider is off in Pando: pando idp set idp_1 --enable"},
 		{[]string{"scim-token", "idp_1", "--off"}, "SCIM is off"},
 		{[]string{"unlink", "usr_1", "idp_1", "00u1"}, "Unlinked 00u1"},
 		{[]string{"link-group", "grp_1", "grp_2"}, "Linked grp_2 and grp_1"},

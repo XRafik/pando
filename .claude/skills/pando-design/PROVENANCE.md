@@ -20,7 +20,7 @@ before a re-sync, which must not overwrite them.
 
 ### Local divergence, pending upstream
 
-Three changes have been made here and have **not** gone back to the design project.
+Five changes have been made here and have **not** gone back to the design project.
 A re-sync will revert them, so push them first.
 
 - `components/brand/MapCollar.jsx` (new, with its `.d.ts` and `.prompt.md`),
@@ -57,7 +57,18 @@ A re-sync will revert them, so push them first.
   it: every table cell does, so a tooltip in a table showed only a sliver of its
   shadow (found with the apps list's Access column, discussion #262).
 
-The `Dialog` and `Tooltip` changes are correctness bugs rather than changes to the
+- `components/code/CodeBlock.jsx` — its copy button said *Copied* and copied
+  nothing. It now writes the block's text to the clipboard, or selects it where
+  the browser has no clipboard (Pando over plain HTTP on a private network), and
+  keeps room on the right so the button never sits on the text.
+
+- `components/forms/Switch.jsx` — a `tone="status"` prop draws the on state in
+  the running status color instead of ink, for a switch whose state is what the
+  screen is read for: whether a sign-in option is on. Its label still says *On*
+  or *Off*, so the state never depends on color alone. This one is a change to the
+  visual language.
+
+The `Dialog`, `Tooltip` and `CodeBlock` changes are correctness bugs rather than changes to the
 visual language, which is why they were fixed here rather than waiting — but all
 of these are still divergences, and the rule above is the rule.
 

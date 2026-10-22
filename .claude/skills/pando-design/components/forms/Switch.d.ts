@@ -8,6 +8,9 @@ export interface SwitchProps extends Omit<React.InputHTMLAttributes<HTMLInputEle
   checked?: boolean;
   label?: string;
   description?: string;
+  /** `status` draws on in the running status color, for a switch whose state
+   *  is what the screen is read for. Pair it with a label saying On or Off. */
+  tone?: 'default' | 'status';
 }
 
 export declare function Switch(props: SwitchProps): JSX.Element;

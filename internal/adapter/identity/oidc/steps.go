@@ -3,7 +3,8 @@ package oidc
 import "github.com/trypando/pando/internal/adapter/api"
 
 // steps walk through registering Pando with each provider. The redirect URI
-// is core's callback for this provider (idp.Service.Endpoints); the adapter
+// is core's callback for this provider (idp.Service.Endpoints), and the login
+// URL its sign-in start (idp.Service.LoginURL); the adapter
 // asks for openid plus the configured scopes and sends PKCE, so any client
 // type that allows the authorization code flow works.
 func steps() []api.Step {
@@ -18,6 +19,7 @@ func steps() []api.Step {
 				{Text: "Set **Sign-in redirect URIs** to `{callback_url}`."},
 				{Text: "Under **Assignments**, choose who can sign in, then choose **Save**."},
 				{Text: "On the **General** tab, copy the **Client ID** and the client secret."},
+				{Text: "To sign in from the Okta dashboard, choose **Edit** under **General Settings**, set **Login initiated by** to **Either Okta or App** and **Initiate login URI** to `{login_url}`, then choose **Save**."},
 			},
 			Links:  []api.Link{{Label: "Okta OIDC app integrations", URL: "https://help.okta.com/en-us/content/topics/apps/apps_app_integration_wizard_oidc.htm"}},
 			Fields: []string{"issuer", "client_id", "client_secret"}},
@@ -36,6 +38,7 @@ func steps() []api.Step {
 				{Text: "Copy the **Application (client) ID** and **Directory (tenant) ID** from **Overview**."},
 				{Text: "Under **Manage**, open **Authentication** and choose **Add Redirect URI**."},
 				{Text: "Choose **Web**, set **Redirect URI** to `{callback_url}`, and choose **Configure**."},
+				{Text: "To sign in from My Apps, open **Branding & properties** and set **Home page URL** to `{login_url}`."},
 			},
 			Links:  []api.Link{{Label: "Open App registrations", URL: "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"}},
 			Fields: []string{"issuer", "client_id"}},
@@ -77,7 +80,7 @@ func steps() []api.Step {
 				{Text: "In the Admin Console, choose your realm, then **Clients** → **Create client**."},
 				{Text: "Set **Client type** to **OpenID Connect**, enter a **Client ID**, and choose **Next**."},
 				{Text: "Turn on **Client authentication**, keep **Standard flow** on, and choose **Next**."},
-				{Text: "Set **Valid redirect URIs** to `{callback_url}`, then choose **Save**."},
+				{Text: "Set **Valid redirect URIs** to `{callback_url}` and **Home URL** to `{login_url}`, then choose **Save**."},
 				{Text: "On the **Credentials** tab, copy the **Client Secret**."},
 			},
 			Links:  []api.Link{{Label: "Keycloak OIDC clients", URL: "https://www.keycloak.org/docs/latest/server_admin/#proc-creating-oidc-client_server_administration_guide"}},
@@ -94,7 +97,8 @@ func steps() []api.Step {
 		{ID: "authentik_app", Label: "Application", Title: "Create an application and provider", Presets: authentik,
 			Do: []api.Action{
 				{Text: "In the Admin interface, open **Applications** → **Applications** and choose **New Application**."},
-				{Text: "Name the application, note its **Slug**, and choose **Next**."},
+				{Text: "Name the application and note its **Slug**."},
+				{Text: "Under **UI Settings**, set **Launch URL** to `{login_url}`, then choose **Next**."},
 				{Text: "Choose **OAuth2/OpenID Connect**, then choose **Next**."},
 				{Text: "Set **Client type** to **Confidential**."},
 				{Text: "Add a **Strict** redirect URI of `{callback_url}`."},
@@ -108,6 +112,7 @@ func steps() []api.Step {
 			Do: []api.Action{
 				{Text: "In your provider, create an OpenID Connect web application that uses the authorization code flow."},
 				{Text: "Set its redirect URI to `{callback_url}`."},
+				{Text: "To sign in from the provider's dashboard, set its initiate login URI to `{login_url}`."},
 				{Text: "Copy its issuer, client ID and client secret."},
 			},
 			Fields: []string{"issuer", "client_id", "client_secret"}},
