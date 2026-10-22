@@ -1,8 +1,12 @@
 package secret_test
 
 import (
+	"bytes"
+	"encoding/gob"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -10,6 +14,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
+	"go.yaml.in/yaml/v3"
 
 	"github.com/trypando/pando/internal/secret"
 )
@@ -113,4 +118,79 @@ func TestR194_ErrorStringsDoNotLeak(t *testing.T) {
 	err := fmt.Errorf("failed to connect with credential %v: %w", v, fmt.Errorf("timeout"))
 	require.NotContains(t, err.Error(), canary)
 	require.True(t, strings.Contains(err.Error(), secret.Redacted))
+}
+
+// TestR194_ValueNeverRendersFromAnUnexportedField asserts R-194 where fmt
+// cannot call the Value's own methods: a Value in an unexported field, or in
+// a map or slice held there, is printed by fmt walking the struct.
+func TestR194_ValueNeverRendersFromAnUnexportedField(t *testing.T) {
+	type held struct {
+		password secret.Value
+		env      map[string]secret.Value
+		list     []secret.Value
+		ptr      *secret.Value
+	}
+	v := secret.New(canary)
+	h := held{password: v, env: map[string]secret.Value{"TOKEN": v}, list: []secret.Value{v}, ptr: &v}
+
+	for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x"} {
+		for _, subject := range []any{h, &h, []held{h}, map[string]held{"k": h}} {
+			require.NotContains(t, fmt.Sprintf(verb, subject), canary, "verb %s leaked a secret in an unexported field", verb)
+		}
+	}
+	require.Equal(t, canary, h.env["TOKEN"].Reveal())
+}
+
+// TestR194_ValueNeverReachesAnSlogLine asserts R-194 for log/slog, whose text
+// handler prints a struct with fmt's %+v.
+func TestR194_ValueNeverReachesAnSlogLine(t *testing.T) {
+	type held struct {
+		Host     string
+		password secret.Value
+	}
+	v := secret.New(canary)
+	for _, newHandler := range []func(io.Writer) slog.Handler{
+		func(w io.Writer) slog.Handler { return slog.NewTextHandler(w, nil) },
+		func(w io.Writer) slog.Handler { return slog.NewJSONHandler(w, nil) },
+	} {
+		var b bytes.Buffer
+		slog.New(newHandler(&b)).Info("connecting", "password", v, "config", held{Host: "db", password: v},
+			"env", map[string]secret.Value{"TOKEN": v})
+		require.NotContains(t, b.String(), canary)
+		require.Contains(t, b.String(), secret.Redacted)
+	}
+}
+
+// TestR194_ValueEncodesAsTheRedactionString asserts R-194 for the encoders
+// that reach a Value through its marshalers rather than through fmt.
+func TestR194_ValueEncodesAsTheRedactionString(t *testing.T) {
+	type doc struct {
+		Password secret.Value `yaml:"password"`
+	}
+	d := doc{Password: secret.New(canary)}
+
+	y, err := yaml.Marshal(d)
+	require.NoError(t, err)
+	require.NotContains(t, string(y), canary)
+	require.Contains(t, string(y), secret.Redacted)
+
+	// gob refuses the type, since it has nothing exported: an error, not
+	// the secret.
+	var g bytes.Buffer
+	require.Error(t, gob.NewEncoder(&g).Encode(d))
+	require.NotContains(t, g.String(), canary)
+}
+
+// TestR194_TheZeroValueAndAnEmptySecretAreTheSame asserts that holding the
+// secret behind a pointer does not make an empty Value distinguishable.
+func TestR194_TheZeroValueAndAnEmptySecretAreTheSame(t *testing.T) {
+	require.True(t, secret.New("").IsZero())
+	require.True(t, secret.Value{}.IsZero())
+	require.Empty(t, secret.Value{}.Reveal())
+	require.Zero(t, secret.Value{}.Len())
+	require.Equal(t, len(canary), secret.New(canary).Len())
+
+	var v secret.Value
+	require.NoError(t, json.Unmarshal([]byte(`"`+secret.Redacted+`"`), &v))
+	require.True(t, v.IsZero())
 }
