@@ -106,3 +106,29 @@ func TestR143a_AnUpgradeToAStaleCheckIsRefused(t *testing.T) {
 	got = i.do(admin, http.MethodGet, "/apps/"+appID+"/specs/2", nil)
 	require.Equal(t, http.StatusNotFound, got.Code, "no revision was written")
 }
+
+// A saved edit that is not deployed blocks the check, rather than an upgrade
+// built on the pinned revision burying it.
+func TestR143a_AnUndeployedEditIsNotBuriedByAnUpgrade(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(registry.New())
+	t.Cleanup(srv.Close)
+	image := strings.TrimPrefix(srv.URL, "http://") + "/acme/web:latest"
+	first := publish(t, image)
+
+	i := newInstall(t)
+	withEgressAdapters(t, i)
+	i.Server.Deployer.WithImages(&oci.Images{Inspector: oci.Inspector{Insecure: true}})
+	admin := i.admin()
+
+	appID := i.createApp(admin, "web")
+	body := minimalSpec()
+	body["source"] = map[string]any{"type": "image", "image": image, "digest": first}
+	i.pinSpec(admin, appID, i.writeSpec(admin, appID, body))
+	body["name"] = "web, edited"
+	i.writeSpec(admin, appID, body)
+
+	got := i.do(admin, http.MethodGet, "/apps/"+appID+"/image-update", nil)
+	require.Equal(t, http.StatusConflict, got.Code, got.String())
+	require.Contains(t, got.String(), "not deployed yet (revision 2)")
+}

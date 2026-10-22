@@ -53,23 +53,24 @@ func (r *Runner) pinnedOnly(ctx context.Context, app state.App) (state.Revision,
 	if app.PinnedSpecID == "" {
 		return state.Revision{}, errs.New(errs.StateInvalid, "This app has not been deployed yet, so there is no image to check.")
 	}
+	pinned, found, err := r.apps.RevisionByID(ctx, app.PinnedSpecID)
+	if err != nil {
+		return state.Revision{}, err
+	}
+	if !found {
+		return state.Revision{}, errs.New(errs.NotFound, "This app's pinned spec is missing.")
+	}
+	// Newest first, and without bodies: only the numbers are compared.
 	revs, err := r.apps.ListRevisions(ctx, app.ID)
 	if err != nil {
 		return state.Revision{}, err
 	}
-	// Newest first.
-	for i, rev := range revs {
-		if rev.ID != app.PinnedSpecID {
-			continue
-		}
-		if i > 0 {
-			return state.Revision{}, errs.Newf(errs.StateInvalid,
-				"This app has saved changes that are not deployed yet (revision %d).", revs[0].Revision).
-				WithRemedy("Deploy or replace those changes first, then check for an update again.")
-		}
-		return rev, nil
+	if len(revs) > 0 && revs[0].Revision > pinned.Revision {
+		return state.Revision{}, errs.Newf(errs.StateInvalid,
+			"This app has saved changes that are not deployed yet (revision %d).", revs[0].Revision).
+			WithRemedy("Deploy or replace those changes first, then check for an update again.")
 	}
-	return state.Revision{}, errs.New(errs.NotFound, "This app's pinned spec is missing.")
+	return pinned, nil
 }
 
 func checkImage(ctx context.Context, images *oci.Images, appID string, s *spec.AppSpec) (ImageCheck, error) {
