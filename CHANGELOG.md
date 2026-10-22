@@ -38,6 +38,8 @@ No new advisories.
   of the first 50 apps in the list.
 - **A sign-in option is turned on and off with a switch**, green and labeled *On* when on, in place of
   the *Turn on* and *Turn off* buttons.
+- **The syslog audit sink names its structured data `pando@67299`**, Pando's IANA private enterprise
+  number, in place of `pando@32473`, the number RFC 5612 reserves for documentation (#267).
 
 ### Fixed
 
@@ -50,6 +52,11 @@ No new advisories.
 - **The console's sidebar, tabs and app and account lists open in a new tab** on ⌘-click, Ctrl-click
   and middle-click, and a sidebar item or tab can be right-clicked to open or copy its link. They
   did what a plain click does before (#294).
+
+### Upgrade notes
+
+- A syslog collector that parses or filters on the structured-data ID `pando@32473` must match
+  `pando@67299` instead.
 
 ## [0.13.0] - 2026-10-21
 
