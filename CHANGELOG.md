@@ -33,6 +33,9 @@ No new advisories.
 
 ### Changed
 
+- **Giving an account or group access to an app picks the app in one field.** Type part of its name
+  and choose it from the list under the field; the separate search box is gone, and so is the limit
+  of the first 50 apps in the list.
 - **A sign-in option is turned on and off with a switch**, green and labeled *On* when on, in place of
   the *Turn on* and *Turn off* buttons.
 
