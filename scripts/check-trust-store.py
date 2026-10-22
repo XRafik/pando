@@ -78,16 +78,19 @@ def etc_ssl(image: str) -> bytes:
     never reported as one that trusts nothing.
     """
     name = f"pando-trust-{uuid.uuid4().hex[:12]}"
-    subprocess.run(["docker", "create", "--name", name, image], check=True, capture_output=True)
+    # Long enough to pull an image the runner does not have yet.
+    created = subprocess.run(["docker", "create", "--name", name, image], capture_output=True, timeout=600)
+    if created.returncode != 0:
+        raise RuntimeError(f"could not create a container from {image}: {created.stderr.decode().strip()}")
     try:
-        cp = subprocess.run(["docker", "cp", "-L", f"{name}:/etc/ssl", "-"], capture_output=True)
+        cp = subprocess.run(["docker", "cp", "-L", f"{name}:/etc/ssl", "-"], capture_output=True, timeout=120)
         if cp.returncode == 0:
             return cp.stdout
         if b"Could not find the file /etc/ssl" in cp.stderr:
             return b""
         raise RuntimeError(f"could not read /etc/ssl from {image}: {cp.stderr.decode().strip()}")
     finally:
-        subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=60)
 
 
 def main() -> int:
@@ -102,7 +105,12 @@ def main() -> int:
 
     failed = False
     for image in images:
-        archive = etc_ssl(image)
+        try:
+            archive = etc_ssl(image)
+        except (RuntimeError, subprocess.TimeoutExpired) as err:
+            failed = True
+            print(f"FAIL {image} could not be checked: {err}")
+            continue
         bad = sorted(DISTRUSTED[fp] for fp in trusted(archive) & DISTRUSTED.keys()) if archive else []
         if bad:
             failed = True
