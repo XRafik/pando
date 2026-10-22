@@ -62,7 +62,7 @@ const PICK_LIMIT = 50;
  * found or there are none left: a first page of apps it already has does not
  * mean there is nothing to add.
  */
-export async function appsLeft(q: string, has: ReadonlySet<string>, want: number): Promise<{ id: string; name: string }[]> {
+async function appsLeft(q: string, has: ReadonlySet<string>, want: number): Promise<{ id: string; name: string }[]> {
   const left: { id: string; name: string }[] = [];
   let cursor: string | undefined;
   do {
