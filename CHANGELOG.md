@@ -19,6 +19,12 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+### Changed
+
+- **Giving an account or group access to an app picks the app in one field.** Type part of its name
+  and choose it from the list under the field; the separate search box is gone, and so is the limit
+  of the first 50 apps in the list.
+
 ### Fixed
 
 - **The console's sidebar, tabs and app and account lists open in a new tab** on ⌘-click, Ctrl-click
