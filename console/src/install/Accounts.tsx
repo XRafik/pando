@@ -403,11 +403,16 @@ export function Screen({
   const system = useContext(SystemTabs);
   if (system) {
     // A tab of System: System's heading, this screen's action, then the tabs
-    // — spaced as an app's tabs are.
+    // — spaced as an app's tabs are. Pinned, and one height across the tabs
+    // whatever each one's action is.
     return (
-      <Sheet heading="System" action={action}>
-        <Tabs value={system.value} onChange={system.onChange} items={system.items} />
-        <div style={{ paddingTop: 'var(--space-5)' }}>{children}</div>
+      <Sheet
+        heading="System"
+        action={action}
+        pinned
+        tabs={<Tabs value={system.value} onChange={system.onChange} items={system.items} />}
+      >
+        {children}
       </Sheet>
     );
   }
