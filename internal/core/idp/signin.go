@@ -164,14 +164,39 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (Started, error) 
 }
 
 // SafeNext keeps a post-sign-in destination on the same host: a path, not a
-// URL. "//evil.example" and "/\evil.example" are URLs to a browser.
+// URL. It agrees with console/src/auth/return-to.ts.
+//
+// A prefix test is not enough, because the browser parses the value, not
+// Pando: it drops tabs and newlines anywhere in a URL and reads a backslash as
+// a slash, so a value that starts with one slash can still reach it as a
+// protocol-relative URL. So a control character refuses the value outright, a
+// backslash is read as the browser reads it, the result is resolved against
+// this host, and anything that lands elsewhere is refused. The path returned
+// is rebuilt from the parse with its leading slashes collapsed to one, so a
+// same-host path whose dot segments resolve to two slashes cannot become
+// protocol-relative either.
 func SafeNext(next string) string {
-	if next == "" || !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") ||
-		strings.HasPrefix(next, "/\\") || strings.ContainsAny(next, "\r\n") {
+	if next == "" || !strings.HasPrefix(next, "/") || strings.IndexFunc(next, isControl) >= 0 {
 		return "/"
 	}
-	return next
+	resolved, err := nextBase.Parse(strings.ReplaceAll(next, "\\", "/"))
+	if err != nil || resolved.Scheme != nextBase.Scheme || resolved.Host != nextBase.Host || resolved.User != nil {
+		return "/"
+	}
+	resolved.Path = "/" + strings.TrimLeft(resolved.Path, "/")
+	if resolved.RawPath != "" {
+		resolved.RawPath = "/" + strings.TrimLeft(resolved.RawPath, "/")
+	}
+	resolved.Scheme, resolved.Host = "", ""
+	return resolved.String()
 }
+
+// nextBase stands in for this host when SafeNext resolves a destination.
+var nextBase = &url.URL{Scheme: "https", Host: "pando.invalid", Path: "/"}
+
+// isControl reports an ASCII control character, which a browser removes from
+// a URL before reading it (tab, CR, LF) or which has no place in one.
+func isControl(r rune) bool { return r < 0x20 || r == 0x7f }
 
 // Callback handles the provider's response and returns where to send the
 // browser next. It never returns an error for the browser to see raw: a
