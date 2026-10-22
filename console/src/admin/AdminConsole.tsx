@@ -443,7 +443,7 @@ export function AdminConsole({
 }
 
 /** The logo, as a link home: the launcher (R-264). */
-function HomeLink({ onLeave }: { onLeave: () => void }) {
+function HomeLink({ onLeave }: Readonly<{ onLeave: () => void }>) {
   return (
     <RouteLink href="/" onFollow={onLeave} title="Back to my apps" style={{ display: 'inline-flex' }}>
       <Logo size={20} />
