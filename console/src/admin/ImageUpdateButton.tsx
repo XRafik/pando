@@ -9,16 +9,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@design';
 
 import { api, RequestFailed } from '@api/client';
-import type { App } from '@api/types.gen';
+import type { App, ImageCheck } from '@api/types.gen';
 import { APP_LIST_KEY } from './appList';
-
-export interface ImageCheck {
-  image: string;
-  current_digest: string;
-  latest_digest: string;
-  update_available: boolean;
-  revision: number;
-}
 
 export function imageUpdateLabel(check: ImageCheck | undefined, checking: boolean, upgrading: boolean): string {
   if (upgrading) return 'Upgrading';
