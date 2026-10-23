@@ -15,6 +15,7 @@ import (
 
 	"github.com/trypando/pando/internal/core/oci"
 	"github.com/trypando/pando/internal/core/spec"
+	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/errs"
 )
 
@@ -97,4 +98,31 @@ func TestR143a_AnUpgradePinsTheBuildThatWasChecked(t *testing.T) {
 
 	_, err = upgradedSpec(context.Background(), images, "app_1", s, "")
 	require.Equal(t, errs.ValidInvalid, errs.CodeOf(err), "the digest from the check is required")
+}
+
+// An app that was never deployed has no pinned image to check or upgrade.
+func TestR143a_AnAppNeverDeployedHasNothingToCheck(t *testing.T) {
+	r := &Runner{}
+	_, err := r.CheckImage(context.Background(), state.App{ID: "app_1"})
+	require.Equal(t, errs.StateInvalid, errs.CodeOf(err))
+	require.Contains(t, err.Error(), "has not been deployed yet")
+
+	_, err = r.UpgradeImage(context.Background(), state.App{ID: "app_1"}, "sha256:b2", "usr_1")
+	require.Equal(t, errs.StateInvalid, errs.CodeOf(err))
+}
+
+// A tag the registry does not have is a refusal, for the check and the upgrade alike.
+func TestR143a_ATagTheRegistryLacksIsRefused(t *testing.T) {
+	host := testRegistry(t)
+	images := &oci.Images{Inspector: oci.Inspector{Insecure: true}}
+	s := &spec.AppSpec{Source: spec.Source{Type: spec.SourceImage, Image: host + "/acme/web:nope", Digest: "sha256:a1"}}
+
+	_, err := checkImage(context.Background(), images, "app_1", s)
+	require.Error(t, err)
+	_, err = upgradedSpec(context.Background(), images, "app_1", s, "sha256:b2")
+	require.Error(t, err)
+
+	_, err = upgradedSpec(context.Background(), images, "app_1",
+		&spec.AppSpec{Source: spec.Source{Type: spec.SourceGit, URL: "https://github.com/acme/web"}}, "sha256:b2")
+	require.Equal(t, errs.StateInvalid, errs.CodeOf(err), "only an image app is upgraded")
 }

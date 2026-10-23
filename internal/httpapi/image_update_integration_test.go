@@ -173,3 +173,35 @@ func TestR143a_ARetriedUpgradeReplaysTheFirst(t *testing.T) {
 	got = i.do(admin, http.MethodGet, "/apps/"+appID+"/specs/3", nil)
 	require.Equal(t, http.StatusNotFound, got.Code, "the retry wrote no revision")
 }
+
+// The check and the upgrade are refused where they cannot apply: an app built
+// from source, someone who cannot see the app, and someone who may edit its
+// spec but not deploy it (the upgrade does both).
+func TestR143a_TheCheckAndUpgradeAreRefusedWhereTheyCannotApply(t *testing.T) {
+	t.Parallel()
+	i := newInstall(t)
+	withEgressAdapters(t, i)
+	i.Server.Deployer.WithImages(&oci.Images{Inspector: oci.Inspector{Insecure: true}})
+	admin := i.admin()
+	appID := i.createApp(admin, "web")
+	body := minimalSpec()
+	body["source"] = map[string]any{"type": "git", "url": "https://github.com/acme/web"}
+	i.pinSpec(admin, appID, i.writeSpec(admin, appID, body))
+	path := "/apps/" + appID + "/image-update"
+
+	got := i.do(admin, http.MethodGet, path, nil)
+	require.Equal(t, http.StatusConflict, got.Code, got.String())
+	require.Contains(t, got.String(), "Only an app deployed from a published image")
+
+	stranger := i.user("stranger")
+	got = i.do(stranger, http.MethodGet, path, nil)
+	require.GreaterOrEqual(t, got.Code, http.StatusForbidden, got.String())
+	got = i.do(stranger, http.MethodPost, path, map[string]any{"digest": "sha256:b2"})
+	require.GreaterOrEqual(t, got.Code, http.StatusForbidden, got.String())
+
+	editor := i.user("editor")
+	i.grantControl(appID, editor, i.customRole(admin, "spec editor", "app", "app.view", "app.spec.edit"))
+	got = i.do(editor, http.MethodPost, path, map[string]any{"digest": "sha256:b2"})
+	require.Equal(t, http.StatusForbidden, got.Code, got.String())
+	require.Equal(t, 1, i.revisionCount(admin, appID), "a refused upgrade writes no revision")
+}

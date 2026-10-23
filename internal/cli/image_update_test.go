@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -44,4 +45,39 @@ func TestR143a_TheCLIHasNothingToUpgradeTo(t *testing.T) {
 	require.NoError(t, got.err, got.errOut)
 	require.Contains(t, got.out, "ghcr.io/acme/web:latest is up to date.")
 	require.Len(t, api.calls, 1, "nothing is upgraded")
+}
+
+// An upgrade waiting for approval says who can let it run (R-154).
+func TestR143a_TheCLISaysAnUpgradeIsWaitingForApproval(t *testing.T) {
+	api := newAPI(t).
+		reply("GET /apps/app_1/image-update", map[string]any{
+			"image": "ghcr.io/acme/web:latest", "latest_digest": "sha256:b2", "update_available": true,
+		}).
+		reply("POST /apps/app_1/image-update", map[string]any{
+			"id": "dep_1", "status": "awaiting_approval", "approvals_required": 1,
+		})
+
+	got := run(t, api, "", "app", "image-update", "app_1", "--upgrade")
+	require.NoError(t, got.err, got.errOut)
+	require.Contains(t, got.out, "needs approval")
+	require.Contains(t, got.out, "pando approvals approve app_1 dep_1")
+}
+
+// A refused check or upgrade is the API's answer, not a message of the CLI's own.
+func TestR143a_TheCLIPassesOnARefusal(t *testing.T) {
+	refused := map[string]any{"code": "STATE_INVALID", "message": "Only an app deployed from a published image can be checked for a newer build."}
+	api := newAPI(t).fail("GET /apps/app_1/image-update", http.StatusConflict, refused)
+	got := run(t, api, "", "app", "image-update", "app_1")
+	require.Error(t, got.err)
+	require.Contains(t, got.err.Error()+got.errOut, "Only an app deployed from a published image")
+
+	moved := map[string]any{"code": "STATE_INVALID", "message": "The image ghcr.io/acme/web:latest has changed since it was checked."}
+	api = newAPI(t).
+		reply("GET /apps/app_1/image-update", map[string]any{
+			"image": "ghcr.io/acme/web:latest", "latest_digest": "sha256:b2", "update_available": true,
+		}).
+		fail("POST /apps/app_1/image-update", http.StatusConflict, moved)
+	got = run(t, api, "", "app", "image-update", "app_1", "--upgrade")
+	require.Error(t, got.err)
+	require.Contains(t, got.err.Error()+got.errOut, "has changed since it was checked")
 }
