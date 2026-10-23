@@ -138,7 +138,11 @@ func (s *Service) PlanFor(ctx context.Context, version string) (Plan, error) {
 	switch {
 	case st.Development:
 		no("This is a development build, which has no version to upgrade from. Run a released image to upgrade in place.")
-	case target == nil:
+	case target == nil || semver.Compare("v"+version, "v"+p.Current) <= 0:
+		// The release list holds only newer versions, but the check is
+		// spelled out: an upgrade never goes back. Going back is restoring
+		// the backup taken before it (R-354, R-357).
+		target = nil
 		no(fmt.Sprintf("%s is not a release newer than %s on the %s channel, as of the last update check.", version, p.Current, st.Channel))
 	default:
 		for _, r := range st.Releases {

@@ -12,7 +12,7 @@ resources:
   - pebble.yaml
 images:
   # Built from the checkout and loaded into the nodes by setup.sh.
-  - name: ghcr.io/trypando/pando
+  - name: trypando/pando
     newName: pando-k8s-test/pando
     newTag: dev
 patches:

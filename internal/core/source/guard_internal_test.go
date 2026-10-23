@@ -54,6 +54,10 @@ func TestR092_AFetchNeverReachesTheMetadataServiceOrPando(t *testing.T) {
 		{"172.18.0.3:8080", true},
 		{"172.18.0.2:5432", true},
 		{"10.0.0.9:5433", true},
+		{"[64:ff9b::a9fe:a9fe]:80", true},
+		{"[64:ff9b::a9fe:a9fe%x]:80", true},
+		{"[fe80::1%eth0]:443", true},
+		{"[::ffff:172.18.0.3%x]:8080", true},
 
 		{"127.0.0.1:3000", false},
 		{"10.0.0.5:443", false},

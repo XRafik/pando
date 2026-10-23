@@ -58,7 +58,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: pebble
-          image: ghcr.io/letsencrypt/pebble:latest
+          image: ghcr.io/letsencrypt/pebble:2.10.1@sha256:ddf230642b1a584f519f32e347de1b05a6e4c1f6c35c1863b33effeab5f78199
           args: [-config, /config/pebble.json, -dnsserver, "10.96.0.10:53"]
           env:
             - name: PEBBLE_WFE_NONCEREJECT

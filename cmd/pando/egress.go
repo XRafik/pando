@@ -68,7 +68,7 @@ func egressGatewayCmd() *cobra.Command {
 
 			logger.Info("egress gateway listening",
 				zap.String("addr", listen), zap.Int("layers", len(rules.Layers)), zap.Bool("block_private", rules.BlockPrivate))
-			gw := &egress.Gateway{Rules: compiled, Logger: logger}
+			gw := &egress.Gateway{Rules: compiled, Logger: logger, Own: egress.OwnAddresses()}
 			return gw.ListenAndServe(ctx, listen)
 		},
 	}

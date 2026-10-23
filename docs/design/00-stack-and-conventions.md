@@ -214,14 +214,17 @@ Package and Homebrew installs carry the CLI. Its upgrade command is chosen from 
   - `update.ImageVerifier` resolves the tag to that digest and fetches the referrer (go-containerregistry). sigstore-go then checks it against `image.yml`'s identity from docs/releasing.md and Sigstore's public-good trusted root.
   - The trusted root is fetched through TUF and cached under `<work_dir>/sigstore`.
   - The digest is what runs from then on.
+  - The signature must also name the target version: the image workflow signs with `-a org.opencontainers.image.version=<version>`, and `VerifyImageBundle` refuses a signed subject without it or with another. A signature covers a digest, not a tag, so without this any image the workflow ever signed would pass for any version a tag pointed at.
+  - An upgrade only goes forward. A target not newer than the running version is refused at plan time; going back is the full-backup restore.
   - The tests verify what 0.3.0 actually published, offline against a pinned root. That tests the identity and format against the release workflow's real output, not a fixture written to match expectations.
 - **The helper** (R-359). A container cannot replace itself. The helper is Pando's current image, started by ID, so the code doing the replacing is the version already trusted. It runs `pando upgrade-helper` with Pando's mounts, which carry the data directory and the runtime socket, and Pando's networks, which reach Postgres by the URL's host name. It runs these steps:
   1. Stop Pando and rename it aside.
   2. Copy the database: `CREATE DATABASE <db>_pre_upgrade TEMPLATE <db>`, `state.Snapshot`.
   3. Create the new container with the old configuration and the new image. Environment variables and labels the old image set are dropped, as Watchtower does, so the new image's own defaults apply.
   4. Wait for `/readyz`. It answers only after migrations and the audit-log check pass.
-  5. On success: move the tag and remove the old container.
-  6. On failure: keep the new version's last log lines, discard it, restore the copy, then rename and start the old container. The restore comes first because the old version refuses a migrated database (R-354).
+  5. Read the version the new image was built as, from its `org.opencontainers.image.version` label, and treat anything but the target as a failure (R-357).
+  6. On success: move the tag and remove the old container.
+  7. On failure: keep the new version's last log lines, discard it, restore the copy, then rename and start the old container. The restore comes first because the old version refuses a migrated database (R-354).
 
   The container steps are the Docker adapter's (`docker.Replacer`). The copy is the state store's, because an adapter never touches state (R-027). The helper composes them, and `upgrade.RunHelper` is tested at each failure point.
 - **Compared with Watchtower and Portainer.** Both recreate a container from its own inspect output under a new image, which is what this does. Watchtower does not check that the new container became healthy and has no rollback. Portainer's agent replaces itself the same way, through a helper. Neither copies a database: they have none of their own.

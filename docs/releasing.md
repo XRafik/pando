@@ -53,6 +53,11 @@ API version bump, and the API version changes only when `/api/v1` itself stops b
 
   A failure at any step leaves the moving tags where they were.
 
+  `deploy/kubernetes/pando.yaml` names the image by version and digest, as every shipped Compose
+  file and manifest names its images. After a release Dependabot proposes the new pair for the
+  Deployment; set `egress_gateway_image` in the same file's ConfigMap to the same value in that pull
+  request, which `TestR401_EveryShippedImageIsPinnedByDigest` otherwise fails.
+
 ## Before tagging
 
 1. `make check` and `make test-integration` are green on the commit being released.
@@ -114,6 +119,11 @@ cosign verify trypando/pando:0.3.1 \
   --certificate-identity-regexp '^https://github\.com/(bemeek-io|trypando)/pando/\.github/workflows/image\.yml@refs/(heads/main|tags/v)' \
   --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'
 ```
+
+The signature also names the version the image was built as, in its
+`org.opencontainers.image.version` annotation. A digest alone says nothing about which release it
+is, so Pando's in-place upgrade refuses an image whose signature names another version, or none
+(R-357). Images signed before the annotation was added carry none.
 
 Each image also carries an SBOM and SLSA provenance, attached by the build as attestations:
 
