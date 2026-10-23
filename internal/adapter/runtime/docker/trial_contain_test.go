@@ -97,14 +97,16 @@ func TestR186_ARuntimeThatCannotHoldATrialToItsRulesRefusesIt(t *testing.T) {
 	require.NotEmpty(t, errs.As(err).Remedy)
 	require.Empty(t, w.networkNames(), "nothing was created")
 	require.Empty(t, w.containerNames())
+}
 
-	t.Run("a rule the gateway could not read", func(t *testing.T) {
-		w, a := newWorld(t, map[string]any{"egress_gateway_image": "pando:test", "network_pool": "off"})
-		_, _, _, err := a.trialNetwork(ctx, api.TrialRequest{TrialID: "t4",
-			Egress: egress.Rules{Layers: []egress.Layer{{Mode: egress.Denylist, List: []string{"not valid"}}}}})
-		require.Equal(t, errs.ValidInvalid, errs.CodeOf(err))
-		require.Empty(t, w.networkNames())
-	})
+// TestR186_ATrialWithRulesTheGatewayCannotReadIsRefused asserts that a rule
+// set the gateway could not enforce refuses the trial before anything exists.
+func TestR186_ATrialWithRulesTheGatewayCannotReadIsRefused(t *testing.T) {
+	w, a := newWorld(t, map[string]any{"egress_gateway_image": "pando:test", "network_pool": "off"})
+	_, _, _, err := a.trialNetwork(context.Background(), api.TrialRequest{TrialID: "t4",
+		Egress: egress.Rules{Layers: []egress.Layer{{Mode: egress.Denylist, List: []string{"not valid"}}}}})
+	require.Equal(t, errs.ValidInvalid, errs.CodeOf(err))
+	require.Empty(t, w.networkNames())
 }
 
 // TestR097_ATrialIsHeldToMemoryAndCPULimits asserts that a trial gets a
