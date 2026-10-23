@@ -211,19 +211,19 @@ func TestR097_APortCheckThatCannotRunLeavesTheAssumption(t *testing.T) {
 	ctx := context.Background()
 
 	unable := &capsRuntime{}
-	require.Equal(t, portCheck{}, checkPort(ctx, unable, assumedPortApp(8000), "img", "t1", io.Discard))
+	require.Equal(t, portCheck{}, checkPort(ctx, unable, assumedPortApp(8000), "img", "t1", api.EgressRules{}, io.Discard))
 	require.Zero(t, unable.trials, "a runtime that cannot watch is not asked to")
 
 	failing := &capsRuntime{
 		caps:     api.RuntimeCapabilities{SupportsTrialRun: true, SupportsPortObservation: true},
 		trialErr: errors.New("image not found"),
 	}
-	require.Equal(t, portCheck{}, checkPort(ctx, failing, assumedPortApp(8000), "img", "t1", io.Discard))
+	require.Equal(t, portCheck{}, checkPort(ctx, failing, assumedPortApp(8000), "img", "t1", api.EgressRules{}, io.Discard))
 	require.Equal(t, 1, failing.trials)
 
 	// Started, but seen listening nowhere: nothing better was learned.
 	silent := &trialRuntime{result: api.TrialResult{Started: true}}
-	require.Equal(t, portCheck{}, checkPort(ctx, silent, assumedPortApp(8000), "img", "t1", io.Discard))
+	require.Equal(t, portCheck{}, checkPort(ctx, silent, assumedPortApp(8000), "img", "t1", api.EgressRules{}, io.Discard))
 }
 
 // The trial is given the spec's plain values, and not a name with nothing in
@@ -238,7 +238,7 @@ func TestThePortCheckPassesThePlainConfiguration(t *testing.T) {
 	}
 
 	rt := &trialRuntime{result: api.TrialResult{Started: true, ObservedPorts: []int{8000}}}
-	checkPort(context.Background(), rt, app, "img", "t1", io.Discard)
+	checkPort(context.Background(), rt, app, "img", "t1", api.EgressRules{}, io.Discard)
 
 	require.Equal(t, "info", rt.asked.Env["LOG_LEVEL"].Reveal())
 	require.Equal(t, "8000", rt.asked.Env["PORT"].Reveal())

@@ -653,6 +653,10 @@ func serve(ctx context.Context, configPath string) error {
 		// planner refuses.
 		Install: installDefaults,
 
+		// The trial run is held to the egress rules the app would run with
+		// (R-097).
+		Egress: appPlanner,
+
 		Ports:          state.NewPorts(db),
 		PortRangeStart: cfg.Server.PortRangeStart,
 		PortRangeEnd:   cfg.Server.PortRangeEnd,

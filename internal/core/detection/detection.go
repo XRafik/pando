@@ -121,6 +121,41 @@ type Runner struct {
 	// Background runs a rebuild after an answer (Rebuild). Nil is a
 	// goroutine.
 	Background func(func())
+
+	// Egress resolves the rules the trial run is held to (R-097): the app's
+	// own, from its current spec where it has one, against host policy. Nil
+	// restricts nothing, and is for tests and embeddings with no policy.
+	Egress TrialEgress
+}
+
+// TrialEgress resolves the egress rules a trial of an app runs under. The
+// planner is one; nil s is an app with no spec yet.
+type TrialEgress interface {
+	TrialEgress(ctx context.Context, s *spec.AppSpec) (api.EgressRules, error)
+}
+
+// withTrialEgress returns ctx carrying the rules app's trial runs are held
+// to. A rule set that cannot be read fails the detection rather than run the
+// app's code with no rules at all.
+func (r *Runner) withTrialEgress(ctx context.Context, app state.App) (context.Context, error) {
+	if r.Egress == nil {
+		return ctx, nil
+	}
+	var current *spec.AppSpec
+	if app.PinnedSpecID != "" && r.Apps != nil {
+		rev, found, err := r.Apps.RevisionByID(ctx, app.PinnedSpecID)
+		if err != nil {
+			return ctx, err
+		}
+		if found {
+			current = rev.Body
+		}
+	}
+	rules, err := r.Egress.TrialEgress(ctx, current)
+	if err != nil {
+		return ctx, err
+	}
+	return detect.WithTrialEgress(ctx, rules), nil
 }
 
 // SourceScanner scans what detection read: the checkout, and the image the
@@ -259,6 +294,10 @@ func (r *Runner) check(ctx context.Context, appID string) (state.App, error) {
 
 func (r *Runner) run(ctx context.Context, prog *progress, app state.App, answers map[string]string) (detect.Proposal, error) {
 	appID, slug, src := app.ID, app.Slug, app.Source
+	ctx, err := r.withTrialEgress(ctx, app)
+	if err != nil {
+		return detect.Proposal{}, err
+	}
 	detect.Report(ctx, detect.StageFetching, nil)
 	checkout, err := r.Sources.Fetch(source.ForApp(ctx, appID), src)
 	if err != nil {

@@ -934,14 +934,6 @@ func startCommand(s *spec.AppSpec, wb *spec.WorkloadBuild) string {
 	return strings.Join(primary.Command, " ")
 }
 
-// bundlePlan resolves the spec into what the runtime is asked to apply.
-// BundlePlanShape builds the bundle plan without resolving any environment.
-//
-// The reconciler compares what should be running against what is, on every tick
-// for every app. That comparison needs the shape — workloads, images, ports,
-// mounts, volumes — and must never be a reason to decrypt a secret, so this
-// stops short of environment and R-193's fingerprint covers the rest.
-//
 // trialEgress is the egress rules the deploy's own port check is held to: the
 // deploy's (R-097, R-188). False when they could not be read.
 func (r *Runner) trialEgress(ctx context.Context, s *spec.AppSpec) (api.EgressRules, bool) {
@@ -955,6 +947,14 @@ func (r *Runner) trialEgress(ctx context.Context, s *spec.AppSpec) (api.EgressRu
 	return eff.Rules, true
 }
 
+// bundlePlan resolves the spec into what the runtime is asked to apply.
+// BundlePlanShape builds the bundle plan without resolving any environment.
+//
+// The reconciler compares what should be running against what is, on every tick
+// for every app. That comparison needs the shape — workloads, images, ports,
+// mounts, volumes — and must never be a reason to decrypt a secret, so this
+// stops short of environment and R-193's fingerprint covers the rest.
+//
 // Egress is the rules the app's last successful deploy ran with, which the
 // deployment records: rules take effect at a deploy and a running app is not
 // changed underneath it (R-183, O-10), so correcting drift restores what was

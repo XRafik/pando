@@ -181,3 +181,39 @@ func TestR186_APolicyThatRestrictsOnARuntimeThatCannotIsPreviewed(t *testing.T) 
 }
 
 func ptrBool(v bool) *bool { return &v }
+
+// TestR097_ATrialIsHeldToTheAppsEgressWithoutItsLoosenings asserts R-097 as
+// amended: a trial runs under the rules the app would run with, resolved
+// against host policy, and a loosening the spec asks for is not granted to it
+// (R-183) — the installation's rules stand instead.
+func TestR097_ATrialIsHeldToTheAppsEgressWithoutItsLoosenings(t *testing.T) {
+	ctx := context.Background()
+	p := plannerWith(t, allowlistPolicy(policy.EgressLooseningVerb), egressRuntime())
+
+	// No spec yet: the installation's rules.
+	install, err := p.TrialEgress(ctx, nil)
+	require.NoError(t, err)
+	require.True(t, install.Restricted())
+
+	// A spec that tightens is tried as tightened.
+	tight := plannableSpec()
+	tight.Egress = spec.Egress{BlockPrivate: ptrBool(true)}
+	got, err := p.TrialEgress(ctx, tight)
+	require.NoError(t, err)
+	want, err := p.Egress(ctx, tight)
+	require.NoError(t, err)
+	require.Equal(t, want.Rules, got)
+	require.True(t, got.BlockPrivate)
+
+	// A spec that loosens is tried under the installation's rules.
+	loose := plannableSpec()
+	loose.Egress = spec.Egress{Add: []string{"api.openai.example"}}
+	got, err = p.TrialEgress(ctx, loose)
+	require.NoError(t, err)
+	require.Equal(t, install, got)
+
+	// Open egress, the default, restricts nothing.
+	open, err := plannerWith(t, policy.Default(), egressRuntime()).TrialEgress(ctx, nil)
+	require.NoError(t, err)
+	require.False(t, open.Restricted())
+}
