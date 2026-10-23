@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { format, parse } from './route';
+import { SETTINGS_PAGES, format, parse, settingsPageFor } from './route';
 import type { Route } from './route';
 
 describe('route', () => {
@@ -10,7 +10,10 @@ describe('route', () => {
     { view: 'cli', section: 'apps' },
     { view: 'admin', section: 'apps' },
     { view: 'admin', section: 'api' },
-    { view: 'admin', section: 'apps', appID: 'app_01', tab: 'logs' },
+    { view: 'admin', section: 'apps', appID: 'app_01', tab: 'settings' },
+    { view: 'admin', section: 'apps', appID: 'app_01', tab: 'overview', panel: 'output', workload: 'worker' },
+    { view: 'admin', section: 'apps', appID: 'app_01', panel: 'deployments', deployment: 'dep_01' },
+    { view: 'admin', section: 'apps', appID: 'app_01', tab: 'events', panel: 'terminal' },
     { view: 'admin', section: 'accounts' },
     { view: 'admin', section: 'accounts', userID: 'usr_01' },
     { view: 'admin', section: 'audit' },
@@ -43,6 +46,84 @@ describe('route', () => {
       section: 'system',
       tab: 'adapters',
       query: 'outcome=connected',
+    });
+  });
+
+  it('opens the side panel from the address', () => {
+    expect(format({ view: 'admin', section: 'apps', appID: 'app_01', tab: 'overview', panel: 'output', workload: 'worker' })).toBe(
+      '/admin/apps/app_01/overview?panel=output&workload=worker',
+    );
+    expect(parse('/admin/apps/app_01', '?panel=deployments&deployment=dep_01')).toEqual({
+      view: 'admin',
+      section: 'apps',
+      appID: 'app_01',
+      tab: undefined,
+      panel: 'deployments',
+      deployment: 'dep_01',
+    });
+  });
+
+  it('ignores a panel it does not know, and what would go in one', () => {
+    expect(parse('/admin/apps/app_01/overview', '?panel=shell&workload=worker')).toEqual({
+      view: 'admin',
+      section: 'apps',
+      appID: 'app_01',
+      tab: 'overview',
+    });
+  });
+
+  it.each([
+    ['logs', { tab: 'overview', panel: 'output' }],
+    ['terminal', { tab: 'overview', panel: 'terminal' }],
+    ['resources', { tab: 'settings' }],
+    ['detection', { tab: 'settings', page: 'general' }],
+  ])('lands an old link to the %s tab on its new home', (old, home) => {
+    expect(parse(`/admin/apps/app_01/${old}`)).toEqual({ view: 'admin', section: 'apps', appID: 'app_01', ...home });
+  });
+
+  it.each(SETTINGS_PAGES)('gives the %s page of Settings an address of its own', (page) => {
+    const route: Route = { view: 'admin', section: 'apps', appID: 'app_01', tab: 'settings', page };
+    expect(format(route)).toBe(`/admin/apps/app_01/settings/${page}`);
+    expect(parse(`/admin/apps/app_01/settings/${page}`)).toEqual(route);
+  });
+
+  it('keeps a Settings page beside the side panel', () => {
+    const route: Route = { view: 'admin', section: 'apps', appID: 'app_01', tab: 'settings', page: 'storage', panel: 'output' };
+    expect(format(route)).toBe('/admin/apps/app_01/settings/storage?panel=output');
+    expect(parse('/admin/apps/app_01/settings/storage', '?panel=output')).toEqual(route);
+  });
+
+  it('opens General for a page it does not know, and ignores a page on another tab', () => {
+    expect(parse('/admin/apps/app_01/settings/network')).toEqual({ view: 'admin', section: 'apps', appID: 'app_01', tab: 'settings' });
+    expect(parse('/admin/apps/app_01/overview/storage')).toEqual({ view: 'admin', section: 'apps', appID: 'app_01', tab: 'overview' });
+    expect(format({ view: 'admin', section: 'apps', appID: 'app_01', tab: 'overview', page: 'storage' })).toBe('/admin/apps/app_01/overview');
+  });
+
+  it.each([
+    ['variables', 'variables'],
+    ['storage', 'storage'],
+    ['dependencies', 'dependencies'],
+    ['egress', 'egress'],
+    ['auto-deploy', 'general'],
+    ['configuration', 'general'],
+    ['general', 'general'],
+  ])('sends a link to the %s section to the %s page', (focus, page) => {
+    expect(settingsPageFor(focus)).toBe(page);
+  });
+
+  it('sends a link with no section, or one it does not know, to no page in particular', () => {
+    expect(settingsPageFor(undefined)).toBeUndefined();
+    expect(settingsPageFor('security')).toBeUndefined();
+  });
+
+  it('keeps the workload an old Logs link carried in the panel it now opens', () => {
+    expect(parse('/admin/apps/app_01/logs', '?workload=worker')).toEqual({
+      view: 'admin',
+      section: 'apps',
+      appID: 'app_01',
+      tab: 'overview',
+      panel: 'output',
+      workload: 'worker',
     });
   });
 

@@ -11,7 +11,7 @@
 // implication graph between verbs (R-082), so a sidebar that assumed one would
 // offer a screen whose every request comes back 403.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   Badge,
@@ -46,26 +46,27 @@ import { SystemTabs } from '../install/systemTabs';
 import { Audit, Installation, Policy } from '../install/Installation';
 import { statusLabel, statusSymbol } from '../ui/status';
 import { AppOnboarding } from './AppOnboarding';
-import { DetectionReview } from './DetectionReview';
 import { Sharing } from './Sharing';
-import { AppOverview } from './AppOverview';
-import { Logs } from './Logs';
-import { useRecordFollowsStatus } from './Parts';
+import { AppOverview, scrollToSecurity } from './AppOverview';
+import { useRecordFollowsStatus } from './appStatus';
 import { AppEvents } from './AppEvents';
-import { Resources } from './Resources';
+import { AppSettings } from './AppSettings';
 import { AddApp } from './AddApp';
 import { Reference } from './Reference';
 import { Approvals, useApprovals } from './Approvals';
 import { DeleteApp } from './DeleteApp';
 import { DeployButton } from './DeployButton';
-import { ImageUpdateButton } from './ImageUpdateButton';
+import { AppImage } from './AppImage';
+import { AppName } from './AppName';
+import { AppAddress } from './AppAddress';
+import { HeaderScore } from './HeaderScore';
 import { Lifecycle } from './Lifecycle';
 import { AppVerb, AppVerbs, can, changesAnything, type AppWithVerbs } from './verbs';
-import { format, type Route, type Section } from '../app/route';
+import { AppPanel, PanelOpener, type PanelTarget } from './AppPanel';
+import { format, settingsPageFor, type Route, type Section, type SettingsPage } from '../app/route';
 import { MEASURE } from '../ui/layout';
 import { relative } from '../ui/time';
 import { ScoreBadge } from '../ui/ScoreBadge';
-import { Terminal } from './Terminal';
 import { Sheet } from '../ui/Sheet';
 import { TopoBackground } from '../ui/TopoBackground';
 import { SearchField } from '../ui/SearchField';
@@ -417,7 +418,12 @@ export function AdminConsole({
               appID={selectedID}
               listed={rows.find((a) => a.id === selectedID)}
               tab={route.tab}
-              onTab={(tab) => go({ view: 'admin', section: 'apps', appID: selectedID, tab }, true)}
+              page={route.page}
+              onTab={(tab, page) => go({ view: 'admin', section: 'apps', appID: selectedID, tab, ...(page && { page }) }, true)}
+              pageHref={(page) => format({ view: 'admin', section: 'apps', appID: selectedID, tab: 'settings', page })}
+              panel={route.panel ? { view: route.panel, workload: route.workload, deployment: route.deployment } : undefined}
+              onPanel={(target) => go(panelRoute(selectedID, route.tab, target, route.page), true)}
+              panelHref={(target) => format(panelRoute(selectedID, route.tab, target, route.page))}
               onBack={() => setSelectedID(null)}
             />
           ) : (
@@ -441,6 +447,13 @@ export function AdminConsole({
       </main>
     </div>
   );
+}
+
+/** An app's screen with the side panel showing `target`, or closed. */
+function panelRoute(appID: string, tab: string | undefined, target: PanelTarget | null, page?: SettingsPage): Route {
+  const route: Route = { view: 'admin', section: 'apps', appID, tab, ...(page && { page }) };
+  if (!target) return route;
+  return { ...route, panel: target.view, workload: target.workload, deployment: target.deployment };
 }
 
 /** The logo, as a link home: the launcher (R-264). */
@@ -474,7 +487,7 @@ function SecurityCell({ row }: { row: App }) {
       </Tooltip>
     );
   }
-  return <ScoreBadge score={row.security_score} verdict={row.security_verdict as never} full />;
+  return <ScoreBadge score={row.security_score} verdict={row.security_verdict as never} />;
 }
 
 function AppsList({
@@ -647,22 +660,27 @@ function AppsList({
  * dismissal — nothing here claims to be actionable when it is not.
  */
 const REFUSALS: Record<string, { label: string; tab: string; focus?: string }> = {
-  PLAN_SLOT_UNFILLED: { label: 'Fill it in', tab: 'resources', focus: 'dependencies' },
-  PLAN_CAPABILITY_UNSUPPORTED: { label: 'Open settings', tab: 'resources' },
-  PLAN_SECURITY_BELOW_THRESHOLD: { label: 'See the findings', tab: 'overview' },
+  PLAN_SLOT_UNFILLED: { label: 'Fill it in', tab: 'settings', focus: 'dependencies' },
+  PLAN_CAPABILITY_UNSUPPORTED: { label: 'Open settings', tab: 'settings' },
+  PLAN_SECURITY_BELOW_THRESHOLD: { label: 'See the findings', tab: 'overview', focus: 'security' },
   // R-183: the refusal names the entries; the app's egress section is where
   // they are taken out.
-  PLAN_EGRESS_LOOSENING_FORBIDDEN: { label: 'Open egress', tab: 'resources', focus: 'egress' },
-  VALID_PRIMARY_WORKLOAD: { label: 'Open configuration', tab: 'detection' },
-  VALID_DANGLING_MOUNT: { label: 'Open storage', tab: 'resources', focus: 'storage' },
-  VALID_DANGLING_SLOT_REF: { label: 'Open dependencies', tab: 'resources', focus: 'dependencies' },
+  PLAN_EGRESS_LOOSENING_FORBIDDEN: { label: 'Open egress', tab: 'settings', focus: 'egress' },
+  VALID_PRIMARY_WORKLOAD: { label: 'Open configuration', tab: 'settings', focus: 'configuration' },
+  VALID_DANGLING_MOUNT: { label: 'Open storage', tab: 'settings', focus: 'storage' },
+  VALID_DANGLING_SLOT_REF: { label: 'Open dependencies', tab: 'settings', focus: 'dependencies' },
 };
 
 function AppScreen({
   appID,
   listed,
   tab: routeTab,
+  page,
   onTab,
+  pageHref,
+  panel,
+  onPanel,
+  panelHref,
   onBack,
 }: {
   appID: string;
@@ -670,7 +688,16 @@ function AppScreen({
    *  record will not load. */
   listed?: App;
   tab?: string;
-  onTab: (tab: string) => void;
+  /** The page of the Settings tab the address names. */
+  page?: SettingsPage;
+  onTab: (tab: string, page?: SettingsPage) => void;
+  /** The address of a Settings page, for its link in the list. */
+  pageHref?: (page: SettingsPage) => string;
+  /** The side panel, when the address opens it. */
+  panel?: PanelTarget;
+  /** Opens the panel on a target, or closes it with null. */
+  onPanel: (target: PanelTarget | null) => void;
+  panelHref?: (target: PanelTarget) => string;
   onBack: () => void;
 }) {
   // Read live, not handed down. Everything on this screen changes underneath
@@ -695,7 +722,7 @@ function AppScreen({
   // The tab is in the address bar, so a reload comes back to it. Replace
   // rather than push when switching: flicking between tabs should not make the
   // back button walk them one at a time before leaving the app.
-  const wanted = routeTab ?? (reviewed ? 'overview' : 'detection');
+  const wanted = routeTab ?? 'overview';
 
   // Which section of a tab to open at, when something sent you there. A
   // warning about storage should land on storage, not on the top of a settings
@@ -713,22 +740,27 @@ function AppScreen({
   // it was started, because the button would otherwise go quiet and the app
   // would look as if nothing happened — or, worse, as if it were deploying.
   const [waiting, setWaiting] = useState(false);
+  // On Settings, where somebody was sent is a page of its own, in the
+  // address rather than a section to scroll to.
   const setTab = (next: string, at?: string) => {
-    setFocus(at);
-    onTab(next);
+    const settingsPage = next === 'settings' ? settingsPageFor(at) : undefined;
+    setFocus(next === 'settings' ? undefined : at);
+    onTab(next, settingsPage);
   };
 
-  // Accepting a proposal is the moment `reviewed` flips, and leaving somebody
-  // on the setup tab afterwards hides the thing they came for — the deploy
-  // button is on Overview. Only from 'detection', so a reviewed app whose
-  // owner deliberately opened Configuration stays where they put themselves.
-  //
-  // `reviewed` alone in the dependency list, on purpose: this fires on the
-  // transition, not on every change of tab. Including routeTab would move
-  // somebody off Configuration the moment they opened it.
+  // Accepting a proposal is the moment `reviewed` flips, and the onboarding
+  // page gives way to the tabs. Whatever tab an old link named, the thing
+  // somebody came for next is on Overview: the deploy. Only on that
+  // transition — an app that loaded already reviewed stays on the tab its
+  // address names.
+  const onboarding = useRef(false);
   useEffect(() => {
-    if (reviewed && routeTab === 'detection') onTab('overview');
-  }, [reviewed]);
+    if (app.data && !reviewed) onboarding.current = true;
+    if (reviewed && onboarding.current) {
+      onboarding.current = false;
+      if (routeTab && routeTab !== 'overview') onTab('overview');
+    }
+  }, [reviewed, app.data]);
 
   // The header's shape while the record loads — the back button is real, since
   // it needs nothing from the app — rather than a blank page. The list's row
@@ -810,27 +842,26 @@ function AppScreen({
     );
   }
 
-  // A tab that is nothing but a control is left out for somebody who cannot
-  // use it. The others stay, read-only: Settings and Sharing are also where
-  // somebody finds out how the app is configured and who can reach it.
+  // Every tab stays, read-only where this person cannot change anything:
+  // Settings and Sharing are also where somebody finds out how the app is
+  // configured and who can reach it. Logs and Terminal are not tabs; they are
+  // the side panel (AppPanel), opened from the Overview.
   const tabs: TabItem[] = [
     { value: 'overview', label: 'Overview' },
-    ...(can(verbs, AppVerb.LogsRead) ? [{ value: 'logs', label: 'Logs' }] : []),
     // Anyone who can see the app reads its events and may subscribe (R-378).
     { value: 'events', label: 'Events' },
     { value: 'sharing', label: 'Sharing' },
-    { value: 'resources', label: 'Settings' },
-    ...(can(verbs, AppVerb.Exec) ? [{ value: 'terminal', label: 'Terminal' }] : []),
-    { value: 'detection', label: 'Configuration' },
+    { value: 'settings', label: 'Settings' },
   ];
 
   for (const t of tabs) t.href = format({ view: 'admin', section: 'apps', appID, tab: t.value });
 
-  // A link to a tab this person cannot open lands on the first one they can.
-  const tab = tabs.some((t) => t.value === wanted) ? wanted : (tabs[0]?.value ?? 'detection');
+  // A link to a tab that does not exist lands on the Overview.
+  const tab = tabs.some((t) => t.value === wanted) ? wanted : 'overview';
 
   return (
     <AppVerbs.Provider value={verbs}>
+      <PanelOpener value={onPanel}>
       <Sheet
         heading={
           <div
@@ -844,13 +875,37 @@ function AppScreen({
             <Button variant="ghost" icon={<Icon name="arrow-left" />} onClick={onBack} style={{ alignSelf: 'flex-start' }}>
               Apps
             </Button>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
-              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 'var(--space-3)' }}>
-                <h3 style={{ font: 'var(--type-h3)', margin: 0 }}>{app.data.name}</h3>
-                <StatusIndicator
-                  status={statusSymbol(app.data.state)}
-                  label={statusLabel(app.data.state, app.data.stopped_for_idle, app.data.stopped_for_disk, app.data.stopped_for_orphan)}
-                />
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'flex-start',
+                flexWrap: 'wrap',
+                gap: 'var(--space-4)',
+                width: '100%',
+              }}
+            >
+              {/* What the app is: its tile, its name, how it is, its score,
+                  and where it is reached. */}
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--space-4)', minWidth: 0 }}>
+                <AppImage app={app.data} />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)', minWidth: 0 }}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 'var(--space-3)' }}>
+                    <AppName app={app.data} />
+                    <StatusIndicator
+                      status={statusSymbol(app.data.state)}
+                      label={statusLabel(app.data.state, app.data.stopped_for_idle, app.data.stopped_for_disk, app.data.stopped_for_orphan)}
+                    />
+                    <HeaderScore
+                      appID={app.data.id}
+                      onOpen={() => {
+                        if (tab === 'overview') scrollToSecurity();
+                        else setTab('overview', 'security');
+                      }}
+                    />
+                  </div>
+                  <AppAddress app={app.data} />
+                </div>
               </div>
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--space-3)' }}>
                 {/* Deploy where somebody looking at an app can reach it, from any
@@ -867,21 +922,6 @@ function AppScreen({
                     onWaiting={() => setWaiting(true)}
                   />
                 )}
-
-                {/* An image app's tag can name a newer build than the one it runs (R-143a). */}
-                {app.data.pinned_spec_id &&
-                  app.data.source?.type === 'image' &&
-                  can(verbs, AppVerb.Deploy) &&
-                  can(verbs, AppVerb.SpecEdit) && (
-                    <ImageUpdateButton
-                      app={app.data}
-                      onRefused={(message, remedy, code) => {
-                        setRefusal(message ? { message, remedy, code } : null);
-                        if (message) setWaiting(false);
-                      }}
-                      onWaiting={() => setWaiting(true)}
-                    />
-                  )}
 
                 {/* Stopping is the thing somebody reaches for when they would
                     otherwise delete: it keeps the storage, the configuration and
@@ -978,15 +1018,36 @@ function AppScreen({
         <Tabs value={tab} onChange={setTab} items={tabs} />
 
         <div style={{ paddingTop: 'var(--space-5)' }}>
-          {tab === 'detection' && <DetectionReview appID={app.data.id} reviewed={reviewed} />}
           {tab === 'sharing' && <Sharing appID={app.data.id} appName={app.data.name} />}
-          {tab === 'overview' && <AppOverview app={app.data} onGo={setTab} />}
-          {tab === 'logs' && <Logs app={app.data} workload={focus} />}
+          {tab === 'overview' && (
+            <AppOverview
+              app={app.data}
+              onGo={setTab}
+              focus={focus}
+              onRefused={(message, remedy, code) => {
+                setRefusal(message ? { message, remedy, code } : null);
+                if (message) setWaiting(false);
+              }}
+              onWaiting={() => setWaiting(true)}
+            />
+          )}
           {tab === 'events' && <AppEvents app={app.data} />}
-          {tab === 'resources' && <Resources app={app.data} focus={focus} />}
-          {tab === 'terminal' && <Terminal appID={app.data.id} />}
+          {tab === 'settings' && (
+            <AppSettings app={app.data} page={page ?? 'general'} onPage={(p) => onTab('settings', p)} hrefOf={pageHref} />
+          )}
         </div>
       </Sheet>
+      {panel && (
+        <AppPanel
+          app={app.data}
+          verbs={verbs}
+          target={panel}
+          onChange={onPanel}
+          onClose={() => onPanel(null)}
+          hrefOf={panelHref}
+        />
+      )}
+      </PanelOpener>
     </AppVerbs.Provider>
   );
 }

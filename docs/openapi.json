@@ -1072,7 +1072,7 @@
       "patch": {
         "operationId": "patchApp",
         "summary": "Update an app",
-        "description": "Rename an app or change its source.\n\nNeeds `app.spec.edit`.",
+        "description": "Rename an app.\n\nNeeds `app.spec.edit`.",
         "tags": [
           "Apps"
         ],
@@ -2407,7 +2407,7 @@
       "get": {
         "operationId": "appEvents",
         "summary": "List an app's events",
-        "description": "The app's recent events, newest first: each as a webhook receives it (`id`, `type`, `occurred_at`, `actor`, `data`, `link`) and as a person reads it (`subject`, `body`, `fields`). `before` and `limit` page. Kept as long as the event outbox keeps them, 30 days.\n\nNeeds `app.view`.",
+        "description": "The app's recent events, newest first: each as a webhook receives it (`id`, `type`, `occurred_at`, `actor`, `data`, `link`) and as a person reads it (`actor_name`, the person who acted or a token acted for; `subject`, `body`, `fields`). `before` and `limit` page. Kept as long as the event outbox keeps them, 30 days.\n\nNeeds `app.view`.",
         "tags": [
           "Events"
         ],
@@ -3181,6 +3181,121 @@
           }
         },
         "x-pando-verb": "app.logs.read"
+      }
+    },
+    "/api/v1/apps/{appID}/notices": {
+      "get": {
+        "operationId": "listNotices",
+        "summary": "List an app's notices",
+        "description": "What the app's Overview asks of somebody, computed when asked: `notices`, each with `key` (stable: `config.unshipped`, `security.below_threshold`, `backup.not_taken`, `variables.unset`, or `warning.` and a spec warning's code), `message`, `fingerprint` (changes exactly when what the notice says changes) and `ignored`, whether you have ignored it as it reads now. A caller that is not a person sees every notice unignored.\n\nNeeds `app.view`.",
+        "tags": [
+          "Apps"
+        ],
+        "parameters": [
+          {
+            "name": "appID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoticeList"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-pando-verb": "app.view"
+      }
+    },
+    "/api/v1/apps/{appID}/notices/{key}/ignore": {
+      "delete": {
+        "operationId": "restoreNotice",
+        "summary": "Restore a notice",
+        "description": "Show a notice you ignored again. Restoring one that is not ignored is not an error.\n\nNeeds `app.view`.",
+        "tags": [
+          "Apps"
+        ],
+        "parameters": [
+          {
+            "name": "appID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Done. No body."
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-pando-verb": "app.view"
+      },
+      "put": {
+        "operationId": "ignoreNotice",
+        "summary": "Ignore a notice",
+        "description": "Hide a notice from yourself until what it says changes. Answers with the notice. Yours only: everyone else still sees it. Hides a reminder and nothing more: a deploy the notice warned about is refused for the same reason. `NOT_FOUND` when the app has no such notice now.\n\nNeeds `app.view`.",
+        "tags": [
+          "Apps"
+        ],
+        "parameters": [
+          {
+            "name": "appID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Notice"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-pando-verb": "app.view"
       }
     },
     "/api/v1/apps/{appID}/passcode": {
@@ -4443,7 +4558,7 @@
       "post": {
         "operationId": "createSpec",
         "summary": "Create a spec revision",
-        "description": "Write a new spec revision. It does not deploy and does not become pinned. A routing mode other than its adapter's default, where the app did not already have one, also needs app.routing.override. A change to `egress` needs app.egress.tighten or app.egress.loosen; one that newly loosens the installation's egress rules needs app.egress.loosen where policy gates loosening by verb, is refused with PLAN_EGRESS_LOOSENING_FORBIDDEN where policy forbids it, and makes the next deploy need approval where policy says so. Turning on automatic deploys while the app's deploys need approval is refused. With `?dry_run=true` nothing is written: the same checks run and refuse with the same errors, and an accepted spec answers 200 with the egress rules it would run with, what it newly loosens, and whether deploying it would need approval and why.\n\nNeeds `app.spec.edit`.",
+        "description": "Write a new spec revision. It does not deploy and does not become pinned. A routing mode other than its adapter's default, where the app did not already have one, also needs app.routing.override. A change to `resources`, or to a workload's own `resources`, also needs app.resources.override, unless it puts back the installation's defaults. A change to `egress` needs app.egress.tighten or app.egress.loosen; one that newly loosens the installation's egress rules needs app.egress.loosen where policy gates loosening by verb, is refused with PLAN_EGRESS_LOOSENING_FORBIDDEN where policy forbids it, and makes the next deploy need approval where policy says so. Turning on automatic deploys while the app's deploys need approval is refused. With `?dry_run=true` nothing is written: the same checks run and refuse with the same errors, and an accepted spec answers 200 with the egress rules it would run with, what it newly loosens, and whether deploying it would need approval and why.\n\nNeeds `app.spec.edit`.",
         "tags": [
           "Configuration"
         ],
@@ -14531,6 +14646,9 @@
           "link": {
             "type": "string"
           },
+          "actor_name": {
+            "type": "string"
+          },
           "subject": {
             "type": "string"
           },
@@ -15515,6 +15633,46 @@
           "read_only"
         ]
       },
+      "Notice": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "fingerprint": {
+            "type": "string"
+          },
+          "ignored": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "key",
+          "message",
+          "fingerprint",
+          "ignored"
+        ]
+      },
+      "NoticeList": {
+        "type": "object",
+        "properties": {
+          "notices": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/Notice"
+            }
+          }
+        },
+        "required": [
+          "notices"
+        ]
+      },
       "Notification": {
         "type": "object",
         "properties": {
@@ -15565,16 +15723,16 @@
       "NotificationField": {
         "type": "object",
         "properties": {
-          "Label": {
+          "label": {
             "type": "string"
           },
-          "Value": {
+          "value": {
             "type": "string"
           }
         },
         "required": [
-          "Label",
-          "Value"
+          "label",
+          "value"
         ]
       },
       "NotificationPreference": {
