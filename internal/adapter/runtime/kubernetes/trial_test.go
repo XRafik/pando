@@ -3,6 +3,7 @@ package kubernetes
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -11,12 +12,14 @@ import (
 
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	nodev1 "k8s.io/api/node/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/remotecommand"
 
 	"github.com/trypando/pando/internal/adapter/api"
+	"github.com/trypando/pando/internal/egress"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/secret"
 )
@@ -128,4 +131,101 @@ func TestR097_ATrialNeedsAnIdentifier(t *testing.T) {
 	for _, n := range namespaces.Items {
 		require.NotContains(t, n.Name, "pando-trial-")
 	}
+}
+
+var trialAllowlist = egress.Rules{Layers: []egress.Layer{{Mode: egress.Allowlist, From: "install", List: []string{"api.stripe.com:443"}}}}
+
+// TestR097_ATrialIsHeldToTheAppsSecurityAndLimits asserts that the trial's
+// container gets what an app's does — no privilege escalation, the reduced
+// capability set — and a memory and CPU limit with sized throwaway storage,
+// and that open egress leaves its network as it was.
+func TestR097_ATrialIsHeldToTheAppsSecurityAndLimits(t *testing.T) {
+	ctx := context.Background()
+	a, cs := testAdapter(t, nil)
+	ns := "pando-trial-trl-3"
+	created := trialKubelet(t, cs, ns, exited(0))
+
+	_, err := a.Trial(ctx, api.TrialRequest{TrialID: "trl_3", Image: "example/app", Timeout: time.Second,
+		DeclaredPaths: []string{"/data"}, Env: map[string]secret.Value{"PORT": secret.New("3000")}})
+	require.NoError(t, err)
+
+	pod := created()
+	require.NotNil(t, pod)
+	app := pod.Spec.Containers[0]
+	require.Equal(t, workloadSecurity(), app.SecurityContext)
+	require.Equal(t, trialResources(), app.Resources)
+	require.Equal(t, "4Gi", app.Resources.Limits.Memory().String())
+	require.Equal(t, "1Gi", pod.Spec.Volumes[0].EmptyDir.SizeLimit.String())
+
+	policy, err := cs.NetworkingV1().NetworkPolicies(ns).Get(ctx, "deny-in", metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Equal(t, []networkingv1.PolicyType{networkingv1.PolicyTypeIngress}, policy.Spec.PolicyTypes, "open egress is not restricted")
+	require.Empty(t, policy.Spec.Ingress)
+	_, err = cs.CoreV1().Pods(ns).Get(ctx, gatewayName, metav1.GetOptions{})
+	require.Error(t, err, "no gateway")
+	stored, err := cs.CoreV1().Secrets(ns).Get(ctx, "trial-env", metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Equal(t, map[string][]byte{"PORT": []byte("3000")}, stored.Data)
+}
+
+// TestR097_ATrialUnderRestrictedEgressLeavesOnlyThroughAGateway asserts that
+// a trial whose rules restrict anything reaches only its own namespace and
+// cluster DNS, with a gateway there enforcing the rules and the proxy
+// variables naming it (R-187).
+func TestR097_ATrialUnderRestrictedEgressLeavesOnlyThroughAGateway(t *testing.T) {
+	ctx := context.Background()
+	a, cs := testAdapter(t, nil)
+	ns := "pando-trial-trl-4"
+	trialKubelet(t, cs, ns, exited(0))
+
+	_, err := a.Trial(ctx, api.TrialRequest{TrialID: "trl_4", Image: "example/app", Timeout: time.Second, Egress: trialAllowlist})
+	require.NoError(t, err)
+
+	policy, err := cs.NetworkingV1().NetworkPolicies(ns).Get(ctx, "deny-in", metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Contains(t, policy.Spec.PolicyTypes, networkingv1.PolicyTypeEgress)
+	require.Len(t, policy.Spec.Egress, 2, "its own namespace and cluster DNS, nothing outside")
+	for _, rule := range policy.Spec.Egress {
+		for _, peer := range rule.To {
+			require.Nil(t, peer.IPBlock, "no address outside the cluster")
+		}
+	}
+	gwPolicy, err := cs.NetworkingV1().NetworkPolicies(ns).Get(ctx, gatewayPolicy, metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Equal(t, roleGateway, gwPolicy.Spec.PodSelector.MatchLabels[labelRole])
+
+	gw, err := cs.CoreV1().Pods(ns).Get(ctx, gatewayName, metav1.GetOptions{})
+	require.NoError(t, err)
+	var carried egress.Rules
+	for _, e := range gw.Spec.Containers[0].Env {
+		if e.Name == "PANDO_EGRESS_RULES" {
+			require.NoError(t, json.Unmarshal([]byte(e.Value), &carried))
+		}
+	}
+	require.Equal(t, trialAllowlist, carried)
+
+	env, err := cs.CoreV1().Secrets(ns).Get(ctx, "trial-env", metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Equal(t, gatewayProxyURL, string(env.Data["HTTPS_PROXY"]))
+	require.Equal(t, "localhost,127.0.0.1,::1", string(env.Data["NO_PROXY"]))
+}
+
+// TestR186_ATrialThisClusterCannotHoldToItsRulesIsRefused asserts that a
+// restricted trial is refused, not run with its rules ignored, where there is
+// no gateway image or NetworkPolicy is not enforced.
+func TestR186_ATrialThisClusterCannotHoldToItsRulesIsRefused(t *testing.T) {
+	ctx := context.Background()
+	noImage, cs := testAdapter(t, func(c *Config) { c.EgressGatewayImage = "" })
+	_, err := noImage.Trial(ctx, api.TrialRequest{TrialID: "trl_5", Image: "example/app", Egress: trialAllowlist})
+	require.Equal(t, errs.PlanCapabilityUnsupported, errs.CodeOf(err))
+	namespaces, err := cs.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
+	require.NoError(t, err)
+	require.Empty(t, namespaces.Items, "nothing was created")
+
+	unenforced, _ := testAdapter(t, nil)
+	unenforced.canaryMu.Lock()
+	unenforced.canary = canaryResult{}
+	unenforced.canaryMu.Unlock()
+	_, err = unenforced.Trial(ctx, api.TrialRequest{TrialID: "trl_6", Image: "example/app", Egress: trialAllowlist})
+	require.Equal(t, errs.AdapterUnavailable, errs.CodeOf(err))
 }

@@ -37,6 +37,9 @@ Detection job:
         - observe bound ports        → Port.Source = "observed"
         - observe writes outside volumes → ObservedWrites
         - crash → capture log; promote suspected slots to Required (§01 2.5 fallback)
+        held to the egress the app would run with (spec + host policy, no
+        loosening) and to the runtime's trial memory/CPU caps; a runtime that
+        cannot enforce restricted egress skips the trial (R-097, R-186)
   11. attach warnings:
         WARN_NO_PERSISTENT_VOLUME if ObservedWrites non-empty  (R-201, R-202)
         WARN_PATH_ROUTING_INCOMPATIBLE if applicable            (R-168)

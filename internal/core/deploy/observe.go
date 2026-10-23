@@ -63,15 +63,26 @@ func needsPortCheck(s *spec.AppSpec) bool {
 // not, because resolving them is a step of its own (step 11) and this runs
 // before it. An app that cannot start without them tells this nothing, and the
 // assumption stands.
-func checkPort(ctx context.Context, runtime api.RuntimeAdapter, s *spec.AppSpec, image, trialID string, sink io.Writer) portCheck {
-	return checkPortWith(ctx, runtime, s, image, nil, trialID, sink)
+//
+// It is held to rules, the egress rules the app's deploy runs with (R-097,
+// R-187): the image has not been reviewed any more than the app has. A runtime
+// that cannot enforce rules that restrict anything is not asked, and the
+// assumption stands; the plan refused such a deploy already (R-186).
+func checkPort(ctx context.Context, runtime api.RuntimeAdapter, s *spec.AppSpec, image, trialID string, rules api.EgressRules, sink io.Writer) portCheck {
+	return checkPortWith(ctx, runtime, s, api.TrialRequest{TrialID: trialID, Image: image, Egress: rules}, sink)
 }
 
 // checkPortWith is checkPort for an image the runtime pulls with auth: a
-// build pushed to the install's registry (issue #72, PR 5).
-func checkPortWith(ctx context.Context, runtime api.RuntimeAdapter, s *spec.AppSpec, image string, auth *api.RegistryAuth, trialID string, sink io.Writer) portCheck {
+// build pushed to the install's registry (issue #72, PR 5). base carries the
+// trial's identifier, image, pull auth and egress rules; the rest comes from
+// the spec.
+func checkPortWith(ctx context.Context, runtime api.RuntimeAdapter, s *spec.AppSpec, base api.TrialRequest, sink io.Writer) portCheck {
+	rules := base.Egress
 	caps, err := runtime.Capabilities(ctx)
 	if err != nil || !caps.SupportsTrialRun || !caps.SupportsPortObservation {
+		return portCheck{}
+	}
+	if rules.Restricted() && !caps.SupportsEgressRestriction {
 		return portCheck{}
 	}
 	primary, _ := s.PrimaryWorkload()
@@ -79,15 +90,16 @@ func checkPortWith(ctx context.Context, runtime api.RuntimeAdapter, s *spec.AppS
 
 	fmt.Fprintf(sink, "=> Checking which port the app listens on\n")
 	result, err := runtime.Trial(ctx, api.TrialRequest{
-		TrialID:        trialID,
-		Image:          image,
-		PullAuth:       auth,
+		TrialID:        base.TrialID,
+		Image:          base.Image,
+		PullAuth:       base.PullAuth,
 		Command:        primary.Command,
 		Entrypoint:     primary.Entrypoint,
 		WorkingDir:     primary.WorkingDir,
 		Env:            trialEnv(primary),
 		Timeout:        observeTimeout,
 		IsolationFloor: s.Runtime.IsolationFloor,
+		Egress:         rules,
 	})
 	if err != nil {
 		// Not a reason to stop the deploy: the assumption is what would have

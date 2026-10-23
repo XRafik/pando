@@ -18,10 +18,11 @@ type trialRuntime struct {
 	api.RuntimeAdapter
 	result api.TrialResult
 	asked  api.TrialRequest
+	egress bool // SupportsEgressRestriction
 }
 
 func (r *trialRuntime) Capabilities(context.Context) (api.RuntimeCapabilities, error) {
-	return api.RuntimeCapabilities{SupportsTrialRun: true, SupportsPortObservation: true}, nil
+	return api.RuntimeCapabilities{SupportsTrialRun: true, SupportsPortObservation: true, SupportsEgressRestriction: r.egress}, nil
 }
 
 func (r *trialRuntime) Trial(_ context.Context, req api.TrialRequest) (api.TrialResult, error) {
@@ -49,7 +50,7 @@ func TestR097_ABuildpackAppsAssumedPortIsCheckedAgainstTheBuiltImage(t *testing.
 	require.True(t, needsPortCheck(app))
 
 	rt := &trialRuntime{result: api.TrialResult{Started: true, ObservedPorts: []int{5000}}}
-	check := checkPort(context.Background(), rt, app, "img", "t1", io.Discard)
+	check := checkPort(context.Background(), rt, app, "img", "t1", api.EgressRules{}, io.Discard)
 	require.Equal(t, 5000, check.Port)
 	require.NoError(t, check.Refusal)
 	require.Equal(t, "8000", rt.asked.Env["PORT"].Reveal(), "watched the way it will run")
@@ -63,7 +64,7 @@ func TestR097_ABuildpackAppsAssumedPortIsCheckedAgainstTheBuiltImage(t *testing.
 
 func TestAnAppListeningWhereItWasToldIsLeftAlone(t *testing.T) {
 	rt := &trialRuntime{result: api.TrialResult{Started: true, ObservedPorts: []int{3000}}}
-	check := checkPort(context.Background(), rt, assumedPortApp(3000), "img", "t1", io.Discard)
+	check := checkPort(context.Background(), rt, assumedPortApp(3000), "img", "t1", api.EgressRules{}, io.Discard)
 	require.Zero(t, check.Port)
 	require.NoError(t, check.Refusal)
 }
@@ -75,13 +76,13 @@ func TestAnAppListeningWhereItWasToldIsLeftAlone(t *testing.T) {
 func TestR097_ARandomOrNonWebPortDoesNotReplaceTheAssumption(t *testing.T) {
 	for _, observed := range [][]int{{47373}, {4369}, {4369, 47373}} {
 		rt := &trialRuntime{result: api.TrialResult{Started: true, ObservedPorts: observed}}
-		check := checkPort(context.Background(), rt, assumedPortApp(8080), "img", "t1", io.Discard)
+		check := checkPort(context.Background(), rt, assumedPortApp(8080), "img", "t1", api.EgressRules{}, io.Discard)
 		require.Zero(t, check.Port, "observed %v", observed)
 		require.NoError(t, check.Refusal)
 	}
 
 	rt := &trialRuntime{result: api.TrialResult{Started: true, ObservedPorts: []int{4369, 4000, 47373}}}
-	require.Equal(t, 4000, checkPort(context.Background(), rt, assumedPortApp(8080), "img", "t1", io.Discard).Port)
+	require.Equal(t, 4000, checkPort(context.Background(), rt, assumedPortApp(8080), "img", "t1", api.EgressRules{}, io.Discard).Port)
 }
 
 // An app that listens only on 127.0.0.1 cannot be reached from outside its
@@ -89,7 +90,7 @@ func TestR097_ARandomOrNonWebPortDoesNotReplaceTheAssumption(t *testing.T) {
 // saying why.
 func TestR105_AnAppListeningOnlyOnLoopbackIsRefusedWithTheFix(t *testing.T) {
 	rt := &trialRuntime{result: api.TrialResult{Started: true, LoopbackPorts: []int{8000}}}
-	check := checkPort(context.Background(), rt, assumedPortApp(8000), "img", "t1", io.Discard)
+	check := checkPort(context.Background(), rt, assumedPortApp(8000), "img", "t1", api.EgressRules{}, io.Discard)
 
 	e := errs.As(check.Refusal)
 	require.NotNil(t, e)

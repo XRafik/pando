@@ -423,7 +423,7 @@ lifecycle exports the image itself, to a registry or a daemon, and the daemon is
 
 **R-096 [D]** A **compose file is a complete answer**, not a hint. Import it verbatim as a bundle: services, `depends_on` ordering, healthchecks, named volumes, internal network.
 
-**R-097 [D]** A **trial run** in throwaway isolation is part of detection. Port discovery happens by observing what the process binds, not by asking.
+**R-097 [D]** A **trial run** in throwaway isolation is part of detection. Port discovery happens by observing what the process binds, not by asking. The trial is held to the egress rules the app would run with, resolved against host policy as a deploy's are (R-182, R-187); a loosening is granted to a deploy and not to a trial (R-183). A runtime that cannot enforce rules that restrict anything does not run the trial (R-186). The trial also runs under memory and CPU caps and sized scratch storage, set by the runtime [P: 4 GiB, half the host's CPUs and at least two, 1 GiB per declared volume], generous so that no first start is cut short. *(Amended after the 2026-10-16 security assessment: a trial ran unreviewed code with unrestricted egress and no resource limits, whatever the app's own rules were.)*
 
 **R-098 [D]** The user reviews the proposal, then it **pins**. Detection does not re-run implicitly (R-022).
 

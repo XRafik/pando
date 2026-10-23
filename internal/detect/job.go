@@ -663,6 +663,13 @@ func (j *Job) trialWith(ctx context.Context, draft Draft, auth *api.RegistryAuth
 	if err != nil || !caps.SupportsTrialRun {
 		return Trial{}
 	}
+	// A runtime that cannot hold the trial to the app's egress rules does not
+	// run it with them ignored (R-097, R-186). The deploy's plan refuses on the
+	// same runtime, and says why.
+	egress := TrialEgressOf(ctx)
+	if egress.Restricted() && !caps.SupportsEgressRestriction {
+		return Trial{}
+	}
 
 	primary, ok := primaryWorkload(draft)
 	if !ok || primary.Image == "" {
@@ -702,6 +709,7 @@ func (j *Job) trialWith(ctx context.Context, draft Draft, auth *api.RegistryAuth
 		PullAuth:      auth,
 		DeclaredPaths: declaredPaths(primary),
 		Timeout:       timeout,
+		Egress:        egress,
 	})
 	if err != nil {
 		return Trial{}

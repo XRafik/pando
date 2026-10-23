@@ -205,6 +205,30 @@ func (p *Planner) Egress(ctx context.Context, s *spec.AppSpec) (policy.Effective
 	return doc.EgressFor(s.Egress), nil
 }
 
+// TrialEgress is the rules a detection trial of an app is held to (R-097):
+// the rules its spec would run with, resolved against host policy as a
+// deploy's are. A spec that loosens the installation's rules is tried under
+// the installation's instead: a loosening is granted to a deploy, by a verb
+// or an approval (R-183), and a trial of code nobody has reviewed yet is not
+// that deploy. Nil s is an app with no spec yet.
+func (p *Planner) TrialEgress(ctx context.Context, s *spec.AppSpec) (api.EgressRules, error) {
+	if s == nil {
+		s = &spec.AppSpec{}
+	}
+	eff, err := p.Egress(ctx, s)
+	if err != nil {
+		return api.EgressRules{}, err
+	}
+	if len(eff.Loosenings) == 0 {
+		return eff.Rules, nil
+	}
+	install, err := p.Egress(ctx, &spec.AppSpec{})
+	if err != nil {
+		return api.EgressRules{}, err
+	}
+	return install.Rules, nil
+}
+
 // checkEgress refuses a plan whose egress cannot be honored: a loosening
 // policy forbids (R-183), or restrictions the runtime cannot enforce (R-186).
 func checkEgress(s *spec.AppSpec, eff policy.EffectiveEgress, caps api.RuntimeCapabilities) error {

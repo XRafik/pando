@@ -12,6 +12,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/remotecommand"
 	"k8s.io/utils/ptr"
@@ -28,72 +29,118 @@ import (
 // exists in the API (SupportsWriteObservation is false).
 //
 // The namespace denies every connection in, Pando's included: nothing needs to
-// reach an app that is being watched. It is removed at the end, on every path.
+// reach an app that is being watched. Where the rules the app would run with
+// restrict anything, the trial is held to them as the app is (R-097, R-187):
+// it reaches cluster DNS and its own namespace, and the outside only through
+// an egress gateway in that namespace. It is removed at the end, on every path.
 func (a *Adapter) Trial(ctx context.Context, req api.TrialRequest) (api.TrialResult, error) {
 	if req.TrialID == "" {
 		return api.TrialResult{}, errs.New(errs.Internal, "A trial run needs an identifier.")
+	}
+	restricted := req.Egress.Restricted()
+	rules, err := a.trialEgressRules(req, restricted)
+	if err != nil {
+		return api.TrialResult{}, err
 	}
 	timeout := req.Timeout
 	if timeout <= 0 {
 		timeout = 60 * time.Second
 	}
-	ns := "pando-trial-" + toLabel(req.TrialID)
-	if len(ns) > 63 {
-		ns = strings.TrimRight(ns[:63], "-")
-	}
+	ns := trialNamespace(req.TrialID)
 
-	if _, err := a.cs.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
-		Name:   ns,
-		Labels: map[string]string{labelManagedBy: managedBy, labelPSAEnforce: "baseline"},
-	}}, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
-		return api.TrialResult{}, errs.Wrap(errs.AdapterFailed, "Could not make a place in the cluster to try the app.", err)
-	}
 	defer func() {
 		cleanup, done := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer done()
 		_ = a.cs.CoreV1().Namespaces().Delete(cleanup, ns, metav1.DeleteOptions{})
 	}()
+	if err := a.prepareTrialNamespace(ctx, ns); err != nil {
+		return api.TrialResult{}, err
+	}
+
+	if err := a.isolateTrial(ctx, ns, req.TrialID, restricted, rules); err != nil {
+		return api.TrialResult{}, err
+	}
+
+	pullSecrets, err := a.trialSecrets(ctx, ns, req, restricted)
+	if err != nil {
+		return api.TrialResult{}, err
+	}
+	pod := a.trialPod(ns, req, pullSecrets)
+	if _, err := a.cs.CoreV1().Pods(ns).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
+		return api.TrialResult{}, errs.Wrap(errs.AdapterFailed, "Could not start the app's trial run.", err)
+	}
+
+	result, err := a.watchTrial(ctx, ns, timeout, req.PullAuth != nil)
+	if err != nil {
+		return api.TrialResult{}, err
+	}
+	result.Log = a.trialLog(ctx, ns)
+	if req.LogSink != nil && result.Log != "" {
+		_, _ = io.WriteString(req.LogSink, result.Log)
+	}
+	return result, nil
+}
+
+// prepareTrialNamespace makes the namespace a trial runs in, binds the app
+// role in it and waits for its service account.
+func (a *Adapter) prepareTrialNamespace(ctx context.Context, ns string) error {
+	if _, err := a.cs.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+		Name:   ns,
+		Labels: map[string]string{labelManagedBy: managedBy, labelPSAEnforce: "baseline"},
+	}}, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+		return errs.Wrap(errs.AdapterFailed, "Could not make a place in the cluster to try the app.", err)
+	}
 	if err := a.bindAppRole(ctx, ns); err != nil {
-		return api.TrialResult{}, err
+		return err
 	}
-	if err := a.awaitServiceAccount(ctx, ns); err != nil {
-		return api.TrialResult{}, err
-	}
+	return a.awaitServiceAccount(ctx, ns)
+}
 
-	deny := &networkingv1.NetworkPolicy{
-		ObjectMeta: metav1.ObjectMeta{Name: "deny-in", Namespace: ns},
-		Spec: networkingv1.NetworkPolicySpec{
-			PodSelector: metav1.LabelSelector{},
-			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
-		},
+// trialNamespace is the namespace a trial runs in, within the 63 characters
+// a name may have.
+func trialNamespace(trialID string) string {
+	ns := "pando-trial-" + toLabel(trialID)
+	if len(ns) > 63 {
+		ns = strings.TrimRight(ns[:63], "-")
 	}
-	if _, err := a.cs.NetworkingV1().NetworkPolicies(ns).Create(ctx, deny, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
-		return api.TrialResult{}, errs.Wrap(errs.AdapterFailed, "Could not isolate the app's trial run.", err)
-	}
+	return ns
+}
 
-	env := map[string]string{}
-	for k, v := range req.Env {
-		env[k] = v.Reveal()
+// trialSecrets writes the trial's environment, with the proxy variables where
+// its egress is restricted, and its pull secret where the image needs one.
+func (a *Adapter) trialSecrets(ctx context.Context, ns string, req api.TrialRequest, restricted bool) ([]corev1.LocalObjectReference, error) {
+	var proxy map[string]string
+	if restricted {
+		// One pod, so NO_PROXY names only the pod itself.
+		proxy = proxyEnv(api.BundlePlan{})
 	}
+	env := workloadEnv(api.WorkloadPlan{Env: req.Env}, proxy)
 	if err := a.putSecret(ctx, &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "trial-env", Namespace: ns},
 		Data:       secretData(env),
 	}, "the trial's environment"); err != nil {
-		return api.TrialResult{}, err
+		return nil, err
 	}
 	var pullSecrets []corev1.LocalObjectReference
 	if req.PullAuth != nil {
 		if err := a.ensurePullSecret(ctx, ns, []api.WorkloadPlan{{Image: req.Image, PullAuth: req.PullAuth}}); err != nil {
-			return api.TrialResult{}, err
+			return nil, err
 		}
 		pullSecrets = []corev1.LocalObjectReference{{Name: pullSecretName}}
 	}
+	return pullSecrets, nil
+}
 
+// trialPod is the trial's pod: the app, held to the trial's limits and the
+// workload security context, and the observer beside it.
+func (a *Adapter) trialPod(ns string, req api.TrialRequest, pullSecrets []corev1.LocalObjectReference) *corev1.Pod {
 	var volumes []corev1.Volume
 	var mounts []corev1.VolumeMount
 	for i, p := range req.DeclaredPaths {
 		name := "declared-" + strconv.Itoa(i)
-		volumes = append(volumes, corev1.Volume{Name: name, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}})
+		volumes = append(volumes, corev1.Volume{Name: name, VolumeSource: corev1.VolumeSource{
+			EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: ptr.To(resource.MustParse(trialStorageSize))},
+		}})
 		mounts = append(mounts, corev1.VolumeMount{Name: name, MountPath: p})
 	}
 	pod := &corev1.Pod{
@@ -112,7 +159,9 @@ func (a *Adapter) Trial(ctx context.Context, req api.TrialRequest) (api.TrialRes
 					EnvFrom: []corev1.EnvFromSource{{SecretRef: &corev1.SecretEnvSource{
 						LocalObjectReference: corev1.LocalObjectReference{Name: "trial-env"},
 					}}},
-					VolumeMounts: mounts,
+					VolumeMounts:    mounts,
+					Resources:       trialResources(),
+					SecurityContext: workloadSecurity(),
 				},
 				{Name: "observer", Image: a.config.HelperImage, Command: []string{"sleep", "3600"}},
 			},
@@ -121,19 +170,86 @@ func (a *Adapter) Trial(ctx context.Context, req api.TrialRequest) (api.TrialRes
 	if a.config.RuntimeClass != "" {
 		pod.Spec.RuntimeClassName = ptr.To(a.config.RuntimeClass)
 	}
-	if _, err := a.cs.CoreV1().Pods(ns).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
-		return api.TrialResult{}, errs.Wrap(errs.AdapterFailed, "Could not start the app's trial run.", err)
-	}
+	return pod
+}
 
-	result, err := a.watchTrial(ctx, ns, timeout, req.PullAuth != nil)
-	if err != nil {
-		return api.TrialResult{}, err
+// trialEgressRules returns the gateway's rules for a trial whose egress is
+// restricted, and refuses one this cluster cannot hold to them (R-186).
+func (a *Adapter) trialEgressRules(req api.TrialRequest, restricted bool) (string, error) {
+	if !restricted {
+		return "", nil
 	}
-	result.Log = a.trialLog(ctx, ns)
-	if req.LogSink != nil && result.Log != "" {
-		_, _ = io.WriteString(req.LogSink, result.Log)
+	if !a.canaryPassed() {
+		return "", errNotEnforced()
 	}
-	return result, nil
+	return a.egressRules(api.BundlePlan{Network: api.NetworkPlan{Egress: req.Egress}}, true)
+}
+
+// isolateTrial writes the trial namespace's policies, and its gateway where
+// egress is restricted.
+//
+// Unrestricted, one policy denies every connection in, as it always has.
+// Restricted, that policy also admits connections from the namespace itself,
+// which the trial needs to reach the gateway, and limits connections out to
+// the namespace and cluster DNS; a second policy lets the gateway alone reach
+// outside the cluster, as for an app (ensurePolicies).
+func (a *Adapter) isolateTrial(ctx context.Context, ns, trialID string, restricted bool, rules string) error {
+	deny := &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "deny-in", Namespace: ns},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{},
+			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
+		},
+	}
+	if restricted {
+		sameNamespace := networkingv1.NetworkPolicyPeer{PodSelector: &metav1.LabelSelector{}}
+		deny.Spec.PolicyTypes = append(deny.Spec.PolicyTypes, networkingv1.PolicyTypeEgress)
+		deny.Spec.Ingress = []networkingv1.NetworkPolicyIngressRule{{From: []networkingv1.NetworkPolicyPeer{sameNamespace}}}
+		deny.Spec.Egress = []networkingv1.NetworkPolicyEgressRule{{To: []networkingv1.NetworkPolicyPeer{sameNamespace}}, dnsRule()}
+	}
+	if _, err := a.cs.NetworkingV1().NetworkPolicies(ns).Create(ctx, deny, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+		return errs.Wrap(errs.AdapterFailed, "Could not isolate the app's trial run.", err)
+	}
+	if !restricted {
+		return nil
+	}
+	gw := &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: gatewayPolicy, Namespace: ns, Labels: map[string]string{labelManagedBy: managedBy}},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{MatchLabels: map[string]string{labelRole: roleGateway}},
+			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
+			Egress:      []networkingv1.NetworkPolicyEgressRule{a.outsideRule()},
+		},
+	}
+	if err := a.putPolicy(ctx, gw); err != nil {
+		return err
+	}
+	return a.ensureGateway(ctx, ns, "trial-"+trialID, rules)
+}
+
+// What a trial may use [P] (R-097), as on Docker (docker/trial.go): a trial
+// has no spec yet and so no limits of its own, and one cut short reports an
+// app that works as one that does not. Limits only: the request is small, so
+// a trial is scheduled on any node with room for an ordinary app.
+const (
+	trialStorageSize   = "1Gi"
+	trialMemoryLimit   = "4Gi"
+	trialCPULimit      = "2"
+	trialMemoryRequest = "256Mi"
+	trialCPURequest    = "100m"
+)
+
+func trialResources() corev1.ResourceRequirements {
+	return corev1.ResourceRequirements{
+		Limits: corev1.ResourceList{
+			corev1.ResourceMemory: resource.MustParse(trialMemoryLimit),
+			corev1.ResourceCPU:    resource.MustParse(trialCPULimit),
+		},
+		Requests: corev1.ResourceList{
+			corev1.ResourceMemory: resource.MustParse(trialMemoryRequest),
+			corev1.ResourceCPU:    resource.MustParse(trialCPURequest),
+		},
+	}
 }
 
 // watchTrial polls the trial until it exits, binds a port, or time runs out.

@@ -181,3 +181,66 @@ func TestR186_APolicyThatRestrictsOnARuntimeThatCannotIsPreviewed(t *testing.T) 
 }
 
 func ptrBool(v bool) *bool { return &v }
+
+// TestR097_ATrialIsHeldToTheAppsEgressWithoutItsLoosenings asserts R-097 as
+// amended: a trial runs under the rules the app would run with, resolved
+// against host policy, and a loosening the spec asks for is not granted to it
+// (R-183) — the installation's rules stand instead.
+func TestR097_ATrialIsHeldToTheAppsEgressWithoutItsLoosenings(t *testing.T) {
+	ctx := context.Background()
+	p := plannerWith(t, allowlistPolicy(policy.EgressLooseningVerb), egressRuntime())
+
+	// No spec yet: the installation's rules.
+	install, err := p.TrialEgress(ctx, nil)
+	require.NoError(t, err)
+	require.True(t, install.Restricted())
+
+	// A spec that tightens is tried as tightened.
+	tight := plannableSpec()
+	tight.Egress = spec.Egress{BlockPrivate: ptrBool(true)}
+	got, err := p.TrialEgress(ctx, tight)
+	require.NoError(t, err)
+	want, err := p.Egress(ctx, tight)
+	require.NoError(t, err)
+	require.Equal(t, want.Rules, got)
+	require.True(t, got.BlockPrivate)
+
+	// A spec that loosens is tried under the installation's rules.
+	loose := plannableSpec()
+	loose.Egress = spec.Egress{Add: []string{"api.openai.example"}}
+	got, err = p.TrialEgress(ctx, loose)
+	require.NoError(t, err)
+	require.Equal(t, install, got)
+
+	// Open egress, the default, restricts nothing.
+	open, err := plannerWith(t, policy.Default(), egressRuntime()).TrialEgress(ctx, nil)
+	require.NoError(t, err)
+	require.False(t, open.Restricted())
+}
+
+// A policy that cannot be read is an error, never rules that restrict nothing.
+func TestR097_TrialEgressFailsWhenPolicyCannotBeRead(t *testing.T) {
+	p := planner.New(nil, policy.New(func(context.Context) (policy.Document, error) {
+		return policy.Document{}, errs.New(errs.Internal, "unreadable")
+	}), fixedAllocations{})
+	_, err := p.TrialEgress(context.Background(), nil)
+	require.Error(t, err)
+}
+
+// A policy that stops being readable between the spec's rules and the
+// installation's is an error too, never the spec's loosened rules.
+func TestR097_TrialEgressFailsWhenTheInstallationsRulesCannotBeRead(t *testing.T) {
+	doc := allowlistPolicy(policy.EgressLooseningVerb)
+	reads := 0
+	p := planner.New(nil, policy.New(func(context.Context) (policy.Document, error) {
+		reads++
+		if reads > 1 {
+			return policy.Document{}, errs.New(errs.Internal, "unreadable")
+		}
+		return doc, nil
+	}), fixedAllocations{})
+	loose := plannableSpec()
+	loose.Egress = spec.Egress{Add: []string{"api.openai.example"}}
+	_, err := p.TrialEgress(context.Background(), loose)
+	require.Error(t, err)
+}

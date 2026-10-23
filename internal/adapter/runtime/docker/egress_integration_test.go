@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/trypando/pando/internal/adapter/api"
 	dockeradapter "github.com/trypando/pando/internal/adapter/runtime/docker"
 	"github.com/trypando/pando/internal/egress"
 )
@@ -283,4 +284,73 @@ func TestR187_ARestrictedAppReachesOnlyWhatItsRulesAllowThroughTheGateway(t *tes
 		require.Contains(t, out, "allowed-destination")
 	})
 
+}
+
+// TestR097_ATrialUnderAnAllowlistCannotReachADisallowedAddress asserts that a
+// trial run is held to its app's egress rules on a real daemon (R-097,
+// R-187): with an allowlist it reaches a listed destination only through the
+// gateway, is refused one the list does not name, and has no route out of its
+// network at all.
+func TestR097_ATrialUnderAnAllowlistCannotReachADisallowedAddress(t *testing.T) {
+	ctx := context.Background()
+	a := dockeradapter.New()
+	require.NoError(t, a.Configure(ctx, json.RawMessage(`{"egress_gateway_image":"`+gatewayImage(t)+`"}`)))
+	if err := a.HealthCheck(ctx); err != nil {
+		t.Skipf("docker unavailable: %v", err)
+	}
+	dest := destinations(t)
+	destIP, err := dockerCLI("inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", dest)
+	require.NoError(t, err, destIP)
+
+	id := "egress-" + time.Now().Format("150405")
+	outbound := "pando-trial-" + id + "-outbound"
+
+	// The destination joins the gateway's network as soon as it exists, under
+	// a name the allowlist uses, and leaves it before the trial removes it.
+	joined := make(chan struct{})
+	go func() {
+		defer close(joined)
+		deadline := time.Now().Add(60 * time.Second)
+		for time.Now().Before(deadline) {
+			if _, err := dockerCLI("network", "connect", "--alias", "dest", outbound, dest); err == nil {
+				return
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+	}()
+	t.Cleanup(func() {
+		_, _ = dockerCLI("network", "disconnect", "-f", outbound, dest)
+		_, _ = dockerCLI("network", "rm", outbound)
+	})
+
+	// Waits for the allowed destination through the proxy variables, then
+	// tries the one the list does not name, and a direct connection with the
+	// proxy turned off.
+	script := `for i in $(seq 40); do wget -q -O - -T 2 http://dest:18080/ && break; sleep 1; done; echo;` +
+		`wget -q -O - -T 5 http://dest:18081/ && echo DENIED-REACHED || echo DENIED-REFUSED;` +
+		`wget -Y off -q -O - -T 3 http://` + destIP + `:18081/ && echo DIRECT-REACHED || echo DIRECT-REFUSED;` +
+		`wget -Y off -q -O - -T 3 http://169.254.169.254/ && echo IMDS-REACHED || echo IMDS-REFUSED`
+	result, err := a.Trial(ctx, api.TrialRequest{
+		TrialID: id,
+		Image:   "busybox:1.37",
+		Command: []string{"sh", "-c", script},
+		Timeout: 90 * time.Second,
+		Egress: egress.Rules{Layers: []egress.Layer{{
+			Mode: egress.Allowlist, From: "install", List: []string{"dest:18080"},
+		}}},
+	})
+	<-joined
+	require.NoError(t, err)
+	require.NotNil(t, result.ExitCode, "the script ran to its end: %s", result.Log)
+
+	require.Contains(t, result.Log, "allowed-destination", "the listed destination is reached through the gateway")
+	require.Contains(t, result.Log, "DENIED-REFUSED", "the gateway refuses what the list does not name")
+	require.NotContains(t, result.Log, "denied-destination")
+	require.Contains(t, result.Log, "DIRECT-REFUSED", "no route out but the gateway")
+	require.Contains(t, result.Log, "IMDS-REFUSED")
+
+	// Nothing of the trial is left: its gateway and its own network.
+	left, err := dockerCLI("ps", "-a", "--filter", "label=io.pando.trial="+id, "--format", "{{.Names}}")
+	require.NoError(t, err)
+	require.Empty(t, left)
 }

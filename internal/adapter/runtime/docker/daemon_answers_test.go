@@ -439,7 +439,7 @@ func TestATrialGivesEveryDeclaredVolumeThrowawayStorage(t *testing.T) {
 
 	paths := a.imageVolumes(context.Background(), "test-vault:1")
 	require.Equal(t, []string{"/config", "/data"}, paths)
-	require.Equal(t, map[string]string{"/config": "", "/data": ""}, tmpfsFor(paths))
+	require.Equal(t, map[string]string{"/config": trialTmpfsSize, "/data": trialTmpfsSize}, tmpfsFor(paths), "sized, so a trial cannot fill the host's memory through it")
 
 	require.Empty(t, a.imageVolumes(context.Background(), "test-plain:1"))
 	require.Nil(t, a.imageVolumes(context.Background(), "test-missing:1"), "an image that cannot be read declares nothing")

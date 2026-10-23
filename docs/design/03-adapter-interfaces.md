@@ -317,6 +317,16 @@ too. The runtime uses it for the pull and keeps nothing: Docker receives it as t
 `X-Registry-Auth` and stores it nowhere. It is short-lived by construction, which is why it travels with
 each plan rather than being configured on the adapter.
 
+**[D] `TrialRequest.Egress`** is the egress rules the trial is held to, resolved by core as a
+deploy's are, without any loosening (R-097, R-183). Zero restricts nothing. Where they restrict
+anything the runtime enforces them as it does for a workload — on Docker, an internal network with
+a gateway in front of it; on Kubernetes, egress policies and a gateway pod in the trial namespace —
+or refuses the trial; it never runs one with the rules ignored (R-186). Core does not ask a runtime
+without `SupportsEgressRestriction` for a restricted trial. **[P]** A trial also gets the runtime's
+trial limits: 4 GiB of memory, half the host's CPUs (at least two), and 1 GiB per throwaway mount
+on Docker; the same memory, two CPUs and 1 GiB `emptyDir`s on Kubernetes, with the workload
+security context.
+
 **[D] `RuntimeCapabilities.Platform`** is the `os/arch` the runtime runs images for (`linux/arm64`),
 data rather than a probe (R-254). The planner compares it with the platforms an image app's image is
 published for and refuses a mismatch before anything is pulled. Empty means the runtime cannot say,

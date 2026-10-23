@@ -19,6 +19,8 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-22
+
 ### Security
 
 - **The images Pando ships and runs refuse certificates from the compromised eMudhra
@@ -36,6 +38,32 @@ Unreleased above it. -->
   distrusted root**, and so does a pull request that pins one.
 - Railpack's builder and runtime images, which apps Railpack builds are built and run on, still
   trust the emSign roots; Railpack has not yet published images without them.
+- **A symbolic link in a repository can no longer reach outside the app's source**
+  (GHSA-q7m6-jx38-3cwj). Links leading out of a checkout are removed when it is fetched, and every
+  read and write of a checkout, a build context and a Dockerfile is held inside it. Before, a
+  repository could read and write files Pando's user can reach.
+- **The audit log no longer records usable session cookies** (GHSA-c6fq-w8c5-qwc7). A session
+  cookie now carries a secret that is stored only as a digest; audit events, logs and API responses
+  carry its public ID. Before, anyone able to read the audit log could sign in as any user.
+- **An app on its own hostname or port is no longer also served on Pando's address at `/<slug>`**
+  (GHSA-4hfm-2xgc-p9x6). Once an external URL is set, the console and API answer only on Pando's own
+  hostnames.
+- **A spec can build only from its own app's uploaded source** (GHSA-hp86-565r-4cqr).
+- **A suspended or deleted account can no longer reactivate itself with an API token**
+  (GHSA-r266-5h56-r382).
+- **Granting a role is refused when it carries a permission the granter does not hold**, so an
+  app's Owner can no longer approve their own deploy (GHSA-mj9x-cm9p-7x5p).
+- **Pinning a revision on a running app needs deploy permission and passes the same approval and
+  policy checks as a deploy** (GHSA-q5h5-gp6g-34m2).
+- **Wrong-guess limits hold under concurrent attempts** (GHSA-64pg-cm39-8985). Every guess is
+  counted before it is checked, and concurrent correct sign-ins still succeed.
+- **An empty or zero resources block no longer removes a workload's CPU and memory limits**
+  (GHSA-23cr-fgg6-6w75).
+- **A webhook body template cannot run without limit** (GHSA-mg6c-962h-969j).
+- **Builds of different apps no longer share a BuildKit** (GHSA-24qq-7rq2-pf5j). Each app's builds
+  run on their own BuildKit, reached over mutual TLS and removed after ten idle minutes.
+- API request bodies and uploaded archives are limited in size and time, and trial runs follow the
+  app's egress rules and resource limits.
 
 ### Added
 
@@ -79,6 +107,14 @@ Unreleased above it. -->
 - A static site keeps the nginx base it was built on until it is built again. Redeploy one that makes
   outbound HTTPS requests.
 - On Kubernetes, apply `deploy/kubernetes/buildkit.yaml` again for BuildKit 0.34.1.
+- **Everyone signs in again after upgrading**: existing sessions end.
+- **Not a rolling upgrade.** An install with several replicas stops the older ones before starting
+  the new image.
+- **Scripts that sign in with the password set by `PANDO_ADMIN_PASSWORD` must change it first**:
+  the API now enforces "must change password", as the console already did.
+- The shared `pando-buildkit` container is removed at startup; builds use a BuildKit per app.
+- On Kubernetes, apply `deploy/kubernetes/rbac.yaml` and `deploy/kubernetes/admission-policy.yaml`
+  again.
 
 ## [0.13.0] - 2026-10-21
 

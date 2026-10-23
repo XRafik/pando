@@ -127,7 +127,7 @@ func TestR097_ATrialRunIsHeldToTheSameLimitsAsTheDeploy(t *testing.T) {
 	f, a := newFakeDaemon(t, nil)
 	created := recordCreates(f, false)
 
-	_, err := a.startTrialContainer(context.Background(), api.TrialRequest{TrialID: "t1", Image: "example:1"}, "net1")
+	_, err := a.startTrialContainer(context.Background(), api.TrialRequest{TrialID: "t1", Image: "example:1"}, "net1", nil)
 	require.NoError(t, err)
 	got := created()
 	require.Len(t, got, 1)
