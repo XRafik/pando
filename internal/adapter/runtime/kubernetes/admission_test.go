@@ -111,25 +111,31 @@ func (ad *admission) denials(t *testing.T, r request) []string {
 	}
 	var out []string
 	for _, p := range ad.policies {
-		if !matches(p, r) {
-			continue
+		if matches(p, r) {
+			out = append(out, ad.refusals(t, p, vars)...)
 		}
-		applies := true
-		for _, c := range p.Spec.MatchConditions {
-			applies = applies && ad.eval(t, c.Expression, vars) == true
+	}
+	return out
+}
+
+// refusals is every message one policy refuses a matched request with: none
+// when its match conditions leave the request out.
+func (ad *admission) refusals(t *testing.T, p *admissionv1.ValidatingAdmissionPolicy, vars map[string]any) []string {
+	t.Helper()
+	for _, c := range p.Spec.MatchConditions {
+		if ad.eval(t, c.Expression, vars) != true {
+			return nil
 		}
-		if !applies {
-			continue
-		}
-		values := map[string]any{}
-		vars["variables"] = values
-		for _, v := range p.Spec.Variables {
-			values[v.Name] = ad.eval(t, v.Expression, vars)
-		}
-		for _, v := range p.Spec.Validations {
-			if ad.eval(t, v.Expression, vars) != true {
-				out = append(out, p.Name+": "+v.Message)
-			}
+	}
+	values := map[string]any{}
+	vars["variables"] = values
+	for _, v := range p.Spec.Variables {
+		values[v.Name] = ad.eval(t, v.Expression, vars)
+	}
+	var out []string
+	for _, v := range p.Spec.Validations {
+		if ad.eval(t, v.Expression, vars) != true {
+			out = append(out, p.Name+": "+v.Message)
 		}
 	}
 	return out

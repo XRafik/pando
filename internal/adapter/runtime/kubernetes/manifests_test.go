@@ -265,30 +265,7 @@ func TestR402_PandosClusterRoleHoldsOnlyWhatTheRuntimeCalls(t *testing.T) {
 		}
 	}
 	require.NotNil(t, role)
-	type grant struct {
-		verbs []string
-		names []string
-	}
-	grants := map[string]grant{}
-	for _, r := range role.Rules {
-		if !slices.Equal(r.APIGroups, []string{""}) && !slices.Contains(r.APIGroups, rbacv1.GroupName) {
-			// metrics.k8s.io and node.k8s.io: read only.
-			for _, v := range r.Verbs {
-				require.Contains(t, []string{"get", "list"}, v, r.APIGroups)
-			}
-			continue
-		}
-		for _, res := range r.Resources {
-			require.NotEqual(t, "*", res)
-			for _, v := range r.Verbs {
-				require.NotEqual(t, "*", v)
-			}
-			g := grants[res]
-			g.verbs = append(g.verbs, r.Verbs...)
-			g.names = append(g.names, r.ResourceNames...)
-			grants[res] = g
-		}
-	}
+	grants := coreGrants(t, role)
 	require.ElementsMatch(t, []string{"create"}, grants["rolebindings"].verbs)
 	require.ElementsMatch(t, []string{"bind"}, grants["clusterroles"].verbs)
 	require.Equal(t, []string{defaultAppRole}, grants["clusterroles"].names)
@@ -338,4 +315,33 @@ func TestR401_EveryShippedImageIsPinnedByDigest(t *testing.T) {
 	}
 	require.Greater(t, seen, 4)
 	require.Len(t, pando, 1, "the server and the egress gateway run one Pando image: %v", pando)
+}
+
+// grant is what a ClusterRole allows on one resource.
+type grant struct {
+	verbs []string
+	names []string
+}
+
+// coreGrants gathers role's core and RBAC rules by resource, refusing a
+// wildcard anywhere and requiring every other API group be read only
+// (metrics.k8s.io and node.k8s.io).
+func coreGrants(t *testing.T, role *rbacv1.ClusterRole) map[string]grant {
+	t.Helper()
+	grants := map[string]grant{}
+	for _, r := range role.Rules {
+		require.NotContains(t, r.Verbs, "*")
+		require.NotContains(t, r.Resources, "*")
+		if !slices.Equal(r.APIGroups, []string{""}) && !slices.Contains(r.APIGroups, rbacv1.GroupName) {
+			require.Subset(t, []string{"get", "list"}, r.Verbs, r.APIGroups)
+			continue
+		}
+		for _, res := range r.Resources {
+			g := grants[res]
+			g.verbs = append(g.verbs, r.Verbs...)
+			g.names = append(g.names, r.ResourceNames...)
+			grants[res] = g
+		}
+	}
+	return grants
 }
