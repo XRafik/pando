@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -115,7 +116,39 @@ func login(t *testing.T) *client {
 		}
 	}
 	require.NotEmpty(t, c.cookie)
+	require.NoError(t, c.keepPassword(resp, password))
 	return c
+}
+
+// keepPassword answers a sign-in that must change its password first (R-046)
+// by changing it to itself, so the session can do anything else.
+func (c *client) keepPassword(signedIn *http.Response, password string) error {
+	var body struct {
+		MustChangePassword bool `json:"must_change_password"`
+	}
+	_ = json.NewDecoder(signedIn.Body).Decode(&body) // an answer that is not JSON asks nothing
+	if !body.MustChangePassword {
+		return nil
+	}
+	payload, err := json.Marshal(map[string]string{"current_password": password, "new_password": password})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodPost, baseURL()+"/me/password", bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Cookie", "pando_session="+c.cookie)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("keeping the password answered %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func (c *client) do(t *testing.T, method, path, body string) (string, int) {
@@ -255,7 +288,7 @@ func cleanupClient() *client {
 				c.cookie = ck.Value
 			}
 		}
-		if c.cookie != "" {
+		if c.cookie != "" && c.keepPassword(resp, password) == nil {
 			cleanupCached = c
 		}
 	})
@@ -529,5 +562,34 @@ func (c *client) asUser(t *testing.T, userID string) *client {
 		}
 	}
 	require.NotEmpty(t, other.cookie)
+	require.NoError(t, other.keepPassword(resp, "correct-horse-battery"))
 	return other
+}
+
+// appURL is where an app is reached from this test, built from the address
+// the API gives for it. An app on a port or a hostname is served there only,
+// not at /<slug> on Pando's own address (R-166).
+func (c *client) appURL(t *testing.T, appID string) string {
+	t.Helper()
+	address, _ := c.get(t, "/apps/"+appID)["address"].(string)
+	require.NotEmpty(t, address, "the app has no address")
+	return resolveAddress(strings.TrimSuffix(baseURL(), "/api/v1"), address)
+}
+
+// resolveAddress resolves an app's address against Pando's root URL, without
+// the trailing slash: a port-mode address names no scheme, and a path-mode
+// one no host.
+func resolveAddress(root, address string) string {
+	address = strings.TrimSuffix(address, "/")
+	switch {
+	case strings.HasPrefix(address, "//"):
+		u, err := url.Parse(root)
+		if err != nil {
+			return address
+		}
+		return u.Scheme + ":" + address
+	case strings.HasPrefix(address, "/"):
+		return root + address
+	}
+	return address
 }

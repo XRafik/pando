@@ -355,22 +355,29 @@ func (a *Apps) ListForPrincipalPage(ctx context.Context, p authz.Principal, page
 }
 
 // controlGrantWhere narrows the list to apps $1 (a user) or $2 (an account
-// token) holds a control-plane grant on, directly or through a group. A UNION
-// of indexed lookups (grants_principal_idx) rather than a join of every
-// grant, so the list costs the caller's grants, not the install's — and no
-// DISTINCT over the result, since IN already answers once per app.
+// token) holds app.view on through a control-plane grant, directly or through
+// a group. A grant whose role lacks app.view — a custom role carrying only
+// app.restart, say — lets its holder act on the app by its ID and does not
+// list it: listing is viewing (R-082, no implication graph). A UNION of
+// indexed lookups (grants_principal_idx) rather than a join of every grant,
+// so the list costs the caller's grants, not the install's — and no DISTINCT
+// over the result, since IN already answers once per app.
 const controlGrantWhere = `
 		WHERE a.deleted_at IS NULL
 		  AND a.id IN (
-		        SELECT app_id FROM grants
-		        WHERE plane = 'control' AND principal_kind = 'user' AND principal_id = $1
+		        SELECT g.app_id FROM grants g JOIN roles r ON r.id = g.role_id
+		        WHERE g.plane = 'control' AND g.principal_kind = 'user' AND g.principal_id = $1
+		          AND 'app.view' = ANY (r.verbs)
 		        UNION
-		        SELECT app_id FROM grants
-		        WHERE plane = 'control' AND principal_kind = 'token' AND principal_id = $2
+		        SELECT g.app_id FROM grants g JOIN roles r ON r.id = g.role_id
+		        WHERE g.plane = 'control' AND g.principal_kind = 'token' AND g.principal_id = $2
+		          AND 'app.view' = ANY (r.verbs)
 		        UNION
 		        SELECT g.app_id FROM grants g
 		        JOIN effective_group_members m ON m.group_id = g.principal_id
+		        JOIN roles r ON r.id = g.role_id
 		        WHERE g.plane = 'control' AND g.principal_kind = 'group' AND m.user_id = $1
+		          AND 'app.view' = ANY (r.verbs)
 		  )`
 
 // ListAll returns every app, for a principal whose install role reaches every
@@ -822,6 +829,12 @@ type Revision struct {
 // UNIQUE (app_id, revision) constraint is the backstop, and this is what keeps
 // it from being hit in normal operation.
 func (a *Apps) CreateRevision(ctx context.Context, appID string, s *spec.AppSpec, origin spec.Origin, createdBy string) (Revision, error) {
+	// Here, where every revision is written, so no path that writes one can
+	// point an app at another app's upload (R-025).
+	if err := spec.CheckUploadOwner(s.Source, appID); err != nil {
+		return Revision{}, err
+	}
+
 	tx, err := a.db.Begin(ctx)
 	if err != nil {
 		return Revision{}, errs.Wrap(errs.Internal, "Could not save the spec.", err)
@@ -1340,6 +1353,9 @@ func (a *Apps) ForgetVolume(ctx context.Context, appID, volumeID string) error {
 // record of how an app runs, and a source nobody wrote down is a deploy nobody
 // can explain afterwards.
 func (a *Apps) SetSource(ctx context.Context, appID string, src spec.Source) error {
+	if err := spec.CheckUploadOwner(src, appID); err != nil {
+		return err
+	}
 	body, err := json.Marshal(src)
 	if err != nil {
 		return errs.Wrap(errs.Internal, "Could not record the app's source.", err)
@@ -1478,7 +1494,8 @@ func (a *Apps) SetStateIf(ctx context.Context, appID, from, to string) error {
 // columns are written with the pin (migrations 35 and 46), so they say what
 // the pinned spec says.
 //
-// `by` is "hostname", "slug", "id" or "port".
+// `by` is "hostname", "slug", "id" or "port". "slug" finds a path-mode app
+// only.
 func (a *Apps) ByRouting(ctx context.Context, by, value string) (App, *spec.AppSpec, bool, error) {
 	var where string
 	var arg any = value
@@ -1489,7 +1506,11 @@ func (a *Apps) ByRouting(ctx context.Context, by, value string) (App, *spec.AppS
 		where = `a.address_hostname = $1`
 		arg = strings.ToLower(value)
 	case "slug":
-		where = `a.slug = $1`
+		// A path-mode app only, by its pinned spec. An app on its own
+		// hostname or port is served there and nowhere else: at /<slug> its
+		// script would run on Pando's own origin (R-166). A spec with no mode,
+		// pinned before modes were required, answers here as it always has.
+		where = `a.slug = $1 AND coalesce(r.body->'routing'->>'mode', '') NOT IN ('subdomain', 'port')`
 	case "id":
 		where = `a.id = $1`
 	case "port":

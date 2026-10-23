@@ -17,6 +17,13 @@ class Pando:
         code, out = self.req("POST", "/sessions", {"username": "admin", "password": st["admin_password"]})
         if code >= 300:
             raise RuntimeError(f"could not sign in to the QA instance: {code} {out}")
+        if out.get("must_change_password"):
+            # R-046: a password set in the environment is changed at first
+            # sign-in before the session can do anything else. To itself here.
+            code, out = self.req("POST", "/me/password", {
+                "current_password": st["admin_password"], "new_password": st["admin_password"]})
+            if code >= 300:
+                raise RuntimeError(f"could not keep the QA instance's password: {code} {out}")
 
     def req(self, method, path, body=None, raw=None, ctype="application/json", timeout=180):
         url = self.base + "/api/v1" + path
@@ -61,10 +68,23 @@ class Pando:
             lines.append(f"[log stream ended: {e.__class__.__name__}]")
         return "\n".join(lines)
 
-    def fetch_app(self, slug, path="/", timeout=15):
+    def app_url(self, address, path="/"):
+        """The URL of path on an app, from the address the API gives for it.
+
+        An app on a port or a hostname is served there only, not at /<slug> on
+        Pando's own address (R-166), so the address is the one to use.
+        """
+        address = (address or "").rstrip("/")
+        if address.startswith("//"):  # port mode: the host this client reached Pando on
+            return self.base.split("//", 1)[0] + address + path
+        if address.startswith("/"):  # path mode
+            return self.base + address + path
+        return address + path
+
+    def fetch_app(self, address, path="/", timeout=15):
         """GET an app through Pando's proxy, signed in."""
         try:
-            with self.op.open(urllib.request.Request(f"{self.base}/{slug}{path}"), timeout=timeout) as resp:
+            with self.op.open(urllib.request.Request(self.app_url(address, path)), timeout=timeout) as resp:
                 return resp.status, resp.read(4096).decode("utf-8", "replace")
         except urllib.error.HTTPError as e:
             return e.code, e.read(4096).decode("utf-8", "replace")
