@@ -467,6 +467,14 @@ type TrialRequest struct {
 	Timeout        time.Duration
 	IsolationFloor IsolationClass
 
+	// Egress is the rules the trial is held to, resolved by core against host
+	// policy as a deploy's are (R-097, R-182). A trial runs code nobody has
+	// reviewed, so where these restrict anything the runtime enforces them as
+	// it does for a workload, and a runtime that cannot refuses the trial
+	// rather than run it with the rules ignored (R-186). Zero restricts
+	// nothing, and the trial runs as an unrestricted app does.
+	Egress EgressRules
+
 	LogSink io.Writer
 }
 

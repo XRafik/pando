@@ -163,7 +163,7 @@ func TestR255_AnEngineThatIgnoresTheRuntimeRunsNothing(t *testing.T) {
 	require.Contains(t, errs.As(err).Message, `"oci"`, "and what the engine did instead")
 	require.NotEmpty(t, errs.As(err).Remedy)
 
-	_, err = a.startTrialContainer(ctx, api.TrialRequest{TrialID: "tr1", Image: "nginx:1"}, "net2")
+	_, err = a.startTrialContainer(ctx, api.TrialRequest{TrialID: "tr1", Image: "nginx:1"}, "net2", nil)
 	require.Equal(t, errs.AdapterFailed, errs.CodeOf(err))
 
 	require.Zero(t, f.called("POST /containers/c1/start"), "nothing ran outside the sandbox")
@@ -182,7 +182,7 @@ func TestR255_AppCodeRunsUnderTheConfiguredRuntime(t *testing.T) {
 	plan := api.BundlePlan{BundleID: "app_01HQ8", Network: api.NetworkPlan{Private: true}}
 	require.NoError(t, a.applyWorkload(ctx, plan, api.WorkloadPlan{Name: "web", Image: "nginx:1"}, "net1", nil))
 
-	_, err := a.startTrialContainer(ctx, api.TrialRequest{TrialID: "tr1", Image: "nginx:1"}, "net2")
+	_, err := a.startTrialContainer(ctx, api.TrialRequest{TrialID: "tr1", Image: "nginx:1"}, "net2", nil)
 	require.NoError(t, err)
 
 	require.Equal(t, []string{"runsc", "runsc"}, *got)

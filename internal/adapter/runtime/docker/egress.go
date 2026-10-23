@@ -323,38 +323,67 @@ func (a *Adapter) ensureGateway(ctx context.Context, p api.BundlePlan, img gatew
 		}
 	}
 
-	// The zero claim: the gateway's image is Pando's own and is kept, never
-	// released with an app (images.go).
-	if err := a.ensureImage(ctx, img.ref, imageClaim{}); err != nil {
-		return err
-	}
-
-	pids := int64(gatewayPids)
-	cfg := &container.Config{
-		Image:      img.ref,
-		Entrypoint: []string{img.binary},
-		Cmd:        []string{"egress-gateway"},
-		User:       gatewayUser,
-		Env: []string{
-			"PANDO_EGRESS_RULES=" + rules,
-			"PANDO_EGRESS_LISTEN=" + gatewayListenAddr,
+	_, err = a.startGateway(ctx, gatewayLaunch{
+		name: gatewayContainerName(p.BundleID), img: img, rules: rules,
+		labels: map[string]string{
+			labelApp:     p.Labels["pando.app"],
+			labelBundle:  p.BundleID,
+			labelManaged: "true",
 		},
-		Labels: map[string]string{
-			labelApp:          p.Labels["pando.app"],
-			labelBundle:       p.BundleID,
-			labelManaged:      "true",
-			labelRole:         roleEgressGateway,
-			labelEgressDigest: digest,
-		},
-	}
-	limitLabels(cfg.Labels, gatewayNanoCPUs/1_000_000, gatewayMemory)
-	hostCfg := &container.HostConfig{
+		internalName: internalNetworkName(p.BundleID), internalID: internalID, outboundID: outboundID,
 		// Unlike a workload, which has no restart policy so the reconciler can
 		// back off and give up (R-149 – R-151). The gateway is Pando's own and
 		// has no failed state: while it is down the app can reach nothing, and
 		// the reconciler, which watches workloads, would not notice. As the
 		// edge does (edge.go).
-		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
+		restart: container.RestartPolicyUnlessStopped,
+	})
+	return err
+}
+
+// gatewayLaunch is one egress gateway to start: an app's, or a trial run's.
+type gatewayLaunch struct {
+	name   string
+	img    gatewayImage
+	rules  string
+	labels map[string]string // the owner's; the gateway's own are added
+
+	internalName, internalID string
+	outboundID               string
+	restart                  container.RestartPolicyMode
+}
+
+// startGateway creates and starts an egress gateway on the internal network
+// it guards and the outbound network it leaves through, and returns its ID.
+func (a *Adapter) startGateway(ctx context.Context, g gatewayLaunch) (string, error) {
+	// The zero claim: the gateway's image is Pando's own and is kept, never
+	// released with an app (images.go).
+	if err := a.ensureImage(ctx, g.img.ref, imageClaim{}); err != nil {
+		return "", err
+	}
+
+	labels := make(map[string]string, len(g.labels)+4)
+	for k, v := range g.labels {
+		labels[k] = v
+	}
+	labels[labelRole] = roleEgressGateway
+	labels[labelEgressDigest] = egressDigest(g.img, g.rules)
+	limitLabels(labels, gatewayNanoCPUs/1_000_000, gatewayMemory)
+
+	pids := int64(gatewayPids)
+	cfg := &container.Config{
+		Image:      g.img.ref,
+		Entrypoint: []string{g.img.binary},
+		Cmd:        []string{"egress-gateway"},
+		User:       gatewayUser,
+		Env: []string{
+			"PANDO_EGRESS_RULES=" + g.rules,
+			"PANDO_EGRESS_LISTEN=" + gatewayListenAddr,
+		},
+		Labels: labels,
+	}
+	hostCfg := &container.HostConfig{
+		RestartPolicy: container.RestartPolicy{Name: g.restart},
 
 		// Nothing to write and nothing to escalate to.
 		ReadonlyRootfs: true,
@@ -368,29 +397,29 @@ func (a *Adapter) ensureGateway(ctx context.Context, p api.BundlePlan, img gatew
 		},
 		LogConfig: logConfig(gatewayLogBytes),
 	}
-	// Created on the bundle's internal network, under the alias its workloads'
-	// proxy variables name, and joined to its outbound network before it
-	// starts. One network at create, because Podman and older Docker APIs
-	// accept only one there.
+	// Created on the internal network, under the alias the workloads' proxy
+	// variables name, and joined to the outbound network before it starts.
+	// One network at create, because Podman and older Docker APIs accept
+	// only one there.
 	netCfg := &network.NetworkingConfig{
 		EndpointsConfig: map[string]*network.EndpointSettings{
-			internalNetworkName(p.BundleID): {NetworkID: internalID, Aliases: []string{gatewayAlias}},
+			g.internalName: {NetworkID: g.internalID, Aliases: []string{gatewayAlias}},
 		},
 	}
 	created, err := a.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
-		Config: cfg, HostConfig: hostCfg, NetworkingConfig: netCfg, Name: gatewayContainerName(p.BundleID),
+		Config: cfg, HostConfig: hostCfg, NetworkingConfig: netCfg, Name: g.name,
 	})
 	if err != nil {
-		return errs.Wrap(errs.AdapterFailed, "Could not create this app's egress gateway.", err)
+		return "", errs.Wrap(errs.AdapterFailed, "Could not create this app's egress gateway.", err)
 	}
-	if _, err := a.cli.NetworkConnect(ctx, outboundID, client.NetworkConnectOptions{Container: created.ID}); err != nil {
+	if _, err := a.cli.NetworkConnect(ctx, g.outboundID, client.NetworkConnectOptions{Container: created.ID}); err != nil {
 		_ = a.removeContainer(ctx, created.ID)
-		return errs.Wrap(errs.AdapterFailed, "Could not connect this app's egress gateway to the network it leaves through.", err)
+		return "", errs.Wrap(errs.AdapterFailed, "Could not connect this app's egress gateway to the network it leaves through.", err)
 	}
 	if _, err := a.cli.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
-		return errs.Wrap(errs.AdapterFailed, "Could not start this app's egress gateway.", err)
+		return created.ID, errs.Wrap(errs.AdapterFailed, "Could not start this app's egress gateway.", err)
 	}
-	return nil
+	return created.ID, nil
 }
 
 // gatewayMatches reports whether an existing gateway already satisfies the

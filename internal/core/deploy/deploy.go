@@ -451,8 +451,13 @@ func (r *Runner) Run(ctx context.Context, dep state.Deployment, rev state.Revisi
 	// that was just built (R-097). Before `applying`, for the same reason as the
 	// scan: a refusal must leave the running app untouched (R-146).
 	if needsPortCheck(appSpec) && image != "" {
-		if runtime, ok := r.registry.Runtime(appSpec.Runtime.AdapterRef); ok {
-			check := checkPortWith(ctx, runtime, appSpec, image, r.builtImageAuth(ctx, image), "port-"+strings.ToLower(dep.ID), sink)
+		runtime, ok := r.registry.Runtime(appSpec.Runtime.AdapterRef)
+		// The rules the deploy runs with, which the check is held to too. Not
+		// knowing them skips the check: the assumption stands, as it does on a
+		// runtime that cannot run one.
+		rules, known := r.trialEgress(ctx, appSpec)
+		if ok && known {
+			check := checkPortWith(ctx, runtime, appSpec, image, r.builtImageAuth(ctx, image), "port-"+strings.ToLower(dep.ID), rules, sink)
 			if check.Refusal != nil {
 				writeFailure(sink, messageOf(check.Refusal), check.Refusal)
 				fmt.Fprintf(sink, "   The running version of this app was not touched.\n")
@@ -937,6 +942,19 @@ func startCommand(s *spec.AppSpec, wb *spec.WorkloadBuild) string {
 // mounts, volumes — and must never be a reason to decrypt a secret, so this
 // stops short of environment and R-193's fingerprint covers the rest.
 //
+// trialEgress is the egress rules the deploy's own port check is held to: the
+// deploy's (R-097, R-188). False when they could not be read.
+func (r *Runner) trialEgress(ctx context.Context, s *spec.AppSpec) (api.EgressRules, bool) {
+	if r.planner == nil {
+		return api.EgressRules{}, true
+	}
+	eff, err := r.planner.Egress(ctx, s)
+	if err != nil {
+		return api.EgressRules{}, false
+	}
+	return eff.Rules, true
+}
+
 // Egress is the rules the app's last successful deploy ran with, which the
 // deployment records: rules take effect at a deploy and a running app is not
 // changed underneath it (R-183, O-10), so correcting drift restores what was

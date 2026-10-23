@@ -45,20 +45,23 @@ func (a *Adapter) Trial(ctx context.Context, req api.TrialRequest) (api.TrialRes
 
 	// The trial gets its own network, private like any other bundle (R-026).
 	// Pando does not join it: nothing needs to reach the app, and an app that
-	// is about to be observed is the last thing to give a route to.
-	networkID, err := a.trialNetwork(ctx, req.TrialID)
+	// is about to be observed is the last thing to give a route to. Where the
+	// rules the app would run with restrict anything, the trial is held to
+	// them as the deploy is: a network with no route out and a gateway in
+	// front of it (R-097, R-187).
+	networkID, env, cleanup, err := a.trialNetwork(ctx, req)
 	if err != nil {
 		return api.TrialResult{}, err
 	}
-	defer func() {
-		_, _ = a.cli.NetworkRemove(context.WithoutCancel(ctx), networkID, client.NetworkRemoveOptions{})
-	}()
+	// WithoutCancel inside cleanup, so a canceled or timed-out trial still
+	// cleans up.
+	defer cleanup()
 
 	if err := a.ensureImageWith(ctx, req.Image, req.PullAuth, forTrial); err != nil {
 		return api.TrialResult{}, err
 	}
 
-	id, err := a.startTrialContainer(ctx, req, networkID)
+	id, err := a.startTrialContainer(ctx, req, networkID, env)
 	if err != nil {
 		return api.TrialResult{}, err
 	}
@@ -87,22 +90,100 @@ func (a *Adapter) Trial(ctx context.Context, req api.TrialRequest) (api.TrialRes
 	return result, nil
 }
 
-func (a *Adapter) trialNetwork(ctx context.Context, trialID string) (string, error) {
-	created, err := a.createNetwork(ctx, "pando-trial-"+trialID, a.blockBits(), client.NetworkCreateOptions{
+// trialNetwork makes the network a trial runs on, and returns the
+// environment the trial is started with and what removes everything it made.
+//
+// With rules that restrict nothing, it is an ordinary bridge with a route out,
+// as an unrestricted app's is (R-186): the app may legitimately need to fetch
+// something to start. With rules that restrict anything, it is the deploy's
+// arrangement (egress.go): an internal network with no route out, a gateway
+// on it enforcing the rules, and the proxy variables naming that gateway
+// (R-187). A runtime with no gateway image refuses the trial rather than run
+// it with the rules ignored (R-186).
+func (a *Adapter) trialNetwork(ctx context.Context, req api.TrialRequest) (string, map[string]string, func(), error) {
+	restricted := req.Egress.Restricted()
+	var (
+		gateway gatewayImage
+		rules   string
+	)
+	if restricted {
+		if gateway = a.egressGateway(ctx); gateway.ref == "" {
+			return "", nil, nil, errs.New(errs.PlanCapabilityUnsupported,
+				"This app's egress rules restrict where it may connect, and the Docker runtime has no image to run Pando's egress gateway from, so it cannot hold the trial run to them.").
+				WithRemedy("Run Pando in a container, as the shipped Compose file does, or set the Docker runtime's egress_gateway_image to an image of Pando.")
+		}
+		var err error
+		if rules, err = egressRulesJSON(req.Egress); err != nil {
+			return "", nil, nil, err
+		}
+	}
+
+	name := trialNetworkName(req.TrialID)
+	created, err := a.createNetwork(ctx, name, a.blockBits(), client.NetworkCreateOptions{
 		Driver:   "bridge",
-		Internal: false, // the app may legitimately need to fetch something to start
-		Labels:   map[string]string{labelManaged: "true", labelTrial: trialID},
+		Internal: restricted,
+		Labels:   map[string]string{labelManaged: "true", labelTrial: req.TrialID},
 	})
 	if err != nil {
-		return "", errs.Wrap(errs.AdapterFailed, "Could not create a network for the trial run.", err)
+		return "", nil, nil, errs.Wrap(errs.AdapterFailed, "Could not create a network for the trial run.", err)
 	}
-	return created.ID, nil
+	removeNetwork := func() {
+		_, _ = a.cli.NetworkRemove(context.WithoutCancel(ctx), created.ID, client.NetworkRemoveOptions{})
+	}
+	if !restricted {
+		return created.ID, workloadEnv(api.WorkloadPlan{Env: req.Env}, nil), removeNetwork, nil
+	}
+
+	removeGateway, err := a.trialGateway(ctx, req.TrialID, gateway, rules, name, created.ID)
+	if err != nil {
+		removeNetwork()
+		return "", nil, nil, err
+	}
+	// The trial is one container, so NO_PROXY names only the container itself.
+	env := workloadEnv(api.WorkloadPlan{Env: req.Env}, proxyEnv(api.BundlePlan{}))
+	return created.ID, env, func() { removeGateway(); removeNetwork() }, nil
 }
 
-func (a *Adapter) startTrialContainer(ctx context.Context, req api.TrialRequest, networkID string) (string, error) {
-	env := make([]string, 0, len(req.Env))
-	for k, v := range req.Env {
-		env = append(env, k+"="+v.Reveal())
+func trialNetworkName(trialID string) string { return "pando-trial-" + trialID }
+
+// trialGateway starts a restricted trial's egress gateway: on the trial's
+// network under the alias the proxy variables name, and on an outbound
+// network of its own. Labeled as the trial's, so CleanupTrials removes both
+// if Pando stops halfway. Returns what removes them.
+func (a *Adapter) trialGateway(ctx context.Context, trialID string, img gatewayImage, rules, internalName, internalID string) (func(), error) {
+	labels := map[string]string{labelManaged: "true", labelTrial: trialID}
+	outbound, err := a.createNetwork(ctx, trialNetworkName(trialID)+"-outbound", outboundBlockBits, client.NetworkCreateOptions{
+		Driver: "bridge",
+		Labels: map[string]string{labelManaged: "true", labelTrial: trialID, labelEgressNetwork: egressNetworkOutbound},
+	})
+	if err != nil {
+		return nil, networkFailure(err, "Could not set up the network the trial run's egress gateway leaves through.")
+	}
+	var gatewayID string
+	remove := func() {
+		cleanup := context.WithoutCancel(ctx)
+		if gatewayID != "" {
+			_ = a.removeContainer(cleanup, gatewayID)
+		}
+		_, _ = a.cli.NetworkRemove(cleanup, outbound.ID, client.NetworkRemoveOptions{})
+	}
+	gatewayID, err = a.startGateway(ctx, gatewayLaunch{
+		name: trialNetworkName(trialID) + "-egress", img: img, rules: rules, labels: labels,
+		internalName: internalName, internalID: internalID, outboundID: outbound.ID,
+		// Thrown away with the trial: nothing to restart it for.
+		restart: container.RestartPolicyDisabled,
+	})
+	if err != nil {
+		remove()
+		return nil, err
+	}
+	return remove, nil
+}
+
+func (a *Adapter) startTrialContainer(ctx context.Context, req api.TrialRequest, networkID string, vars map[string]string) (string, error) {
+	env := make([]string, 0, len(vars))
+	for k, v := range vars {
+		env = append(env, k+"="+v)
 	}
 	sort.Strings(env)
 
@@ -123,6 +204,10 @@ func (a *Adapter) startTrialContainer(ctx context.Context, req api.TrialRequest,
 		// one — Vaultwarden refuses to start without /data mounted (issue
 		// #55) — and a trial leaves no anonymous volume behind.
 		Tmpfs: tmpfsFor(a.imageVolumes(ctx, req.Image)),
+
+		// Memory and CPU caps, so one repository's trial cannot take the
+		// host from every running app (trialResources).
+		Resources: a.trialResources(ctx),
 	}
 	// And the limits the deploy gets, for the same reason: a repository's
 	// trial is the least trusted code Pando runs (hardening.go).
@@ -382,15 +467,63 @@ func answersFor(routable []int, answered map[int]int) []api.HTTPAnswer {
 	return out
 }
 
+// trialTmpfsSize caps each throwaway mount a trial gets where its image
+// declares a volume [P]. Unsized, one is allowed half the host's memory. A
+// gigabyte holds what a first start writes there: a database initializing its
+// data directory writes tens to a few hundred megabytes.
+const trialTmpfsSize = "size=1g"
+
 func tmpfsFor(paths []string) map[string]string {
 	if len(paths) == 0 {
 		return nil
 	}
 	out := make(map[string]string, len(paths))
 	for _, p := range paths {
-		out[p] = ""
+		out[p] = trialTmpfsSize
 	}
 	return out
+}
+
+// What a trial run may use [P] (R-097). A trial runs before the app has a
+// spec, so it has no limits of its own yet. These are generous on purpose: a
+// trial that is cut short reports an app that works as one that does not.
+// Four gigabytes of memory holds a JVM or a Rails app's first start with
+// room; half the host's CPUs, and never fewer than two where the host has
+// them, keeps a slow first start inside the trial's timeout and leaves the
+// rest of the host to the apps already running.
+const (
+	trialMemoryBytes = 4 << 30
+	trialMinCPUs     = 2
+	nanoCPUsPerCPU   = 1_000_000_000
+)
+
+// trialResources is the trial's memory and CPU cap, each set only where the
+// engine says it applies it: an engine that drops a limit silently would
+// claim one that is not there, and Podman without a delegated controller
+// refuses the create, which would end the trial (limits.go).
+func (a *Adapter) trialResources(ctx context.Context) container.Resources {
+	info, err := a.cli.Info(ctx, client.InfoOptions{})
+	if err != nil {
+		return container.Resources{}
+	}
+	support, err := a.support(ctx, info.Info)
+	if err != nil {
+		return container.Resources{}
+	}
+	return trialLimits(support, info.Info.NCPU)
+}
+
+// trialLimits is trialResources for an engine's answer.
+func trialLimits(support limitSupport, hostCPUs int) container.Resources {
+	var r container.Resources
+	if support.memory {
+		r.Memory = trialMemoryBytes
+	}
+	if support.cpu && hostCPUs > 0 {
+		cpus := min(hostCPUs, max(trialMinCPUs, hostCPUs/2))
+		r.NanoCPUs = int64(cpus) * nanoCPUsPerCPU
+	}
+	return r
 }
 
 // imageVolumes reads the paths the image declares with VOLUME. Vaultwarden
