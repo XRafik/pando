@@ -179,7 +179,12 @@ func SafeNext(next string) string {
 	if next == "" || !strings.HasPrefix(next, "/") || strings.IndexFunc(next, isControl) >= 0 {
 		return "/"
 	}
-	resolved, err := nextBase.Parse(strings.ReplaceAll(next, "\\", "/"))
+	// Only the path: a backslash in a query or fragment is data.
+	path, rest := next, ""
+	if i := strings.IndexAny(next, "?#"); i >= 0 {
+		path, rest = next[:i], next[i:]
+	}
+	resolved, err := nextBase.Parse(strings.ReplaceAll(path, "\\", "/") + rest)
 	if err != nil || resolved.Scheme != nextBase.Scheme || resolved.Host != nextBase.Host || resolved.User != nil {
 		return "/"
 	}

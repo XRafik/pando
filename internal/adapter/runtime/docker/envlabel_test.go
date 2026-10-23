@@ -68,8 +68,10 @@ func TestR193_AContainerFromBeforeTheEnvLabelIsComparedWithItsImage(t *testing.T
 	image := map[string]any{"Id": "sha256:n", "Config": map[string]any{"Env": []string{"NGINX_VERSION=1", "PORT=80"}}}
 	plan := map[string]string{"TOKEN": "t"}
 
-	require.True(t, matches([]string{"PATH=/bin", "NGINX_VERSION=1", "PORT=80", "TOKEN=t"}, image, plan),
-		"unchanged: the image's variables and the plan's")
+	require.True(t, matches([]string{"PATH=" + dockerDefaultPath, "NGINX_VERSION=1", "PORT=80", "TOKEN=t"}, image, plan),
+		"unchanged: the image's variables, the daemon's PATH and the plan's")
+	require.False(t, matches([]string{"PATH=/opt/tool/bin", "NGINX_VERSION=1", "PORT=80", "TOKEN=t"}, image, plan),
+		"a PATH the plan set and no longer does")
 	require.False(t, matches([]string{"NGINX_VERSION=1", "PORT=80", "TOKEN=t", "OLD_SECRET=s"}, image, plan),
 		"a variable neither the plan nor the image sets")
 	require.False(t, matches([]string{"NGINX_VERSION=1", "PORT=8080", "TOKEN=t"}, image, plan),

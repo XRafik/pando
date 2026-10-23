@@ -178,6 +178,8 @@ func TestR043_ASignInLandsOnlyOnThisHost(t *testing.T) {
 		"/apps/notes#top":       "/apps/notes#top",
 		"/apps/a%2Fb?q=%20x":    "/apps/a%2Fb?q=%20x",
 		"/apps/notes/../files":  "/apps/files",
+		"/apps/view?p=a\\b":     "/apps/view?p=a\\b",
+		"/apps/view#a\\b":       "/apps/view#a%5Cb",
 	} {
 		require.Equal(t, want, SafeNext(in), "%q", in)
 	}

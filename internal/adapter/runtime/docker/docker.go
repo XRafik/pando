@@ -2020,7 +2020,7 @@ func (a *Adapter) matchesPlan(ctx context.Context, containerID string, w api.Wor
 // A container created before that label is compared with its image instead:
 // any variable the plan does not set and the image does not set to that value
 // is one Pando set and the plan has dropped. An unchanged app is therefore not restarted only because
-// Pando was upgraded. PATH is the daemon's default when the image has none.
+// Pando was upgraded. PATH is accepted only as the daemon's default when the image has none.
 func (a *Adapter) setsOnlyPlannedEnv(ctx context.Context, cfg *container.Config, existing, env map[string]string) bool {
 	if digest, ok := cfg.Labels[labelEnv]; ok {
 		return digest == envNamesDigest(env)
@@ -2043,13 +2043,17 @@ func (a *Adapter) setsOnlyPlannedEnv(ctx context.Context, cfg *container.Config,
 		imageValue, imageSets := fromImage[k]
 		switch {
 		case imageSets && v == imageValue:
-		case !imageSets && k == "PATH":
+		case !imageSets && k == "PATH" && v == dockerDefaultPath:
 		default:
 			return false
 		}
 	}
 	return true
 }
+
+// dockerDefaultPath is the PATH the Docker daemon gives a Linux container
+// whose image sets none.
+const dockerDefaultPath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 // hasAliases reports whether a container answers on its network to every name
 // the plan gives it: its workload name and the compose container_name aliases
