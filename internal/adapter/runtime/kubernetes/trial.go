@@ -46,10 +46,7 @@ func (a *Adapter) Trial(ctx context.Context, req api.TrialRequest) (api.TrialRes
 	if timeout <= 0 {
 		timeout = 60 * time.Second
 	}
-	ns := "pando-trial-" + toLabel(req.TrialID)
-	if len(ns) > 63 {
-		ns = strings.TrimRight(ns[:63], "-")
-	}
+	ns := trialNamespace(req.TrialID)
 
 	if _, err := a.cs.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
 		Name:   ns,
@@ -91,6 +88,16 @@ func (a *Adapter) Trial(ctx context.Context, req api.TrialRequest) (api.TrialRes
 		_, _ = io.WriteString(req.LogSink, result.Log)
 	}
 	return result, nil
+}
+
+// trialNamespace is the namespace a trial runs in, within the 63 characters
+// a name may have.
+func trialNamespace(trialID string) string {
+	ns := "pando-trial-" + toLabel(trialID)
+	if len(ns) > 63 {
+		ns = strings.TrimRight(ns[:63], "-")
+	}
+	return ns
 }
 
 // trialSecrets writes the trial's environment, with the proxy variables where
