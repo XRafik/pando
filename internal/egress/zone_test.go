@@ -70,7 +70,8 @@ func TestR180_TheGatewayNeverConnectsToTheHostItRunsOn(t *testing.T) {
 	h.route("host.example", "10.213.0.17", 22, echoServer(t))
 	h.route("other.example", "10.0.0.5", 22, echoServer(t))
 
-	for _, target := range []string{"10.213.0.17:22", "host.example:22", "10.213.0.9:3128"} {
+	for _, target := range []string{"10.213.0.17:22", "host.example:22", "10.213.0.9:3128",
+		"[64:ff9b::ad5:11]:22", "[64:ff9b::7f00:1]:80"} {
 		_, _, resp := h.connect(target)
 		require.Equal(t, http.StatusForbidden, resp.StatusCode, target)
 		require.Contains(t, body(t, resp), "the gateway's own address", target)

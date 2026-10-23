@@ -347,7 +347,9 @@ func (g *Gateway) decide(ctx context.Context, host string, port int) ([]netip.Ad
 // whatever the rules say, so no rule can open the gateway to connections to
 // itself or to the host it runs on.
 func (g *Gateway) decideAddr(host string, port int, a netip.Addr) Decision {
-	if a.IsLoopback() || a.IsUnspecified() || slices.Contains(g.Own, a) {
+	// Judged as the address it carries, so a NAT64 spelling of loopback or
+	// of an own address is refused as that address is.
+	if c := Carried(a); c.IsLoopback() || c.IsUnspecified() || slices.Contains(g.Own, c) {
 		return Decision{Reason: fmt.Sprintf("%s is the gateway's own address, which is never a destination", a)}
 	}
 	return g.Rules.Allows(host, port, a)
