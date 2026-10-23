@@ -142,16 +142,8 @@ func reserveIn(ctx context.Context, tx pgx.Tx, limits []AttemptLimit) (res, bloc
 	// attempts holding the same keys cannot each wait for the other. Each
 	// lock is its own statement, so the counts after it see what the last
 	// holder committed.
-	keys := make([]string, 0, len(limits))
-	for _, l := range limits {
-		keys = append(keys, l.Key)
-	}
-	slices.Sort(keys)
-	for _, key := range slices.Compact(keys) {
-		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
-			failedAttemptsLockKey+key); err != nil {
-			return Reservation{}, none, err
-		}
+	if err := lockKeys(ctx, tx, limits); err != nil {
+		return Reservation{}, none, err
 	}
 	for i, l := range limits {
 		var failed, pending int
@@ -177,27 +169,58 @@ func reserveIn(ctx context.Context, tx pgx.Tx, limits []AttemptLimit) (res, bloc
 	if blocked.Refused() {
 		return blocked, blocked, nil
 	}
-	res = Reservation{Over: -1}
+	res, err = holdAll(ctx, tx, limits)
+	if err != nil {
+		return Reservation{}, none, err
+	}
+	return res, none, nil
+}
+
+// lockKeys takes each key's advisory lock in one order whatever order the
+// limits come in, so two attempts holding the same keys cannot each wait for
+// the other.
+func lockKeys(ctx context.Context, tx pgx.Tx, limits []AttemptLimit) error {
+	keys := make([]string, 0, len(limits))
+	for _, l := range limits {
+		keys = append(keys, l.Key)
+	}
+	slices.Sort(keys)
+	for _, key := range slices.Compact(keys) {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+			failedAttemptsLockKey+key); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// holdAll counts a pending failure against every limit and forgets each key's
+// failures older than its window.
+func holdAll(ctx context.Context, tx pgx.Tx, limits []AttemptLimit) (Reservation, error) {
+	res := Reservation{Over: -1}
 	for _, l := range limits {
 		var at time.Time
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO failed_attempts (key, failed_at, pending) VALUES ($1, clock_timestamp(), true) RETURNING failed_at`,
 			l.Key).Scan(&at); err != nil {
-			return Reservation{}, none, err
+			return Reservation{}, err
 		}
 		if _, err := tx.Exec(ctx, `
 			DELETE FROM failed_attempts WHERE key = $1 AND failed_at <= clock_timestamp() - make_interval(secs => $2)`,
 			l.Key, l.Window.Seconds()); err != nil {
-			return Reservation{}, none, err
+			return Reservation{}, err
 		}
 		res.Held = append(res.Held, HeldAttempt{Key: l.Key, At: at})
 	}
-	return res, none, nil
+	return res, nil
 }
 
 // failedAttemptsLockKey prefixes a key for its advisory lock, so it cannot
 // share one with another use of advisory locks.
 const failedAttemptsLockKey = "failed_attempts|"
+
+// recordFailedMessage is what a failure to record an attempt says.
+const recordFailedMessage = "Could not record a failed attempt."
 
 // Fail settles a reservation's pending failures as failures: the guess was
 // wrong.
@@ -211,7 +234,7 @@ func (p *FailedAttempts) Fail(ctx context.Context, res Reservation) error {
 		failed = errors.Join(failed, err)
 	}
 	if failed != nil {
-		return errs.Wrap(errs.Internal, "Could not record a failed attempt.", failed)
+		return errs.Wrap(errs.Internal, recordFailedMessage, failed)
 	}
 	return nil
 }
@@ -266,12 +289,12 @@ func (p *FailedAttempts) Wait(ctx context.Context, key string, window time.Durat
 // for it, which nothing will count again.
 func (p *FailedAttempts) Record(ctx context.Context, key string, window time.Duration) error {
 	if _, err := p.db.Exec(ctx, `INSERT INTO failed_attempts (key) VALUES ($1)`, key); err != nil {
-		return errs.Wrap(errs.Internal, "Could not record a failed attempt.", err)
+		return errs.Wrap(errs.Internal, recordFailedMessage, err)
 	}
 	if _, err := p.db.Exec(ctx, `
 		DELETE FROM failed_attempts WHERE key = $1 AND failed_at <= now() - make_interval(secs => $2)`,
 		key, window.Seconds()); err != nil {
-		return errs.Wrap(errs.Internal, "Could not record a failed attempt.", err)
+		return errs.Wrap(errs.Internal, recordFailedMessage, err)
 	}
 	return nil
 }

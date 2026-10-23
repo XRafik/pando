@@ -89,12 +89,7 @@ func (l *memoryFailedAttempts) reserveOnce(limits []state.AttemptLimit) (state.R
 	blocked := state.Reservation{Over: -1}
 	for i, limit := range limits {
 		recent := l.within(limit.Key, limit.Window)
-		failed := 0
-		for _, a := range recent {
-			if !a.pending || time.Since(a.at) >= state.PendingStale {
-				failed++
-			}
-		}
+		failed := settled(recent)
 		if len(recent) == 0 {
 			continue
 		}
@@ -109,13 +104,30 @@ func (l *memoryFailedAttempts) reserveOnce(limits []state.AttemptLimit) (state.R
 	if blocked.Refused() {
 		return blocked, true
 	}
+	return l.holdAll(limits), false
+}
+
+// settled counts the attempts that count as failures: those no longer
+// pending, and pending ones too old to still be in flight.
+func settled(attempts []memoryAttempt) int {
+	n := 0
+	for _, a := range attempts {
+		if !a.pending || time.Since(a.at) >= state.PendingStale {
+			n++
+		}
+	}
+	return n
+}
+
+// holdAll counts a pending failure against every limit. The caller holds mu.
+func (l *memoryFailedAttempts) holdAll(limits []state.AttemptLimit) state.Reservation {
 	res := state.Reservation{Over: -1}
 	for _, limit := range limits {
 		at := time.Now()
 		l.seen[limit.Key] = append(l.seen[limit.Key], memoryAttempt{at: at, pending: true})
 		res.Held = append(res.Held, state.HeldAttempt{Key: limit.Key, At: at})
 	}
-	return res, false
+	return res
 }
 
 // held is the index of h among its key's attempts, or -1. The caller holds mu.
