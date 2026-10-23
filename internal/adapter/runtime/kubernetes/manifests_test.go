@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -247,4 +249,93 @@ func TestR112_TheClusterBuilderMountsNoRuntimeSocket(t *testing.T) {
 		}
 	}
 	require.True(t, found)
+}
+
+// TestR402_PandosClusterRoleHoldsOnlyWhatTheRuntimeCalls asserts the
+// cluster-wide grant is narrowed to the calls the runtime makes: a role
+// binding is only created (admission says where and what), the one role Pando
+// may bind is pando-app-manager, the one ServiceAccount it reads is
+// "default", pods and nodes are only listed and watched, a volume is never
+// deleted directly, and nothing is granted by wildcard.
+func TestR402_PandosClusterRoleHoldsOnlyWhatTheRuntimeCalls(t *testing.T) {
+	var role *rbacv1.ClusterRole
+	for _, obj := range manifests(t) {
+		if r, ok := obj.(*rbacv1.ClusterRole); ok && r.Name == "pando" {
+			role = r
+		}
+	}
+	require.NotNil(t, role)
+	type grant struct {
+		verbs []string
+		names []string
+	}
+	grants := map[string]grant{}
+	for _, r := range role.Rules {
+		if !slices.Equal(r.APIGroups, []string{""}) && !slices.Contains(r.APIGroups, rbacv1.GroupName) {
+			// metrics.k8s.io and node.k8s.io: read only.
+			for _, v := range r.Verbs {
+				require.Contains(t, []string{"get", "list"}, v, r.APIGroups)
+			}
+			continue
+		}
+		for _, res := range r.Resources {
+			require.NotEqual(t, "*", res)
+			for _, v := range r.Verbs {
+				require.NotEqual(t, "*", v)
+			}
+			g := grants[res]
+			g.verbs = append(g.verbs, r.Verbs...)
+			g.names = append(g.names, r.ResourceNames...)
+			grants[res] = g
+		}
+	}
+	require.ElementsMatch(t, []string{"create"}, grants["rolebindings"].verbs)
+	require.ElementsMatch(t, []string{"bind"}, grants["clusterroles"].verbs)
+	require.Equal(t, []string{defaultAppRole}, grants["clusterroles"].names)
+	require.ElementsMatch(t, []string{"get"}, grants["serviceaccounts"].verbs)
+	require.Equal(t, []string{"default"}, grants["serviceaccounts"].names)
+	require.ElementsMatch(t, []string{"get", "list", "create", "delete"}, grants["namespaces"].verbs)
+	require.ElementsMatch(t, []string{"list", "watch"}, grants["pods"].verbs)
+	require.ElementsMatch(t, []string{"list"}, grants["nodes"].verbs)
+	require.ElementsMatch(t, []string{"get", "patch"}, grants["persistentvolumes"].verbs)
+	for _, res := range []string{"secrets", "pods/exec", "roles", "clusterrolebindings"} {
+		require.NotContains(t, grants, res, "nothing cluster-wide on %s", res)
+	}
+}
+
+// imageRef is an image a manifest or Compose file names: in an `image:` key,
+// or as the egress gateway image.
+var imageRef = regexp.MustCompile(`(?m)^\s*-?\s*(?:image|egress_gateway_image):\s*["']?([^\s"'#]+)`)
+
+// TestR401_EveryShippedImageIsPinnedByDigest asserts every image the install
+// files run names a version and a digest, and that the egress gateway runs
+// the same Pando image as the server, so a release moves both at once.
+func TestR401_EveryShippedImageIsPinnedByDigest(t *testing.T) {
+	files, err := filepath.Glob(filepath.Join(manifestDir, "*.yaml"))
+	require.NoError(t, err)
+	compose, err := filepath.Glob(filepath.Join(manifestDir, "..", "..", "docker-compose*.yml"))
+	require.NoError(t, err)
+	require.NotEmpty(t, compose)
+	files = append(files, compose...)
+
+	pando := map[string]bool{}
+	seen := 0
+	for _, f := range files {
+		body, err := os.ReadFile(f) //nolint:gosec // a file in this repository
+		require.NoError(t, err)
+		for _, m := range imageRef.FindAllStringSubmatch(string(body), -1) {
+			ref := m[1]
+			seen++
+			name, digest, ok := strings.Cut(ref, "@sha256:")
+			require.True(t, ok, "%s: %s is not pinned by digest", filepath.Base(f), ref)
+			require.Len(t, digest, 64, ref)
+			require.Contains(t, name[strings.LastIndex(name, "/")+1:], ":", "%s names no version beside its digest", ref)
+			require.NotContains(t, name, ":latest", ref)
+			if strings.HasPrefix(name, "trypando/pando:") {
+				pando[ref] = true
+			}
+		}
+	}
+	require.Greater(t, seen, 4)
+	require.Len(t, pando, 1, "the server and the egress gateway run one Pando image: %v", pando)
 }

@@ -27,7 +27,7 @@ what was built, with these differences, each a **[P]** the owner may override:
 | Usage | CPU and memory per workload from `metrics.k8s.io` (`k8s.io/metrics`); `ReportsUsage` is false, and the console says use is not reported, when the cluster serves no metrics API. Disk and volume sizes are -1 | Volume sizes need `nodes/proxy`, which the adapter does not ask for |
 | `LargestFit` | The eligible node with the most memory (then CPU) left after every pod's requests, Pando's included; `LargestFitFor` adds back the bundle's own pods' requests, so a redeploy that fits where it runs is allowed (merged with PR 7's planner rule) | The planner compares an app's summed workloads with one node, which is stricter than the scheduler needs; Apply turns a `FailedScheduling` refusal into the deploy's error |
 | Keys | `pando-keys` Secret mounted by `subPath` over `/var/lib/pando/secrets.key` and `token.key` on the shared volume | No setting changes, and no replica can write a key of its own. The secrets-key canary and `token_key_check` still run at every start and refuse a replica whose mounted key differs from the one the database was set up with |
-| RBAC | The cluster role adds `pods: get, list, watch` cluster-wide, read-only, and `metrics.k8s.io` `pods`, `nodes`: `get, list` | Capacity subtracts what other pods request on each node; usage reads metrics. Pando cannot change, exec into or read logs of a pod outside its own namespaces |
+| RBAC | The cluster role adds `pods: list, watch` cluster-wide, read-only, and `metrics.k8s.io` `pods`, `nodes`: `get, list` | Capacity subtracts what other pods request on each node; usage reads metrics. Pando cannot change, exec into or read logs of a pod outside its own namespaces |
 | API rate | `api_qps` and `api_burst` settings on the runtime (default 200 and 400) and on the Traefik adapter's IngressRoute delivery (100 and 200); every client to the cluster's API is limited by them, and the runtime asks for the built-in kinds as protobuf | Without them client-go allows 5 requests a second, about 18 apps observed in a 15-second pass. The defaults are sized for a five-minute sweep (O-52) of 20,000 apps across two replicas; see `notes-kubernetes-scale-issue-72.md`, "What changed" |
 | A new namespace's first pod | `Apply`, the trial and the canary wait, up to 30 s and polling as other waits do, for the namespace's `default` ServiceAccount before creating a pod; the cluster role reads ServiceAccounts (`get`) | The ServiceAccount admission plugin refuses every pod until the controller manager has made it; on kwok one deploy in ten of the first 2,500 failed this way |
 | Capacity read | Once per plan (design 03, "One reading per plan"), in pages of 500 pods, only pods not finished, keeping sums rather than the list | It lists every pod in the cluster; not kept between plans, and not from a watch, so R-242 never answers from a reading that can miss a pod |
@@ -80,7 +80,7 @@ ReadWriteMany volume (the test's is a directory every kind node mounts); usage f
 |---|---|
 | `namespaces.yaml` | `pando` and `pando-edge`, both Pod Security `baseline`, and `pando-build`, `privileged`, for BuildKit alone (O-48) |
 | `rbac.yaml` | The tables under "RBAC, minimal" below: Pando's ClusterRole, `pando-app-manager`, the edge Role, and `pando-edge-traefik` (a Role in `pando-edge`, and a ClusterRole reading nodes, which Traefik watches from 3.2; the Role covers the configmaps it watches from 3.4) |
-| `admission-policy.yaml` | The ValidatingAdmissionPolicies: namespace deletes only of Pando's, no NodePort or LoadBalancer Service but the edge's, no `ExternalName` outside `pando-edge`, no host network or host port, every IngressRoute to `pando-proxy` |
+| `admission-policy.yaml` | The ValidatingAdmissionPolicies: namespace deletes only of Pando's app namespaces; a namespace Pando makes is labeled `managed-by=pando` and enforces Pod Security `baseline` or `restricted`; a role binding only of `pando-app-manager`, to Pando's ServiceAccount, in such a namespace; no NodePort or LoadBalancer Service but the edge's, no `ExternalName` outside `pando-edge`; no host network, PID, IPC, port or path, no privileged container and no capability beyond `workloadSecurity`'s; every IngressRoute to `pando-proxy` (R-402) |
 | `networkpolicy.yaml` | Default deny in `pando`; Pando's server pods admit the edge and each other on 8080; BuildKit admits only Pando and reaches only outside the cluster |
 | `buildkit.yaml` | Rootless BuildKit alone in `pando-build`, which enforces Pod Security `privileged`: seccomp and AppArmor `Unconfined`, nothing privileged, no host path or runtime socket (O-48, R-112). It admits only Pando's server pods and reaches DNS, the in-cluster registry and outside the cluster (R-113) |
 | `pando.yaml` | A ConfigMap declaring `rt_kubernetes` and `rte_traefik` (`delivery: kubernetes_api`); the ReadWriteMany `pando-data` claim (O-39); Deployment `pando`, 2 replicas, `PANDO_SERVER_ADVERTISE_URL=http://$(POD_IP):8080` from the downward API, `PANDO_SERVER_PROXY_UPSTREAM=http://pando-proxy:8080`; Service `pando`; a PodDisruptionBudget |
@@ -145,9 +145,13 @@ Reasons:
 Costs, stated:
 
 - **Pando needs cluster-scoped rights to create and delete namespaces.** RBAC cannot limit a delete to
-  namespaces carrying a label. A ValidatingAdmissionPolicy shipped with the manifests refuses a
-  namespace delete by Pando's ServiceAccount unless the namespace carries
-  `app.kubernetes.io/managed-by=pando`.
+  namespaces carrying a label, nor a role binding to a namespace. ValidatingAdmissionPolicies shipped
+  with the manifests refuse a namespace delete by Pando's ServiceAccount unless the namespace carries
+  `app.kubernetes.io/managed-by=pando` (and is not `pando`, `pando-edge` or `pando-build`), a
+  namespace it creates unless it carries that label and enforces Pod Security `baseline` or
+  `restricted`, and a role binding unless it binds `pando-app-manager` to Pando's own ServiceAccount
+  in such a namespace. A stolen ServiceAccount token can therefore make a namespace and run a pod in
+  it, but only a pod `baseline` admits (R-402).
 - **Scale.** Kubernetes' published scalability thresholds put tested limits around 10,000 namespaces
   and 10,000 Services per cluster. The cluster tier is 20,000 apps. Headless Services (below) avoid the
   kube-proxy rules that make Service count expensive, but the namespace count is past what upstream
@@ -223,7 +227,9 @@ false`), so nothing in an app can create anything through the API.
 Each app namespace is labeled for Pod Security Admission `baseline`, enforced: no privileged pods, no
 host namespaces, no `hostPath`, no added capabilities beyond the default set. `restricted` would
 refuse every image that runs as root, which is most of them; Docker runs those today, so `baseline`
-matches what the Docker adapter allows.
+matches what the Docker adapter allows. The admission policy holds every pod Pando's ServiceAccount
+creates, in any namespace, to the same, and to no capability beyond the ones `workloadSecurity`
+adds, so the label is not the only thing between a bug or a stolen token and the node (R-402).
 
 ## The edge Pando runs (R-174) [D] (O-42)
 
@@ -514,11 +520,13 @@ Consequences:
 
 | Resource | Verbs | Why |
 |---|---|---|
-| `namespaces` | get, list, watch, create, delete | One per app; delete guarded by the admission policy |
-| `rolebindings` (any namespace) | create, delete | Binds `pando-app-manager` in each new app namespace |
+| `namespaces` | get, list, create, delete | One per app; create and delete guarded by the admission policy |
+| `serviceaccounts` | get, resourceNames `default` | Waiting for a new namespace's default ServiceAccount |
+| `rolebindings` (any namespace) | create | Binds `pando-app-manager` in each new app namespace; the admission policy limits the role, the subject and the namespace. The binding goes with its namespace |
 | `clusterroles` | `bind`, resourceNames `pando-app-manager` | Lets Pando bind that role without holding its rights cluster-wide |
-| `nodes` | get, list, watch | Capacity |
-| `persistentvolumes` | get, patch, delete | Retain policy; `DestroyVolume` |
+| `nodes` | list | Capacity |
+| `pods` | list, watch | Capacity, and a workload's pod changing (`events.go`) |
+| `persistentvolumes` | get, patch | Retain policy; `DestroyVolume` sets Delete and the cluster removes it |
 | `runtimeclasses` | get | Isolation check |
 | `pods.metrics.k8s.io` | get, list | Usage, when installed |
 
