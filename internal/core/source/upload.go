@@ -217,31 +217,12 @@ func extractWithin(r io.Reader, dir string, limits unpackLimits) error {
 		if errors.Is(err, io.EOF) {
 			return nil
 		}
-		if errors.Is(err, errArchiveTooLarge) {
-			return archiveTooLarge(limits)
-		}
 		if err != nil {
-			return errs.Wrap(errs.ValidInvalid, "That upload could not be read.", err)
+			return readFailed(err, limits)
 		}
-		if entries > limits.entries {
-			return errs.Newf(errs.ValidInvalid,
-				"That upload holds more than %d files and directories, which is more than Pando unpacks.", limits.entries).
-				WithRemedy(uploadTooBigRemedy)
-		}
-
-		target := filepath.Join(dir, filepath.Clean("/"+header.Name))
-		if !strings.HasPrefix(target, filepath.Clean(dir)+string(os.PathSeparator)) && target != dir {
-			return errs.Newf(errs.ValidInvalid,
-				"That upload contains a path that would write outside the app's directory: %s", header.Name)
-		}
-
-		// A sparse entry is a few bytes in the archive standing for a file of
-		// any size, mostly zeros. No source tree needs one, and pando deploy
-		// never writes one.
-		if isSparse(header) {
-			return errs.Newf(errs.ValidInvalid,
-				"That upload contains %s as a sparse file, which Pando does not unpack.", header.Name).
-				WithRemedy("Upload the directory with pando deploy, which archives every file whole.")
+		target, err := checkEntry(header, dir, entries, limits)
+		if err != nil {
+			return err
 		}
 
 		switch header.Typeflag {
@@ -252,11 +233,8 @@ func extractWithin(r io.Reader, dir string, limits unpackLimits) error {
 
 		case tar.TypeReg:
 			n, err := extractFile(tr, header, target, limits, limits.total-unpacked)
-			if errors.Is(err, errArchiveTooLarge) {
-				return archiveTooLarge(limits)
-			}
 			if err != nil {
-				return err
+				return readFailed(err, limits)
 			}
 			unpacked += n
 
@@ -267,6 +245,44 @@ func extractWithin(r io.Reader, dir string, limits unpackLimits) error {
 			// outside its directory.
 		}
 	}
+}
+
+// readFailed says why reading the archive stopped: past the decompressed
+// limit, or an error already said for the upload, or unreadable.
+func readFailed(err error, limits unpackLimits) error {
+	if errors.Is(err, errArchiveTooLarge) {
+		return archiveTooLarge(limits)
+	}
+	if errs.As(err) != nil {
+		return err
+	}
+	return errs.Wrap(errs.ValidInvalid, "That upload could not be read.", err)
+}
+
+// checkEntry refuses an entry past the entry limit, outside dir, or sparse,
+// and otherwise answers where it unpacks to.
+func checkEntry(header *tar.Header, dir string, entries int, limits unpackLimits) (string, error) {
+	if entries > limits.entries {
+		return "", errs.Newf(errs.ValidInvalid,
+			"That upload holds more than %d files and directories, which is more than Pando unpacks.", limits.entries).
+			WithRemedy(uploadTooBigRemedy)
+	}
+
+	target := filepath.Join(dir, filepath.Clean("/"+header.Name))
+	if !strings.HasPrefix(target, filepath.Clean(dir)+string(os.PathSeparator)) && target != dir {
+		return "", errs.Newf(errs.ValidInvalid,
+			"That upload contains a path that would write outside the app's directory: %s", header.Name)
+	}
+
+	// A sparse entry is a few bytes in the archive standing for a file of
+	// any size, mostly zeros. No source tree needs one, and pando deploy
+	// never writes one.
+	if isSparse(header) {
+		return "", errs.Newf(errs.ValidInvalid,
+			"That upload contains %s as a sparse file, which Pando does not unpack.", header.Name).
+			WithRemedy("Upload the directory with pando deploy, which archives every file whole.")
+	}
+	return target, nil
 }
 
 // Limits on what an upload may unpack to (R-410): far above a large source tree
