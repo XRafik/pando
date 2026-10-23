@@ -118,12 +118,11 @@ func TestR187_AnExistingGatewayIsKeptOnlyWhenItMatches(t *testing.T) {
 		"Id": "gw1", "Config": map[string]any{"Labels": map[string]string{labelEgressDigest: "d1"}},
 		"State": map[string]any{"Running": false},
 	})
-	ctx := context.Background()
 
 	t.Run("running and matching", func(t *testing.T) {
 		f, a := newFakeDaemon(t, nil)
 		f.on("GET /containers/*", inspect)
-		kept, err := a.keepGateway(ctx, "gw1", "running", "b1", "d1")
+		kept, err := a.keepGateway(t.Context(), "gw1", "running", "b1", "d1")
 		require.NoError(t, err)
 		require.True(t, kept)
 		require.Zero(t, f.called("POST /containers/gw1/start"))
@@ -133,7 +132,7 @@ func TestR187_AnExistingGatewayIsKeptOnlyWhenItMatches(t *testing.T) {
 		f, a := newFakeDaemon(t, nil)
 		f.on("GET /containers/*", inspect)
 		f.on("POST /containers/gw1/start", func(rw http.ResponseWriter, _ *http.Request) { rw.WriteHeader(http.StatusNoContent) })
-		kept, err := a.keepGateway(ctx, "gw1", "exited", "b1", "d1")
+		kept, err := a.keepGateway(t.Context(), "gw1", "exited", "b1", "d1")
 		require.NoError(t, err)
 		require.True(t, kept)
 		require.Equal(t, 1, f.called("POST /containers/gw1/start"))
@@ -143,13 +142,13 @@ func TestR187_AnExistingGatewayIsKeptOnlyWhenItMatches(t *testing.T) {
 		f, a := newFakeDaemon(t, nil)
 		f.on("GET /containers/*", inspect)
 		f.on("POST /containers/gw1/start", respond(http.StatusInternalServerError, map[string]string{"message": "refused"}))
-		_, err := a.keepGateway(ctx, "gw1", "exited", "b1", "d1")
+		_, err := a.keepGateway(t.Context(), "gw1", "exited", "b1", "d1")
 		require.Equal(t, errs.AdapterFailed, errs.CodeOf(err))
 	})
 
 	t.Run("cannot be read", func(t *testing.T) {
 		_, a := newFakeDaemon(t, nil)
-		_, err := a.keepGateway(ctx, "gw1", "running", "b1", "d1")
+		_, err := a.keepGateway(t.Context(), "gw1", "running", "b1", "d1")
 		require.Error(t, err)
 	})
 
@@ -157,7 +156,7 @@ func TestR187_AnExistingGatewayIsKeptOnlyWhenItMatches(t *testing.T) {
 		f, a := newFakeDaemon(t, nil)
 		f.on("GET /containers/*", inspect)
 		f.on("DELETE /containers/*", func(rw http.ResponseWriter, _ *http.Request) { rw.WriteHeader(http.StatusNoContent) })
-		kept, err := a.keepGateway(ctx, "gw1", "running", "b1", "other")
+		kept, err := a.keepGateway(t.Context(), "gw1", "running", "b1", "other")
 		require.NoError(t, err)
 		require.False(t, kept)
 		require.Equal(t, 1, f.called("DELETE /containers/gw1"))
