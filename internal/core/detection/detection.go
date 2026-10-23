@@ -125,12 +125,12 @@ type Runner struct {
 	// Egress resolves the rules the trial run is held to (R-097): the app's
 	// own, from its current spec where it has one, against host policy. Nil
 	// restricts nothing, and is for tests and embeddings with no policy.
-	Egress TrialEgress
+	Egress TrialEgresser
 }
 
-// TrialEgress resolves the egress rules a trial of an app runs under. The
+// TrialEgresser resolves the egress rules a trial of an app runs under. The
 // planner is one; nil s is an app with no spec yet.
-type TrialEgress interface {
+type TrialEgresser interface {
 	TrialEgress(ctx context.Context, s *spec.AppSpec) (api.EgressRules, error)
 }
 

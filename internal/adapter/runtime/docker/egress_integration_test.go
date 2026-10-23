@@ -299,8 +299,8 @@ func TestR097_ATrialUnderAnAllowlistCannotReachADisallowedAddress(t *testing.T) 
 		t.Skipf("docker unavailable: %v", err)
 	}
 	dest := destinations(t)
-	destIP, err := dockerCLI("inspect", "-f", "{{.NetworkSettings.IPAddress}}", dest)
-	require.NoError(t, err)
+	destIP, err := dockerCLI("inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", dest)
+	require.NoError(t, err, destIP)
 
 	id := "egress-" + time.Now().Format("150405")
 	outbound := "pando-trial-" + id + "-outbound"

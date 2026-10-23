@@ -69,12 +69,15 @@ func needsPortCheck(s *spec.AppSpec) bool {
 // that cannot enforce rules that restrict anything is not asked, and the
 // assumption stands; the plan refused such a deploy already (R-186).
 func checkPort(ctx context.Context, runtime api.RuntimeAdapter, s *spec.AppSpec, image, trialID string, rules api.EgressRules, sink io.Writer) portCheck {
-	return checkPortWith(ctx, runtime, s, image, nil, trialID, rules, sink)
+	return checkPortWith(ctx, runtime, s, api.TrialRequest{TrialID: trialID, Image: image, Egress: rules}, sink)
 }
 
 // checkPortWith is checkPort for an image the runtime pulls with auth: a
-// build pushed to the install's registry (issue #72, PR 5).
-func checkPortWith(ctx context.Context, runtime api.RuntimeAdapter, s *spec.AppSpec, image string, auth *api.RegistryAuth, trialID string, rules api.EgressRules, sink io.Writer) portCheck {
+// build pushed to the install's registry (issue #72, PR 5). base carries the
+// trial's identifier, image, pull auth and egress rules; the rest comes from
+// the spec.
+func checkPortWith(ctx context.Context, runtime api.RuntimeAdapter, s *spec.AppSpec, base api.TrialRequest, sink io.Writer) portCheck {
+	rules := base.Egress
 	caps, err := runtime.Capabilities(ctx)
 	if err != nil || !caps.SupportsTrialRun || !caps.SupportsPortObservation {
 		return portCheck{}
@@ -87,9 +90,9 @@ func checkPortWith(ctx context.Context, runtime api.RuntimeAdapter, s *spec.AppS
 
 	fmt.Fprintf(sink, "=> Checking which port the app listens on\n")
 	result, err := runtime.Trial(ctx, api.TrialRequest{
-		TrialID:        trialID,
-		Image:          image,
-		PullAuth:       auth,
+		TrialID:        base.TrialID,
+		Image:          base.Image,
+		PullAuth:       base.PullAuth,
 		Command:        primary.Command,
 		Entrypoint:     primary.Entrypoint,
 		WorkingDir:     primary.WorkingDir,

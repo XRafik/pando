@@ -73,6 +73,29 @@ func (a *Adapter) Trial(ctx context.Context, req api.TrialRequest) (api.TrialRes
 		return api.TrialResult{}, err
 	}
 
+	pullSecrets, err := a.trialSecrets(ctx, ns, req, restricted)
+	if err != nil {
+		return api.TrialResult{}, err
+	}
+	pod := a.trialPod(ns, req, pullSecrets)
+	if _, err := a.cs.CoreV1().Pods(ns).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
+		return api.TrialResult{}, errs.Wrap(errs.AdapterFailed, "Could not start the app's trial run.", err)
+	}
+
+	result, err := a.watchTrial(ctx, ns, timeout, req.PullAuth != nil)
+	if err != nil {
+		return api.TrialResult{}, err
+	}
+	result.Log = a.trialLog(ctx, ns)
+	if req.LogSink != nil && result.Log != "" {
+		_, _ = io.WriteString(req.LogSink, result.Log)
+	}
+	return result, nil
+}
+
+// trialSecrets writes the trial's environment, with the proxy variables where
+// its egress is restricted, and its pull secret where the image needs one.
+func (a *Adapter) trialSecrets(ctx context.Context, ns string, req api.TrialRequest, restricted bool) ([]corev1.LocalObjectReference, error) {
 	var proxy map[string]string
 	if restricted {
 		// One pod, so NO_PROXY names only the pod itself.
@@ -83,16 +106,21 @@ func (a *Adapter) Trial(ctx context.Context, req api.TrialRequest) (api.TrialRes
 		ObjectMeta: metav1.ObjectMeta{Name: "trial-env", Namespace: ns},
 		Data:       secretData(env),
 	}, "the trial's environment"); err != nil {
-		return api.TrialResult{}, err
+		return nil, err
 	}
 	var pullSecrets []corev1.LocalObjectReference
 	if req.PullAuth != nil {
 		if err := a.ensurePullSecret(ctx, ns, []api.WorkloadPlan{{Image: req.Image, PullAuth: req.PullAuth}}); err != nil {
-			return api.TrialResult{}, err
+			return nil, err
 		}
 		pullSecrets = []corev1.LocalObjectReference{{Name: pullSecretName}}
 	}
+	return pullSecrets, nil
+}
 
+// trialPod is the trial's pod: the app, held to the trial's limits and the
+// workload security context, and the observer beside it.
+func (a *Adapter) trialPod(ns string, req api.TrialRequest, pullSecrets []corev1.LocalObjectReference) *corev1.Pod {
 	var volumes []corev1.Volume
 	var mounts []corev1.VolumeMount
 	for i, p := range req.DeclaredPaths {
@@ -129,19 +157,7 @@ func (a *Adapter) Trial(ctx context.Context, req api.TrialRequest) (api.TrialRes
 	if a.config.RuntimeClass != "" {
 		pod.Spec.RuntimeClassName = ptr.To(a.config.RuntimeClass)
 	}
-	if _, err := a.cs.CoreV1().Pods(ns).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
-		return api.TrialResult{}, errs.Wrap(errs.AdapterFailed, "Could not start the app's trial run.", err)
-	}
-
-	result, err := a.watchTrial(ctx, ns, timeout, req.PullAuth != nil)
-	if err != nil {
-		return api.TrialResult{}, err
-	}
-	result.Log = a.trialLog(ctx, ns)
-	if req.LogSink != nil && result.Log != "" {
-		_, _ = io.WriteString(req.LogSink, result.Log)
-	}
-	return result, nil
+	return pod
 }
 
 // trialEgressRules returns the gateway's rules for a trial whose egress is

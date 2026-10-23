@@ -457,7 +457,10 @@ func (r *Runner) Run(ctx context.Context, dep state.Deployment, rev state.Revisi
 		// runtime that cannot run one.
 		rules, known := r.trialEgress(ctx, appSpec)
 		if ok && known {
-			check := checkPortWith(ctx, runtime, appSpec, image, r.builtImageAuth(ctx, image), "port-"+strings.ToLower(dep.ID), rules, sink)
+			check := checkPortWith(ctx, runtime, appSpec, api.TrialRequest{
+				TrialID: "port-" + strings.ToLower(dep.ID), Image: image,
+				PullAuth: r.builtImageAuth(ctx, image), Egress: rules,
+			}, sink)
 			if check.Refusal != nil {
 				writeFailure(sink, messageOf(check.Refusal), check.Refusal)
 				fmt.Fprintf(sink, "   The running version of this app was not touched.\n")

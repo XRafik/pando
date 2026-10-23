@@ -306,19 +306,8 @@ func (a *Adapter) ensureGateway(ctx context.Context, p api.BundlePlan, img gatew
 		return err
 	}
 	if existing != nil {
-		ok, err := a.gatewayMatches(ctx, existing.ID, p.BundleID, digest)
-		if err != nil {
-			return err
-		}
-		if ok {
-			if !strings.HasPrefix(existing.State, "running") {
-				if _, err := a.cli.ContainerStart(ctx, existing.ID, client.ContainerStartOptions{}); err != nil {
-					return errs.Wrap(errs.AdapterFailed, "Could not start this app's egress gateway.", err)
-				}
-			}
-			return nil
-		}
-		if err := a.removeContainer(ctx, existing.ID); err != nil {
+		kept, err := a.keepGateway(ctx, existing.ID, existing.State, p.BundleID, digest)
+		if err != nil || kept {
 			return err
 		}
 	}
@@ -339,6 +328,24 @@ func (a *Adapter) ensureGateway(ctx context.Context, p api.BundlePlan, img gatew
 		restart: container.RestartPolicyUnlessStopped,
 	})
 	return err
+}
+
+// keepGateway starts an existing gateway that already matches and reports it
+// kept, or removes one that does not.
+func (a *Adapter) keepGateway(ctx context.Context, id, state, bundleID, digest string) (bool, error) {
+	ok, err := a.gatewayMatches(ctx, id, bundleID, digest)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, a.removeContainer(ctx, id)
+	}
+	if !strings.HasPrefix(state, "running") {
+		if _, err := a.cli.ContainerStart(ctx, id, client.ContainerStartOptions{}); err != nil {
+			return false, errs.Wrap(errs.AdapterFailed, "Could not start this app's egress gateway.", err)
+		}
+	}
+	return true, nil
 }
 
 // gatewayLaunch is one egress gateway to start: an app's, or a trial run's.

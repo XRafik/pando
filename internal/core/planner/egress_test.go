@@ -217,3 +217,12 @@ func TestR097_ATrialIsHeldToTheAppsEgressWithoutItsLoosenings(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, open.Restricted())
 }
+
+// A policy that cannot be read is an error, never rules that restrict nothing.
+func TestR097_TrialEgressFailsWhenPolicyCannotBeRead(t *testing.T) {
+	p := planner.New(nil, policy.New(func(context.Context) (policy.Document, error) {
+		return policy.Document{}, errs.New(errs.Internal, "unreadable")
+	}), fixedAllocations{})
+	_, err := p.TrialEgress(context.Background(), nil)
+	require.Error(t, err)
+}
