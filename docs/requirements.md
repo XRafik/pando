@@ -61,7 +61,7 @@ These are permanent. A request falling into one of these is answered "no," not "
 
 These are load-bearing. Violating any of them is a design failure, not a tradeoff.
 
-**R-020 [D]** **Nothing lives in the repo.** There is no `pando.yaml`. The source tree is strictly read-only input. Pando looks at it and never asks it for permission. Consequence: Pando's state store is the sole record of how every app runs, which makes export, backup, and audit day-one requirements rather than polish.
+**R-020 [D]** **Nothing lives in the repo.** There is no `pando.yaml`. The source tree is strictly read-only input. Pando looks at it and never asks it for permission. It is also confined to its checkout: nothing in it — a symbolic link, or a subdirectory, build context or Dockerfile path that is absolute or climbs above the repository — leads a read or a write outside the checkout. A link that would is removed when the source is fetched, and the rest of the repository still deploys. Consequence: Pando's state store is the sole record of how every app runs, which makes export, backup, and audit day-one requirements rather than polish.
 
 **R-021 [D]** **Pando fills declared slots; it never invents topology.** If the repo declares what it needs, Pando's job is to satisfy that declaration. If it doesn't declare, Pando does not go hunting through imports to guess.
 
@@ -612,6 +612,8 @@ reference is dropped. It describes and never acts. Any signed-in user may ask.
 **R-142 [P]** Trigger delivery is by polling by default, since inbound connectivity cannot be assumed. Webhook delivery is available where the host is reachable.
 
 **R-143 [P] [LATER]** Watch for new tags on an upstream image, for apps deployed from a published image rather than source.
+
+**R-143a [D] [V1]** **An image app can be checked for a newer build of its tag, and upgraded to it.** Checking asks the registry which build the tag names now and changes nothing. Upgrading is an explicit act: it writes a revision pinning the build the check found and deploys it through the ordinary path, approval included (R-154). It is refused if the tag has moved since the check, so what ships is what the person was shown. Nothing upgrades on its own; watching for new builds is R-143.
 
 ### 10.3 Deploy strategy
 
