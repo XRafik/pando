@@ -115,6 +115,11 @@ cosign verify trypando/pando:0.3.1 \
   --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'
 ```
 
+The signature also names the version the image was built as, in its
+`org.opencontainers.image.version` annotation. A digest alone says nothing about which release it
+is, so Pando's in-place upgrade refuses an image whose signature names another version, or none
+(R-357). Images signed before the annotation was added carry none.
+
 Each image also carries an SBOM and SLSA provenance, attached by the build as attestations:
 
 ```bash

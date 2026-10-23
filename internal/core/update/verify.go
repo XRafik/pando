@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/google/go-containerregistry/pkg/name"
+	in_toto "github.com/in-toto/attestation/go/v1"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/sigstore/sigstore-go/pkg/bundle"
@@ -35,6 +36,12 @@ const (
 	signPredicate   = "https://sigstore.dev/cosign/sign/v1"
 	maxBundleLength = 1 << 20
 )
+
+// VersionAnnotation is the annotation the image workflow signs with each
+// image (`cosign sign -a`), naming the version it was built as. A signature
+// covers a digest, not a tag, so without it any image the workflow ever
+// signed would pass for any version a tag was pointed at (R-357).
+const VersionAnnotation = "org.opencontainers.image.version"
 
 // TrustedRoot fetches Sigstore's public-good trusted root through its TUF
 // repository, caching under dir. The root it starts from is embedded in
@@ -83,7 +90,7 @@ func (v *ImageVerifier) Verify(ctx context.Context, version string) (string, err
 	if err != nil {
 		return "", err
 	}
-	if err := VerifyImageBundle(tm, raw, desc.Digest); err != nil {
+	if err := VerifyImageBundle(tm, raw, desc.Digest, version); err != nil {
 		return "", err
 	}
 	return desc.Digest.String(), nil
@@ -121,8 +128,9 @@ func signatureBundle(digest name.Digest, opts []remote.Option) ([]byte, error) {
 }
 
 // VerifyImageBundle checks a cosign signature bundle against an image's index
-// digest and the image workflow's identity.
-func VerifyImageBundle(tm root.TrustedMaterial, raw []byte, digest v1.Hash) error {
+// digest and the image workflow's identity, and that what was signed names
+// version: the image was built as that version, not merely signed once.
+func VerifyImageBundle(tm root.TrustedMaterial, raw []byte, digest v1.Hash, version string) error {
 	sum, err := hex.DecodeString(digest.Hex)
 	if err != nil {
 		return err
@@ -134,7 +142,26 @@ func VerifyImageBundle(tm root.TrustedMaterial, raw []byte, digest v1.Hash) erro
 	if res.Statement == nil || res.Statement.GetPredicateType() != signPredicate {
 		return fmt.Errorf("the signature on %s is not a cosign image signature", digest)
 	}
-	return nil
+	return signedVersion(res.Statement, digest, version)
+}
+
+// signedVersion checks that the signed statement names version for digest.
+func signedVersion(st *in_toto.Statement, digest v1.Hash, version string) error {
+	want := strings.TrimPrefix(version, "v")
+	for _, sub := range st.GetSubject() {
+		if sub.GetDigest()[digest.Algorithm] != digest.Hex {
+			continue
+		}
+		got := sub.GetAnnotations().GetFields()[VersionAnnotation].GetStringValue()
+		if got == "" {
+			return fmt.Errorf("the signature on %s does not name the version it was built as, so it cannot be told apart from an older image", digest)
+		}
+		if strings.TrimPrefix(got, "v") != want {
+			return fmt.Errorf("the image at %s was signed as %s, not %s", digest, got, want)
+		}
+		return nil
+	}
+	return fmt.Errorf("the signature on %s does not name that image", digest)
 }
 
 // VerifyChecksums checks a release's checksums.txt against its signature
