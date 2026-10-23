@@ -30,10 +30,11 @@ func TestR405_ResettingTwoFactorFromTheHost(t *testing.T) {
 	require.NoError(t, err)
 	_, err = db.Exec(ctx, `INSERT INTO user_recovery_codes (user_id, digest) VALUES ($1, 'd1')`, admin.ID)
 	require.NoError(t, err)
-	_, err = db.Exec(ctx, `INSERT INTO sessions (id, user_id, adapter_id, expires_at)
-		VALUES ('ses_live', $1, $2, now() + interval '1 day')`, admin.ID, admin.AdapterID)
+	_, err = db.Exec(ctx, `INSERT INTO sessions (id, secret_hash, user_id, adapter_id, expires_at)
+		VALUES ('ses_live', 'hmac-sha256:' || repeat('0', 64), $1, $2, now() + interval '1 day')`, admin.ID, admin.AdapterID)
 	require.NoError(t, err)
 	require.NoError(t, state.NewFailedAttempts(db).Record(ctx, state.SignInCodeKey(admin.ID), time.Hour))
+	tokenID := withToken(t, db, admin.ID)
 
 	out, err := runAdmin(t, "reset-two-factor")
 	require.NoError(t, err)
@@ -57,6 +58,7 @@ func TestR405_ResettingTwoFactorFromTheHost(t *testing.T) {
 		WHERE action = 'user.two_factor.reset' AND target_id = $1 AND principal_kind = 'system'
 		  AND detail->>'had_two_factor' = 'true'`, admin.ID).Scan(&audited))
 	require.Equal(t, 1, audited)
+	requireTokenRevoked(t, db, tokenID, "user.two_factor.reset", admin.ID)
 }
 
 func TestResettingTwoFactorFromTheHostNeedsALocalAccount(t *testing.T) {

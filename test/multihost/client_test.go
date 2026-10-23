@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -106,7 +108,45 @@ func session() (*client, error) {
 			c.cookie = ck.Value
 		}
 	}
+	signedIn, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if err := keepPassword(c.http, base+"/api/v1", c.cookie, signedIn, adminPassword); err != nil {
+		return nil, err
+	}
 	return c, nil
+}
+
+// keepPassword answers a sign-in that must change its password first (R-046)
+// by changing it to itself, so the session can do anything else.
+func keepPassword(c *http.Client, api, cookie string, signedIn []byte, password string) error {
+	var body struct {
+		MustChangePassword bool `json:"must_change_password"`
+	}
+	_ = json.Unmarshal(signedIn, &body) // an answer that is not JSON asks nothing
+	if !body.MustChangePassword {
+		return nil
+	}
+	payload, err := json.Marshal(map[string]string{"current_password": password, "new_password": password})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodPost, api+"/me/password", strings.NewReader(string(payload)))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: "pando_session", Value: cookie})
+	resp, err := c.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("keeping the password answered %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func login(t *testing.T) *client {
@@ -407,16 +447,29 @@ func eventually(t *testing.T, within time.Duration, what string, cond func() boo
 	}
 }
 
-func (c *client) slug(t *testing.T, app string) string {
+// appAt is the URL the test reaches an app's port on, through the replica
+// whose address is via. An app on a port is served there and not at /<slug>
+// on Pando's address (R-166).
+func (c *client) appAt(t *testing.T, app, via string) string {
 	t.Helper()
-	return c.get(t, "/apps/"+app)["slug"].(string)
+	address, _ := c.get(t, "/apps/"+app)["address"].(string)
+	_, p, err := net.SplitHostPort(strings.Trim(address, "/"))
+	require.NoError(t, err, "a port-mode address: %q", address)
+	port, err := strconv.Atoi(p)
+	require.NoError(t, err)
+	if via == base2 {
+		port += replica2Shift
+	}
+	published, err := publishedPort(cControl, fmt.Sprintf("%d/tcp", port))
+	require.NoError(t, err, "port %d is outside the ports the control host publishes", port)
+	return "http://127.0.0.1:" + published
 }
 
-// throughProxy requests path under the app's slug from Pando's proxy, signed
-// in, with extra headers and cookies.
-func (c *client) throughProxy(t *testing.T, slug, path string, headers map[string]string, cookies ...*http.Cookie) (int, string) {
+// throughProxy requests path on the app at, from Pando's proxy, signed in,
+// with extra headers and cookies.
+func (c *client) throughProxy(t *testing.T, at, path string, headers map[string]string, cookies ...*http.Cookie) (int, string) {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodGet, base+"/"+slug+path, nil)
+	req, err := http.NewRequest(http.MethodGet, at+path, nil)
 	require.NoError(t, err)
 	for k, v := range headers {
 		req.Header.Set(k, v)
@@ -434,10 +487,11 @@ func (c *client) throughProxy(t *testing.T, slug, path string, headers map[strin
 	return resp.StatusCode, string(body)
 }
 
-// throughProxyVia is a signed-in GET of the app's path through one replica.
-func (c *client) throughProxyVia(t *testing.T, via, slug, path string) (int, string) {
+// throughProxyVia is a signed-in GET of path on the app at, which names one
+// replica's listener for it (appAt).
+func (c *client) throughProxyVia(t *testing.T, at, path string) (int, string) {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodGet, via+"/"+slug+path, nil)
+	req, err := http.NewRequest(http.MethodGet, at+path, nil)
 	require.NoError(t, err)
 	req.AddCookie(&http.Cookie{Name: "pando_session", Value: c.cookie})
 	hc := &http.Client{Timeout: 30 * time.Second,

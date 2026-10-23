@@ -345,16 +345,16 @@ func serve(ctx context.Context, configPath string) error {
 	}
 
 	users := state.NewUsers(db)
-	sessions := state.NewSessions(db)
-	// API tokens are stored as HMAC-SHA-256 under a key kept beside the
-	// process, not in the database (R-063). Every replica must hold the same
-	// one, and one that does not stops here, before it rejects every token
-	// the others issued (issue #72).
+	// API tokens and session secrets are stored as HMAC-SHA-256 under a key
+	// kept beside the process, not in the database (R-063). Every replica must
+	// hold the same one, and one that does not stops here, before it rejects
+	// every token and session the others issued (issue #72).
 	tokenKey, err := tokenkey.LoadOrCreate(cfg.Server.TokenKeyPath)
 	if err != nil {
 		return err
 	}
 	tokens := state.NewTokens(db, tokenKey)
+	sessions := state.NewSessions(db, tokenKey)
 	if err := tokens.VerifyKey(ctx); err != nil {
 		return err
 	}
@@ -614,16 +614,20 @@ func serve(ctx context.Context, configPath string) error {
 	// run by whichever replica has room, at most host policy's
 	// max_concurrent_deploys at once here, read each time it looks for work
 	// (issue #93). Served once the loops start, below.
+	deployLimit := func(ctx context.Context) (int, error) {
+		doc, err := hostPolicy.Document(ctx)
+		return doc.MaxConcurrentDeploys, err
+	}
 	deployQueue := &deploy.Queue{
 		Runner:      deployer,
 		Deployments: deployments,
 		Revisions:   apps,
-		Concurrency: func(ctx context.Context) (int, error) {
-			doc, err := hostPolicy.Document(ctx)
-			return doc.MaxConcurrentDeploys, err
-		},
-		Logger: logger,
+		Concurrency: deployLimit,
+		Logger:      logger,
 	}
+	// The BuildKits Pando runs, one per app, are bounded by the same number,
+	// running and warm together (R-117).
+	limitBuildDaemons(registry, deployLimit)
 
 	// Detection (Sequence A). Every detector bids; the runtime supplies the
 	// trial run (R-097), and a registry probe would supply R-094's top tier.
@@ -1075,6 +1079,7 @@ func serve(ctx context.Context, configPath string) error {
 		// So the console does not answer on an app's own hostname. Without
 		// this the console's "/" route shadows every subdomain app's root.
 		AppHosts:       appResolver,
+		PandoHostnames: apps.ReservedHostnames,
 		ACMEChallenges: edgecert.Challenges{Store: edgeCerts},
 		Grants:         grants,
 		HostPolicy:     hostPolicy,
@@ -2231,8 +2236,12 @@ func (a registryAdapters) Routing(ref string) (adapterapi.RoutingAdapter, bool) 
 
 // builtImageAuth is the reconciler's view of the install registry: its
 // credential for an image Pando pushed there, read when it is needed.
-func builtImageAuth(reg imageregistry.Provider) func(context.Context, string) *adapterapi.RegistryAuth {
-	return func(ctx context.Context, ref string) *adapterapi.RegistryAuth {
+func builtImageAuth(reg imageregistry.Provider) func(context.Context, *spec.AppSpec, string) *adapterapi.RegistryAuth {
+	return func(ctx context.Context, s *spec.AppSpec, ref string) *adapterapi.RegistryAuth {
+		// An image the spec names is not one of the app's builds (R-025).
+		if s.NamesImage(ref) {
+			return nil
+		}
 		current, err := reg.Current(ctx)
 		if err != nil || !current.Owns(ref) {
 			return nil

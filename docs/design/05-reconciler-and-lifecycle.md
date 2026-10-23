@@ -43,6 +43,14 @@ any state ──delete──> archived
 
 **[D]** `failed` is the only state the reconciler refuses to touch. That is what makes R-151's "stays failed until a human intervenes" true rather than aspirational — it is the absence of a code path, not a flag.
 
+**[D]** Pinning a revision on an app that has been deployed changes what it runs, because the
+reconciler converges to the pinned spec. So `POST /apps/{id}/specs/{rev}/pin` on any state but `draft`
+and `proposed` is held to a deploy's rules: `app.deploy`, the egress, auto-deploy and routing gates
+against what is pinned now (R-163, R-182 – R-184, R-158), the plan, and approval (R-154). A revision
+whose deploy needs approval is refused with a remedy to deploy it instead, so the request reaches the
+approvers; one that already ran needs none (R-157). On a draft or proposed app, which runs nothing,
+pinning stays `app.spec.edit`'s.
+
 **[D]** `degraded` vs `failed` is the distinction the requirements gestured at but never named: degraded is recoverable and still being worked; failed is terminal and needs a person.
 
 ### 1.2 Transitions
@@ -328,7 +336,9 @@ policy's `max_concurrent_deploys` at once **[P: one per CPU, at least two]**, so
 as many and none takes on more than it can build. It is policy rather than a startup setting (issue #93),
 so it is set in the console or fixed by configuration like every other policy field, and the queue reads
 it each time it looks for work: raising it takes effect at once, lowering it stops new claims until
-enough have finished. `work.deploys` is its older name and still fixes it.
+enough have finished. `work.deploys` is its older name and still fixes it. The same number bounds the
+BuildKits a replica runs, one per app, running and warm together (R-117, design 03 §3.1); no other
+limit is set on builds.
 
 **[D] A queued deploy says where it is (issue #93).** `queue_position` on the deployment is how many
 unclaimed deploys are ahead of it, in the order `Claim` takes them. Its log stream says the same while it
