@@ -48,21 +48,12 @@ func (a *Adapter) Trial(ctx context.Context, req api.TrialRequest) (api.TrialRes
 	}
 	ns := trialNamespace(req.TrialID)
 
-	if _, err := a.cs.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
-		Name:   ns,
-		Labels: map[string]string{labelManagedBy: managedBy, labelPSAEnforce: "baseline"},
-	}}, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
-		return api.TrialResult{}, errs.Wrap(errs.AdapterFailed, "Could not make a place in the cluster to try the app.", err)
-	}
 	defer func() {
 		cleanup, done := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer done()
 		_ = a.cs.CoreV1().Namespaces().Delete(cleanup, ns, metav1.DeleteOptions{})
 	}()
-	if err := a.bindAppRole(ctx, ns); err != nil {
-		return api.TrialResult{}, err
-	}
-	if err := a.awaitServiceAccount(ctx, ns); err != nil {
+	if err := a.prepareTrialNamespace(ctx, ns); err != nil {
 		return api.TrialResult{}, err
 	}
 
@@ -88,6 +79,21 @@ func (a *Adapter) Trial(ctx context.Context, req api.TrialRequest) (api.TrialRes
 		_, _ = io.WriteString(req.LogSink, result.Log)
 	}
 	return result, nil
+}
+
+// prepareTrialNamespace makes the namespace a trial runs in, binds the app
+// role in it and waits for its service account.
+func (a *Adapter) prepareTrialNamespace(ctx context.Context, ns string) error {
+	if _, err := a.cs.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+		Name:   ns,
+		Labels: map[string]string{labelManagedBy: managedBy, labelPSAEnforce: "baseline"},
+	}}, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+		return errs.Wrap(errs.AdapterFailed, "Could not make a place in the cluster to try the app.", err)
+	}
+	if err := a.bindAppRole(ctx, ns); err != nil {
+		return err
+	}
+	return a.awaitServiceAccount(ctx, ns)
 }
 
 // trialNamespace is the namespace a trial runs in, within the 63 characters
