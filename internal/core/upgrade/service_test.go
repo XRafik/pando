@@ -3,6 +3,7 @@ package upgrade_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -162,6 +163,26 @@ func TestR355_EveryReasonAnUpgradeIsNotPossibleIsSaid(t *testing.T) {
 }
 
 // TestR360_ABreakingUpgradeNeedsTheVersionTypedToConfirm asserts R-360.
+// TestR357_AnUpgradeNeverGoesToTheVersionRunningOrAnOlderOne asserts an
+// in-place upgrade refuses a target that is not newer than what runs, even
+// when the release list it was given names one.
+func TestR357_AnUpgradeNeverGoesToTheVersionRunningOrAnOlderOne(t *testing.T) {
+	ctx := context.Background()
+	for _, v := range []string{"0.3.1", "0.3.0", "v0.2.9"} {
+		h := newHarness(t)
+		h.updates.st.Releases = append(h.updates.st.Releases, update.Release{Version: strings.TrimPrefix(v, "v")})
+		p, err := h.svc.PlanFor(ctx, v)
+		require.NoError(t, err)
+		require.False(t, p.Possible, v)
+		require.Contains(t, p.Reasons[0], "is not a release newer than 0.3.1", v)
+		require.Empty(t, p.Tag, v)
+
+		_, err = h.svc.Start(ctx, admin, upgrade.Request{Version: v, SkipBackup: true})
+		require.Error(t, err, v)
+		require.Empty(t, h.verified, "refused before the image is looked at")
+	}
+}
+
 func TestR360_ABreakingUpgradeNeedsTheVersionTypedToConfirm(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t)
