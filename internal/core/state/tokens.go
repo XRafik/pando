@@ -225,7 +225,13 @@ func (t *Tokens) digest(v secret.Value) string {
 }
 
 func (t *Tokens) mac(s string) []byte {
-	m := hmac.New(sha256.New, t.key)
+	return keyedMAC(t.key, s)
+}
+
+// keyedMAC is HMAC-SHA-256 of s under the install's token key. API tokens and
+// sessions both store it in place of their secret (R-063).
+func keyedMAC(key []byte, s string) []byte {
+	m := hmac.New(sha256.New, key)
 	m.Write([]byte(s))
 	return m.Sum(nil)
 }
@@ -282,6 +288,32 @@ func (t *Tokens) Revoke(ctx context.Context, tokenID string) error {
 		return errs.Wrap(errs.Internal, "Could not revoke the token.", err)
 	}
 	return nil
+}
+
+// RevokeAllForUser revokes every delegated token userID owns, and says how
+// many it revoked. For an administrator's password or two-factor reset: a
+// reset is how an account is taken back from whoever else got into it, and a
+// token they minted while in would otherwise outlast it (R-059).
+func (t *Tokens) RevokeAllForUser(ctx context.Context, userID string) (int64, error) {
+	return NewTokenRevoker(t.db).RevokeAllForUser(ctx, userID)
+}
+
+// TokenRevoker revokes tokens by owner. It needs no key: revoking reads no
+// digest, so the host commands that reset a credential can revoke the
+// account's tokens without the API token key (cmd/pando admin).
+type TokenRevoker struct{ db *DB }
+
+// NewTokenRevoker returns a store that can only revoke tokens.
+func NewTokenRevoker(db *DB) *TokenRevoker { return &TokenRevoker{db: db} }
+
+// RevokeAllForUser revokes every token userID owns, and says how many.
+func (r *TokenRevoker) RevokeAllForUser(ctx context.Context, userID string) (int64, error) {
+	tag, err := r.db.Exec(ctx,
+		`UPDATE tokens SET revoked_at = now() WHERE owner_user_id = $1 AND revoked_at IS NULL`, userID)
+	if err != nil {
+		return 0, errs.Wrap(errs.Internal, "Could not revoke the account's tokens.", err)
+	}
+	return tag.RowsAffected(), nil
 }
 
 func errInvalidToken() error {

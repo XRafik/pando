@@ -344,7 +344,7 @@ func testPage(providerID, flowID string) string {
 
 // Completed is a finished sign-in: the session to set, and where to go.
 type Completed struct {
-	Session state.Session
+	Session state.Started
 	User    state.User
 	Next    string
 }
@@ -392,7 +392,7 @@ func (s *Service) Complete(ctx context.Context, code, bind string, o Origin, use
 	}
 	s.audit(ctx, audit.Event{
 		PrincipalKind: audit.KindUser, PrincipalID: user.ID, Action: "session.create",
-		TargetKind: "session", TargetID: sess.ID,
+		TargetKind: "session", TargetID: sess.Session.ID,
 		Detail: map[string]any{"adapter_id": f.AdapterID, "via": "sso"},
 	})
 	return Completed{Session: sess, User: user, Next: f.NextPath}, nil

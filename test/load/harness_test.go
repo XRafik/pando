@@ -732,6 +732,9 @@ func TestProxyRequestsExpectWhatPandoShouldAnswer(t *testing.T) {
 	port := f.Listener.Addr().(*net.TCPAddr).Port
 	f.Real["load-real-000"] = fakeReal{Members: map[string]bool{"member": true}}
 	f.Real["load-real-001"] = fakeReal{Anonymous: true}
+	// A real app with no port is on a path, and only it is reached by slug
+	// (R-166).
+	f.Real["load-real-002"] = fakeReal{Members: map[string]bool{"member": true}}
 	f.ByPort = "load-real-000"
 	ws := &workingSet{
 		Seeded: []wsApp{
@@ -741,6 +744,7 @@ func TestProxyRequestsExpectWhatPandoShouldAnswer(t *testing.T) {
 		Real: []wsReal{
 			{ID: "app_r0", Slug: "load-real-000", Port: port, Members: map[string]bool{"member": true}},
 			{ID: "app_r1", Slug: "load-real-001", Anonymous: true, Members: map[string]bool{}},
+			{ID: "app_r2", Slug: "load-real-002", Members: map[string]bool{"member": true}},
 		},
 	}
 	r := runnerFor(f, ws)
@@ -799,4 +803,32 @@ func TestDropsAreCountedPerSurface(t *testing.T) {
 
 	u, c := r.someSession()
 	require.Empty(t, u+c, "nobody online")
+}
+
+// A sign-in whose password must be changed first (R-046) is answered by
+// changing it to itself, so the load run's session can do anything else.
+func TestSignInKeepsAPasswordThatMustBeChanged(t *testing.T) {
+	var changed atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/sessions":
+			http.SetCookie(w, &http.Cookie{Name: "pando_session", Value: "s1"})
+			_, _ = w.Write([]byte(`{"must_change_password":true}`))
+		case "/api/v1/me/password":
+			var body map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if body["current_password"] == "pw" && body["new_password"] == "pw" {
+				changed.Add(1)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	cookie, _, err := NewClient(srv.URL, 5*time.Second).SignIn(context.Background(), "admin", "pw")
+	require.NoError(t, err)
+	require.Equal(t, "s1", cookie)
+	require.EqualValues(t, 1, changed.Load())
 }
