@@ -10,9 +10,9 @@ import (
 	"strings"
 
 	"github.com/google/go-containerregistry/pkg/name"
-	in_toto "github.com/in-toto/attestation/go/v1"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	in_toto "github.com/in-toto/attestation/go/v1"
 	"github.com/sigstore/sigstore-go/pkg/bundle"
 	"github.com/sigstore/sigstore-go/pkg/root"
 	"github.com/sigstore/sigstore-go/pkg/tuf"
