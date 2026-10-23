@@ -30,6 +30,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 
+	"github.com/trypando/pando/internal/core/source"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/registrylimit"
 )
@@ -170,6 +171,13 @@ func PlatformMismatch(image string, host Platform, published []Platform) error {
 		WithDetail("image_platforms", names)
 }
 
+// guardedTransport is what a registry read goes through: the registry
+// client's own transport, with every connection checked against the guard a
+// repository fetch is (source.GuardTransport). The registry is named by
+// whoever gave the image, and a registry, or any redirect it answers with,
+// reaches only what a repository may (R-092).
+var guardedTransport http.RoundTripper = source.GuardTransport(remote.DefaultTransport.(*http.Transport))
+
 // Inspector reads images from registries.
 type Inspector struct {
 	// Transport is the HTTP transport registry calls go through. Nil means the
@@ -259,7 +267,7 @@ func atMirror(ref name.Reference, mirror string) (name.Reference, bool) {
 func (in Inspector) readOptions(ctx context.Context, auth *Auth) (*limitWatch, []remote.Option) {
 	base := in.Transport
 	if base == nil {
-		base = remote.DefaultTransport
+		base = guardedTransport
 	}
 	watch := &limitWatch{base: base}
 	opts := []remote.Option{
@@ -459,6 +467,13 @@ func readable(reference string, ref name.Reference, auth *Auth, limited http.Hea
 	registry := ref.Context().RegistryStr()
 	repo := ref.Context().RepositoryStr()
 
+	if source.RefusedAddress(err) {
+		return errs.Newf(errs.ValidInvalid,
+			"Pando did not read the image %s. The registry %s, or an address it redirected to, is one no registry is at: "+
+				"a link-local address, which is where a cloud's metadata service answers, or Pando's own port or database.", reference, registry).
+			WithRemedy("Use the image's address at its registry, such as ghcr.io/team/app:1.2.").
+			WithDetail("registry", registry)
+	}
 	var terr *transport.Error
 	if errors.As(err, &terr) && rateLimited(terr) {
 		signed := registrylimit.Anonymous

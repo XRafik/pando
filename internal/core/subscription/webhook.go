@@ -226,8 +226,13 @@ func (s sentence) Error() string { return string(s) }
 
 // forbidden is the set of addresses a webhook may not reach unless policy
 // allows it (R-372): private, loopback, link-local (169.254.169.254 among
-// them), unspecified and multicast.
+// them), unspecified and multicast. An address with an IPv6 zone
+// (fe80::1%eth0) is one too: the zone names an interface of Pando's own host,
+// and nothing on the internet is addressed that way.
 func forbidden(a netip.Addr) bool {
+	if a.Zone() != "" {
+		return true
+	}
 	a = a.Unmap()
 	return egress.Private(a) || a.IsLoopback() || a.IsUnspecified() || a.IsMulticast()
 }

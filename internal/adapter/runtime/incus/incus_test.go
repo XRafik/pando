@@ -120,6 +120,7 @@ func TestR254_ConfigurationThatCannotWorkIsRefused(t *testing.T) {
 		"no authority":          {func(m map[string]any) { m["credentials"] = map[string]any{} }, "certificate authority"},
 		"a bad target":          {func(m map[string]any) { m["target"] = "@" }, "member or group"},
 		"an overlapping range?": {func(m map[string]any) { m["network_pool"] = "nowhere" }, "address range"},
+		"a public range":        {func(m map[string]any) { m["network_pool"] = "8.8.0.0/16" }, "outside private address space"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			m := base()

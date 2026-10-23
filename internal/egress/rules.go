@@ -140,9 +140,9 @@ func (c *Compiled) AllowsName(host string, port int) Decision {
 // Allows decides one connection: to host (as the app asked for it, which may
 // be an address literal), on port, at the address it resolved to.
 func (c *Compiled) Allows(host string, port int, addr netip.Addr) Decision {
-	addr = addr.Unmap()
+	addr = addr.WithZone("").Unmap()
 	if c.blockPrivate && Private(addr) {
-		if a, err := netip.ParseAddr(host); err == nil && a.Unmap() == addr {
+		if a, err := netip.ParseAddr(host); err == nil && a.WithZone("").Unmap() == addr {
 			return Decision{Reason: fmt.Sprintf("%s is a private address, and private addresses are blocked", addr)}
 		}
 		return Decision{Reason: fmt.Sprintf("%s resolves to %s, a private address, and private addresses are blocked", host, addr)}

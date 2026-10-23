@@ -3,6 +3,7 @@ package docker
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"net/netip"
 	"strings"
 
@@ -96,6 +97,38 @@ func (a *Adapter) networkPool() (netip.Prefix, bool) {
 		return netip.Prefix{}, false
 	}
 	return pool.Masked(), true
+}
+
+// privatePools are where an app network range may be: RFC 1918 space and
+// carrier-grade NAT, which egress.Private treats as private too.
+var privatePools = []netip.Prefix{
+	netip.MustParsePrefix("10.0.0.0/8"),
+	netip.MustParsePrefix("172.16.0.0/12"),
+	netip.MustParsePrefix("192.168.0.0/16"),
+	netip.MustParsePrefix("100.64.0.0/10"),
+}
+
+// CheckNetworkPool refuses an app network range outside private address
+// space. App networks taken from public space would make the addresses in it
+// unreachable from every app, and would sit where the egress gateway's
+// private-range block (R-181) does not see them. An empty range, "off" and
+// "docker" are left to networkPool, as is anything that is not an IPv4 range.
+func CheckNetworkPool(raw string) error {
+	raw = strings.TrimSpace(raw)
+	pool, err := netip.ParsePrefix(raw)
+	if err != nil {
+		return nil //nolint:nilerr // Not a range: networkPool leaves it to Docker, as it always has.
+	}
+	if !pool.Addr().Is4() {
+		return nil
+	}
+	for _, p := range privatePools {
+		if pool.Bits() >= p.Bits() && p.Contains(pool.Addr()) {
+			return nil
+		}
+	}
+	return fmt.Errorf("the app network range %s is outside private address space. "+
+		"Use a range inside 10.0.0.0/8, 172.16.0.0/12 or 192.168.0.0/16, such as the default %s", raw, defaultNetworkPool)
 }
 
 // createNetwork creates a bridge network with an address block of the given

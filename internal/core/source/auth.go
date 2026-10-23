@@ -149,7 +149,7 @@ func accessError(err error, url, connection string) error {
 
 	// Refused before a byte was sent (guard.go), whatever go-git wrapped
 	// the dialer's error in.
-	if errors.Is(err, errRefusedAddress) || strings.Contains(msg, errRefusedAddress.Error()) {
+	if RefusedAddress(err) {
 		return errs.Newf(errs.ValidInvalid,
 			"Pando did not connect to %s. Its address is one no repository is at: a link-local address, which is where a cloud's metadata service answers, or Pando's own port or database.", url).
 			WithDetail("url", url).

@@ -2,9 +2,11 @@ package source
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -191,4 +193,24 @@ func (g guarded) NewReceivePackSession(ep *transport.Endpoint, auth transport.Au
 		return nil, err
 	}
 	return g.Transport.NewReceivePackSession(g.endpoint(ep), auth)
+}
+
+// GuardTransport is t with every connection it opens checked against the
+// same guard as a repository fetch: on the address dialed, redirects
+// included, and through a proxy on the destination's host as well. For other
+// reads made at an address a person gave — an image's registry — so that one
+// reaches what a repository may (a registry on the LAN or this machine) and
+// is refused what a repository is (link-local addresses, where a cloud's
+// metadata service answers, and Pando's own port and database).
+func GuardTransport(t *http.Transport) *http.Transport {
+	t = t.Clone()
+	t.Proxy = guardedProxy
+	t.DialContext = guardedDialer.DialContext
+	return t
+}
+
+// RefusedAddress reports whether err is the guard refusing a connection,
+// however a client wrapped it.
+func RefusedAddress(err error) bool {
+	return err != nil && (errors.Is(err, errRefusedAddress) || strings.Contains(err.Error(), errRefusedAddress.Error()))
 }
