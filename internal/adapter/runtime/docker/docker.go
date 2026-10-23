@@ -51,6 +51,13 @@ const (
 	// container that no longer matches its plan.
 	labelFiles = "io.pando.files"
 
+	// labelEnv digests the names of the variables Pando set on this
+	// container. The container's environment also holds the image's own
+	// variables, so it cannot be compared with the plan's exactly; without
+	// the names, a variable the plan dropped — a secret removed from the spec
+	// among them — stayed in a container that otherwise matched (R-193).
+	labelEnv = "io.pando.env"
+
 	// labelTrial marks everything a trial run creates (R-097), so that a trial
 	// interrupted by Pando restarting can be found and removed rather than
 	// leaving a running copy of someone's app with nothing tracking it.
@@ -665,6 +672,7 @@ func (a *Adapter) applyWorkload(ctx context.Context, p api.BundlePlan, w api.Wor
 			// this a spec whose only edit was a Caddyfile would converge to
 			// "already running" and the edit would never ship.
 			labelFiles: fileDigest(w.Files),
+			labelEnv:   envNamesDigest(envVars),
 		},
 	}
 	limitLabels(cfg.Labels, w.Resources.CPUMillis, w.Resources.MemoryBytes)
@@ -762,6 +770,26 @@ func fileDigest(files []api.FilePlan) string {
 	for _, f := range sorted {
 		fmt.Fprintf(h, "%s\x00%d\x00%d\x00", f.Path, f.Mode, len(f.Content))
 		h.Write([]byte(f.Content))
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// envNamesDigest summarizes which variables Pando sets on a container: the
+// names, sorted, never the values. A label is readable by anyone who can list
+// containers, and the values hold resolved secrets; a changed value is caught
+// by matchesPlan comparing the container's environment itself.
+func envNamesDigest(env map[string]string) string {
+	if len(env) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(env))
+	for k := range env {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	h := sha256.New()
+	for _, k := range names {
+		fmt.Fprintf(h, "%s\x00", k)
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }
@@ -1982,8 +2010,53 @@ func (a *Adapter) matchesPlan(ctx context.Context, containerID string, w api.Wor
 			return false, nil
 		}
 	}
-	return true, nil
+	// And sets nothing else: a variable the plan no longer has, a secret
+	// removed from the spec among them, is a recreate rather than a value
+	// left running (R-193).
+	return a.setsOnlyPlannedEnv(ctx, inspect.Container.Config, existing, env), nil
 }
+
+// setsOnlyPlannedEnv reports whether the variables Pando set on a container
+// are exactly the plan's. The container's environment also holds the image's
+// own variables, so the label naming what Pando set is what is compared.
+//
+// A container created before that label is compared with its image instead:
+// any variable the plan does not set and the image does not set to that value
+// is one Pando set and the plan has dropped. An unchanged app is therefore not restarted only because
+// Pando was upgraded. PATH is accepted only as the daemon's default when the image has none.
+func (a *Adapter) setsOnlyPlannedEnv(ctx context.Context, cfg *container.Config, existing, env map[string]string) bool {
+	if digest, ok := cfg.Labels[labelEnv]; ok {
+		return digest == envNamesDigest(env)
+	}
+	img, err := a.cli.ImageInspect(ctx, cfg.Image)
+	if err != nil {
+		return false
+	}
+	fromImage := map[string]string{}
+	if img.Config != nil {
+		for _, kv := range img.Config.Env {
+			k, v, _ := strings.Cut(kv, "=")
+			fromImage[k] = v
+		}
+	}
+	for k, v := range existing {
+		if _, planned := env[k]; planned {
+			continue
+		}
+		imageValue, imageSets := fromImage[k]
+		switch {
+		case imageSets && v == imageValue:
+		case !imageSets && k == "PATH" && v == dockerDefaultPath:
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// dockerDefaultPath is the PATH the Docker daemon gives a Linux container
+// whose image sets none.
+const dockerDefaultPath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 // hasAliases reports whether a container answers on its network to every name
 // the plan gives it: its workload name and the compose container_name aliases

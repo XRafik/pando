@@ -41,16 +41,19 @@ func TestR357_AReleasedImageVerifiesAndAnythingElseDoesNot(t *testing.T) {
 	require.NoError(t, err)
 	sig := read(t, "image-0.3.0.sigstore.json")
 
-	require.NoError(t, update.VerifyImageBundle(tm, sig, digest))
+	// 0.3.0 was signed before the workflow named the version in what it
+	// signs. The signature itself checks out — identity and digest — and the
+	// image is refused only for that.
+	require.ErrorContains(t, update.VerifyImageBundle(tm, sig, digest, "0.3.0"), "does not name the version")
 
 	other, err := v1.NewHash("sha256:" + strings.Repeat("0", 64))
 	require.NoError(t, err)
-	require.Error(t, update.VerifyImageBundle(tm, sig, other), "the signature is for one digest only")
+	require.ErrorContains(t, update.VerifyImageBundle(tm, sig, other, "0.3.0"), "does not verify", "the signature is for one digest only")
 
 	// The release workflow's signature is not the image workflow's.
-	require.Error(t, update.VerifyImageBundle(tm, read(t, "checksums.txt.sigstore.json"), digest))
+	require.ErrorContains(t, update.VerifyImageBundle(tm, read(t, "checksums.txt.sigstore.json"), digest, "0.3.0"), "does not verify")
 
-	require.Error(t, update.VerifyImageBundle(tm, []byte(`{}`), digest))
+	require.Error(t, update.VerifyImageBundle(tm, []byte(`{}`), digest, "0.3.0"))
 }
 
 // TestR363_ARelease_sChecksumsVerifyAgainstTheReleaseWorkflow asserts the

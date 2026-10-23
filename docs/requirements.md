@@ -1122,7 +1122,7 @@ R-106 describes and is not an error.
 
 **R-356 [D]** Upgrading is the install verb `install.upgrade`, which the built-in Administrator holds. Starting an upgrade, its outcome, a rollback and a skipped backup are audit events, whether a person or the schedule (R-361) started it.
 
-**R-357 [D]** **The image is verified before anything else happens.** Pando checks the keyless cosign signature of the target version's image digest against the release workflow's identity — the certificate must name `image.yml` in Pando's repository and be issued by GitHub's OIDC provider, as docs/releasing.md documents — and refuses to continue if it does not verify. What is run is that digest, never a tag resolved again later.
+**R-357 [D]** **The image is verified before anything else happens.** Pando checks the keyless cosign signature of the target version's image digest against the release workflow's identity — the certificate must name `image.yml` in Pando's repository and be issued by GitHub's OIDC provider, as docs/releasing.md documents — and refuses to continue if it does not verify. What is run is that digest, never a tag resolved again later. The signature must name the target version, the version that comes up must report it, and a target not newer than the running version is refused.
 
 **R-358 [D]** A person's upgrade takes a full backup through the backup adapter first, with a passphrase they supply then (R-213), and stops if the backup fails. They may skip it only by saying so explicitly, and the audit event records that they did.
 

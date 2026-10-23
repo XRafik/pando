@@ -22,6 +22,7 @@ require (
 	github.com/golang-migrate/migrate/v4 v4.20.1
 	github.com/google/go-containerregistry v0.22.1
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
+	github.com/in-toto/attestation v1.2.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/mattermost/xml-roundtrip-validator v0.1.0
 	github.com/moby/buildkit v0.34.1
@@ -157,7 +158,6 @@ require (
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.31.0 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
-	github.com/in-toto/attestation v1.2.0 // indirect
 	github.com/in-toto/in-toto-golang v0.11.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/invopop/jsonschema v0.14.0 // indirect

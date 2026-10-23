@@ -214,7 +214,7 @@ func TestR255_ChangingTheRuntimeMovesAppsOnTheirNextDeploy(t *testing.T) {
 		f, a := newFakeDaemon(t, config)
 		f.on("GET /containers/c1/json", respond(http.StatusOK, map[string]any{
 			"Id":         "c1",
-			"Config":     map[string]any{"Image": "nginx:1", "Labels": map[string]string{labelHardening: hardeningLevel}},
+			"Config":     map[string]any{"Image": "nginx:1", "Labels": map[string]string{labelHardening: hardeningLevel, labelEnv: ""}},
 			"HostConfig": map[string]any{"Runtime": running, "PidsLimit": DefaultPidsLimit},
 		}))
 		ok, err := a.matchesPlan(context.Background(), "c1", w, "pando-app", nil)

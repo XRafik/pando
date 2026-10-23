@@ -66,7 +66,7 @@ func TestR359_TheSwapKeepsPandosConfigurationAndPutsTheOldOneBack(t *testing.T) 
 	stamp := strings.ReplaceAll(time.Now().Format("150405.000"), ".", "")
 	oldImage, goodImage, badImage := "localhost/pando-upg-old:"+stamp, "localhost/pando-upg-good:"+stamp, "localhost/pando-upg-bad:"+stamp
 	buildTestImage(t, oldImage, "FROM busybox:1.37\nENV FROM_IMAGE=old\n"+serves)
-	buildTestImage(t, goodImage, "FROM busybox:1.37\nENV FROM_IMAGE=new\n"+serves)
+	buildTestImage(t, goodImage, "FROM busybox:1.37\nENV FROM_IMAGE=new\nLABEL org.opencontainers.image.version=0.4.0\n"+serves)
 	buildTestImage(t, badImage, "FROM busybox:1.37\nENV FROM_IMAGE=bad\nCMD [\"sh\", \"-c\", \"echo migration 43 failed; exit 3\"]\n")
 
 	net, vol := "pando-upg-net-"+stamp, "pando-upg-vol-"+stamp
@@ -105,6 +105,9 @@ func TestR359_TheSwapKeepsPandosConfigurationAndPutsTheOldOneBack(t *testing.T) 
 		got := inspectContainer(t, name)
 		require.True(t, got.State.Running)
 		require.Equal(t, imageID(t, goodImage), got.Image)
+		version, err := r.Version(ctx, newID)
+		require.NoError(t, err)
+		require.Equal(t, "0.4.0", version, "the version the new image was built as (R-357)")
 		require.Contains(t, got.Config.Env, "SET_BY_DEPLOY=yes", "the deployment's settings carry over")
 		require.Contains(t, got.Config.Env, "FROM_IMAGE=new", "the new image's own environment applies")
 		require.NotContains(t, got.Config.Env, "FROM_IMAGE=old", "the old image's does not")

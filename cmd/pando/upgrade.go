@@ -166,6 +166,9 @@ func (s *dockerSwap) Recreate(ctx context.Context, image string) error {
 func (s *dockerSwap) Ready(ctx context.Context, timeout time.Duration) error {
 	return s.r.Ready(ctx, s.newID, s.port, timeout)
 }
+func (s *dockerSwap) Version(ctx context.Context) (string, error) {
+	return s.r.Version(ctx, s.newID)
+}
 func (s *dockerSwap) Logs(ctx context.Context) string {
 	if s.newID == "" {
 		return ""

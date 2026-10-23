@@ -321,6 +321,28 @@ func (r *Replacer) Ready(ctx context.Context, id string, port string, timeout ti
 	return fmt.Errorf("the new version did not report ready within %s", timeout)
 }
 
+// imageVersionLabel is the OCI label the image workflow sets to the version
+// an image was built as.
+const imageVersionLabel = "org.opencontainers.image.version"
+
+// Version is the version the image a container runs says it is, read from
+// the image rather than the container, whose labels a deployment may set;
+// empty when the image has no version label.
+func (r *Replacer) Version(ctx context.Context, id string) (string, error) {
+	got, err := r.cli.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
+	if err != nil {
+		return "", err
+	}
+	img, err := r.cli.ImageInspect(ctx, got.Container.Image)
+	if err != nil {
+		return "", err
+	}
+	if img.Config == nil {
+		return "", nil
+	}
+	return img.Config.Labels[imageVersionLabel], nil
+}
+
 // Logs returns the end of a container's output, for the report of why an
 // upgrade was rolled back.
 func (r *Replacer) Logs(ctx context.Context, id string) string {

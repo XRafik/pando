@@ -19,28 +19,46 @@ const Redacted = "[redacted]"
 //
 // The zero Value is valid and empty.
 type Value struct {
-	// Unexported, and not a named type an outside package can reach. Struct
-	// embedding a Value into a logged struct therefore cannot leak it either.
-	v string
+	// The methods below cover a Value fmt can call them on. It cannot when
+	// the Value sits in an unexported field of something being printed, or
+	// in a map or slice held there: fmt then walks the struct itself. So the
+	// secret is held behind a pointer, which fmt prints below the top level
+	// as an address and never follows.
+	p *string
+
+	// Not comparable: two Values holding the same secret hold different
+	// pointers, so == would compare where each was made, not what it holds.
+	// This makes such a comparison a build error instead.
+	_ [0]func()
 }
 
 // New wraps a secret.
-func New(s string) Value { return Value{v: s} }
+func New(s string) Value {
+	if s == "" {
+		return Value{}
+	}
+	return Value{p: &s}
+}
 
 // Reveal returns the underlying secret. Every call site is a place a secret
 // escapes the type's protection, so they should be few and obvious. Core calls
 // it during plan resolution to populate WorkloadPlan.Env, and essentially
 // nowhere else.
-func (v Value) Reveal() string { return v.v }
+func (v Value) Reveal() string {
+	if v.p == nil {
+		return ""
+	}
+	return *v.p
+}
 
 // IsZero reports whether the Value holds nothing. Useful for validation without
 // revealing.
-func (v Value) IsZero() bool { return v.v == "" }
+func (v Value) IsZero() bool { return v.p == nil || *v.p == "" }
 
 // Len returns the length of the secret. Safe to log: it discloses nothing an
 // attacker cannot infer, and it makes "the secret is empty" debuggable without
 // a Reveal.
-func (v Value) Len() int { return len(v.v) }
+func (v Value) Len() int { return len(v.Reveal()) }
 
 // String implements fmt.Stringer. Covers %s, %v, and any code path that
 // stringifies a value.
@@ -73,10 +91,9 @@ func (v *Value) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	if s == Redacted {
-		v.v = ""
-		return nil
+		s = ""
 	}
-	v.v = s
+	*v = New(s)
 	return nil
 }
 
