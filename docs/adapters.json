@@ -2349,7 +2349,7 @@
               "label": "Egress gateway image",
               "help": "Any image with Pando's binary at /usr/local/bin/pando. Empty, apps that restrict egress can't be deployed.",
               "type": "string",
-              "placeholder": "ghcr.io/trypando/pando:latest"
+              "placeholder": "trypando/pando:0.13.0"
             },
             {
               "key": "kubeconfig",

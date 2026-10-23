@@ -53,6 +53,11 @@ API version bump, and the API version changes only when `/api/v1` itself stops b
 
   A failure at any step leaves the moving tags where they were.
 
+  `deploy/kubernetes/pando.yaml` names the image by version and digest, as every shipped Compose
+  file and manifest names its images. After a release Dependabot proposes the new pair for the
+  Deployment; set `egress_gateway_image` in the same file's ConfigMap to the same value in that pull
+  request, which `TestR401_EveryShippedImageIsPinnedByDigest` otherwise fails.
+
 ## Before tagging
 
 1. `make check` and `make test-integration` are green on the commit being released.

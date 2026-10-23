@@ -5,9 +5,16 @@
 #
 #   - A namespace is deleted only if Pando made it (RBAC cannot select by
 #     label).
+#   - A namespace Pando makes is labeled as Pando's and enforces Pod Security
+#     baseline or restricted.
+#   - Pando binds a role only in such a namespace, and only pando-app-manager,
+#     to itself.
 #   - No NodePort or LoadBalancer Service except the edge's, in pando-edge
 #     (R-026), and no ExternalName Service outside pando-edge.
-#   - No pod with the host's network or a host port (R-026).
+#   - No pod with the host's network, PID or IPC namespace, a host port or a
+#     host path (R-026).
+#   - No privileged container, and no capability beyond the ones every
+#     workload is given (workloadSecurity in the runtime).
 #   - Every IngressRoute sends traffic to pando-proxy and nothing else (R-023).
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
@@ -29,8 +36,68 @@ spec:
         has(oldObject.metadata.labels) &&
         'app.kubernetes.io/managed-by' in oldObject.metadata.labels &&
         oldObject.metadata.labels['app.kubernetes.io/managed-by'] == 'pando' &&
-        !(oldObject.metadata.name in ['pando', 'pando-edge'])
+        !(oldObject.metadata.name in ['pando', 'pando-edge', 'pando-build'])
       message: Pando deletes only the namespaces it made for apps.
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: pando-namespace-create
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        resources: [namespaces]
+        operations: [CREATE]
+  matchConditions:
+    - name: pando-service-account
+      expression: request.userInfo.username == 'system:serviceaccount:pando:pando'
+  validations:
+    - expression: >-
+        has(object.metadata.labels) &&
+        'app.kubernetes.io/managed-by' in object.metadata.labels &&
+        object.metadata.labels['app.kubernetes.io/managed-by'] == 'pando' &&
+        'pod-security.kubernetes.io/enforce' in object.metadata.labels &&
+        object.metadata.labels['pod-security.kubernetes.io/enforce'] in ['baseline', 'restricted']
+      message: >-
+        A namespace Pando makes is labeled app.kubernetes.io/managed-by=pando and enforces Pod Security
+        baseline or restricted.
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: pando-role-binding
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [rbac.authorization.k8s.io]
+        apiVersions: [v1]
+        resources: [rolebindings]
+        operations: [CREATE, UPDATE]
+  matchConditions:
+    - name: pando-service-account
+      expression: request.userInfo.username == 'system:serviceaccount:pando:pando'
+  validations:
+    - expression: >-
+        has(namespaceObject.metadata.labels) &&
+        'app.kubernetes.io/managed-by' in namespaceObject.metadata.labels &&
+        namespaceObject.metadata.labels['app.kubernetes.io/managed-by'] == 'pando' &&
+        'pod-security.kubernetes.io/enforce' in namespaceObject.metadata.labels &&
+        namespaceObject.metadata.labels['pod-security.kubernetes.io/enforce'] in ['baseline', 'restricted'] &&
+        !(request.namespace in ['pando', 'pando-edge', 'pando-build'])
+      message: >-
+        Pando binds a role only in a namespace it made for an app, which enforces Pod Security baseline or
+        restricted.
+    - expression: >-
+        object.roleRef.kind == 'ClusterRole' && object.roleRef.name == 'pando-app-manager' &&
+        has(object.subjects) && object.subjects.size() == 1 &&
+        object.subjects[0].kind == 'ServiceAccount' &&
+        object.subjects[0].name == 'pando' &&
+        has(object.subjects[0].__namespace__) && object.subjects[0].__namespace__ == 'pando'
+      message: Pando binds only pando-app-manager, and only to its own ServiceAccount.
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
@@ -79,6 +146,47 @@ spec:
         (!has(object.spec.hostNetwork) || object.spec.hostNetwork == false) &&
         object.spec.containers.all(c, !has(c.ports) || c.ports.all(p, !has(p.hostPort) || p.hostPort == 0))
       message: An app's pod never uses the host's network or a host port (R-026).
+    - expression: >-
+        (!has(object.spec.hostPID) || object.spec.hostPID == false) &&
+        (!has(object.spec.hostIPC) || object.spec.hostIPC == false)
+      message: An app's pod never shares the host's process or IPC namespace (R-026).
+    - expression: >-
+        !has(object.spec.volumes) || object.spec.volumes.all(v, !has(v.hostPath))
+      message: An app's pod never mounts a path from the host (R-026).
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: pando-pod-privileges
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        resources: [pods]
+        operations: [CREATE, UPDATE]
+  matchConditions:
+    - name: pando-service-account
+      expression: request.userInfo.username == 'system:serviceaccount:pando:pando'
+  variables:
+    - name: containers
+      expression: >-
+        object.spec.containers +
+        (has(object.spec.initContainers) ? object.spec.initContainers : []) +
+        (has(object.spec.ephemeralContainers) ? object.spec.ephemeralContainers : [])
+  validations:
+    - expression: >-
+        variables.containers.all(c, !has(c.securityContext) ||
+          !has(c.securityContext.privileged) || c.securityContext.privileged == false)
+      message: An app's pod never runs a privileged container.
+    # The capabilities workloadSecurity adds (internal/adapter/runtime/kubernetes/apply.go).
+    - expression: >-
+        variables.containers.all(c, !has(c.securityContext) ||
+          !has(c.securityContext.capabilities) || !has(c.securityContext.capabilities.add) ||
+          c.securityContext.capabilities.add.all(x, x in ['CHOWN', 'DAC_OVERRIDE', 'FOWNER', 'FSETID', 'KILL',
+            'NET_BIND_SERVICE', 'SETFCAP', 'SETGID', 'SETPCAP', 'SETUID', 'SYS_CHROOT']))
+      message: An app's pod is given no capability beyond the ones every workload gets.
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
@@ -123,6 +231,30 @@ metadata:
   name: pando-no-host-access
 spec:
   policyName: pando-no-host-access
+  validationActions: [Deny]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: pando-namespace-create
+spec:
+  policyName: pando-namespace-create
+  validationActions: [Deny]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: pando-role-binding
+spec:
+  policyName: pando-role-binding
+  validationActions: [Deny]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: pando-pod-privileges
+spec:
+  policyName: pando-pod-privileges
   validationActions: [Deny]
 ---
 apiVersion: admissionregistration.k8s.io/v1
