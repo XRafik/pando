@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/netip"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -54,6 +55,12 @@ type Gateway struct {
 
 	// Resolver looks names up. Nil is the system resolver.
 	Resolver Resolver
+
+	// Own lists the gateway's own addresses beyond loopback: its interfaces,
+	// and the address of the router its outbound network leaves through,
+	// which on a bridge network is the host itself. Refused whatever the
+	// rules say, as loopback is (OwnAddresses fills it).
+	Own []netip.Addr
 
 	// DialTimeout bounds one attempt to connect to one address, and
 	// ResolveTimeout one name lookup. Zero is ten seconds for each.
@@ -310,7 +317,7 @@ func (g *Gateway) decide(ctx context.Context, host string, port int) ([]netip.Ad
 				"Pando's egress gateway could not find an address for %s. Check the name is spelled correctly and exists.", host)
 		}
 		for _, a := range resolved {
-			candidates = append(candidates, a.Unmap())
+			candidates = append(candidates, a.WithZone("").Unmap())
 		}
 	}
 
@@ -335,10 +342,14 @@ func (g *Gateway) decide(ctx context.Context, host string, port int) ([]netip.Ad
 //
 // The gateway's loopback and unspecified addresses are its own container, not
 // a destination the app has: "localhost" in the app is the app, and its
-// NO_PROXY keeps that from reaching here. Refused whatever the rules say, so
-// no rule can open the gateway to connections to itself.
+// NO_PROXY keeps that from reaching here. Its other addresses (Own) are its
+// own container and the host its outbound network is bridged to. Refused
+// whatever the rules say, so no rule can open the gateway to connections to
+// itself or to the host it runs on.
 func (g *Gateway) decideAddr(host string, port int, a netip.Addr) Decision {
-	if a.IsLoopback() || a.IsUnspecified() {
+	// Judged as the address it carries, so a NAT64 spelling of loopback or
+	// of an own address is refused as that address is.
+	if c := Carried(a); c.IsLoopback() || c.IsUnspecified() || slices.Contains(g.Own, c) {
 		return Decision{Reason: fmt.Sprintf("%s is the gateway's own address, which is never a destination", a)}
 	}
 	return g.Rules.Allows(host, port, a)
@@ -422,6 +433,11 @@ func splitTarget(s string, defaultPort int) (string, int, error) {
 	host = strings.TrimSuffix(strings.ToLower(host), ".")
 	if host == "" {
 		return "", 0, fmt.Errorf("%q names no host", s)
+	}
+	if strings.Contains(host, "%") {
+		// An IPv6 zone (fe80::1%eth0) names one of the gateway's own network
+		// interfaces, not a destination, and no hostname contains a %.
+		return "", 0, fmt.Errorf("%q names a network interface after %%, which is not a destination. Write the address without it", s)
 	}
 	return host, port, nil
 }

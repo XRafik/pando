@@ -395,7 +395,14 @@ for the app's owner.
   talk to each other directly.
 - **The gateway** refuses a name before looking it up when no entry could allow it, so a refused name
   is not leaked through DNS. It resolves once and dials only an address it checked, so rebinding cannot
-  get around the private block. It never connects to its own loopback.
+  get around the private block. It never connects to its own loopback, its own interface addresses, or
+  the routers in its routing table — on a bridge, the outbound network's gateway address, which is the
+  host (`egress.OwnAddresses`, R-180). A destination written with an IPv6 zone (`fe80::1%eth0`) is
+  refused outright; an address is matched and judged private without its zone, since
+  `netip.Prefix.Contains` is false for every zoned address.
+- **App network range.** `network_pool` must lie in private address space (RFC 1918 or carrier-grade
+  NAT). A public range is refused when the runtime is configured — Docker, Docker hosts and Incus alike —
+  because app networks there would sit where the private-range block does not see them.
 - **Image.** The adapter's `egress_gateway_image` setting, or else the image of Pando's own container.
   With neither (Pando run on the host), `SupportsEgressRestriction` is false and restricted plans are
   refused (R-186).
@@ -408,6 +415,22 @@ adding one later is a change the plan note would have to follow. Two smaller gap
 whose embedded DNS still answers outside names on an internal network, a workload can leak data
 through lookups (clients do not need them, since they hand names to the proxy); and after a posture
 switch the old network stays until Pando's next start.
+
+**[D] What the rules do not cover, by design.** Operators writing egress rules should know:
+
+- **A hostname entry matches only the name asked for.** A denylisted hostname does not stop a client
+  that connects to one of its addresses as an IP literal. To keep an app from a service, deny its
+  address ranges as well, or use an allowlist.
+- **`*.example.com` does not match `example.com`** (R-185). List the apex separately.
+- **`CONNECT` is decided on the name in the request.** The gateway does not read the TLS SNI or the
+  `Host` header inside a tunnel, so a client can reach a different service on a CDN that answers for
+  an allowed name (domain fronting). An allowlist of shared CDN names allows the CDN.
+- **An allowlist with an address or range entry makes the gateway resolve every name it is asked
+  for**, because any name could resolve into the range. A workload can therefore send data out in DNS
+  lookups the gateway makes; an allowlist of hostnames only does not have this channel.
+- **Private-range blocking covers addresses, not the host's public ones.** The host's own public
+  address is reachable unless it is denied; the bridge address the gateway leaves through is refused
+  (above).
 
 **[D]** The rules a runtime enforces are the ones recorded on the deployment (`deployments.egress_rules`,
 design 02 §2.3), which the reconciler passes back on every converge. Build egress is `BuildRequest`'s own

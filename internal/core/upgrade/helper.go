@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/trypando/pando/internal/core/clock"
@@ -88,6 +89,9 @@ type Swap interface {
 	Stop(ctx context.Context) error
 	Recreate(ctx context.Context, image string) error
 	Ready(ctx context.Context, timeout time.Duration) error
+	// Version is the version the new container's image says it is, from its
+	// org.opencontainers.image.version label; empty when it has none.
+	Version(ctx context.Context) (string, error)
 	Logs(ctx context.Context) string
 	Discard(ctx context.Context)
 	Restore(ctx context.Context) error
@@ -98,6 +102,23 @@ type Swap interface {
 type Database interface {
 	Snapshot(ctx context.Context) error
 	Restore(ctx context.Context) error
+}
+
+// confirmVersion checks the container that came up is the version asked for.
+// The signature already names it (R-357); this is what is actually running,
+// so a mismatch is rolled back like a version that never became ready.
+func confirmVersion(ctx context.Context, swap Swap, want string) error {
+	got, err := swap.Version(ctx)
+	if err != nil {
+		return fmt.Errorf("its version could not be read: %w", err)
+	}
+	if strings.TrimPrefix(got, "v") != strings.TrimPrefix(want, "v") {
+		if got == "" {
+			got = "no version"
+		}
+		return fmt.Errorf("the container that started reports %s, not %s", got, want)
+	}
+	return nil
 }
 
 // RunHelper replaces Pando (R-359) and records how it went at path. It puts
@@ -133,6 +154,9 @@ func RunHelper(ctx context.Context, path string, swap Swap, db Database, readyTi
 	err = swap.Recreate(ctx, o.Image)
 	if err == nil {
 		err = swap.Ready(ctx, readyTimeout)
+	}
+	if err == nil {
+		err = confirmVersion(ctx, swap, o.To)
 	}
 	if err != nil {
 		o.Logs = swap.Logs(ctx)

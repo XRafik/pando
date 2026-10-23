@@ -746,7 +746,7 @@ func Info() api.KindInfo {
 				Help: "The range the cluster assigns pods. Apps may not open connections into it."},
 			{Key: "service_cidr", Label: "Service address range", Type: "string", Required: true, Placeholder: "10.96.0.0/12",
 				Help: "The range the cluster assigns Services. Apps may not open connections into it."},
-			{Key: "egress_gateway_image", Label: "Egress gateway image", Type: "string", Placeholder: "ghcr.io/trypando/pando:latest",
+			{Key: "egress_gateway_image", Label: "Egress gateway image", Type: "string", Placeholder: "trypando/pando:0.13.0",
 				Help: "Any image with Pando's binary at /usr/local/bin/pando. Empty, apps that restrict egress can't be deployed."},
 			{Key: "kubeconfig", Label: "Kubeconfig file", Type: "string", Advanced: true, Default: "The cluster Pando runs in",
 				Help: "A kubeconfig file, for running Pando outside the cluster during development. Pando's proxy reaches apps by cluster DNS names, so in production Pando runs inside the cluster."},

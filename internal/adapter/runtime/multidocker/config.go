@@ -21,6 +21,7 @@ import (
 	"github.com/moby/moby/client"
 	"golang.org/x/crypto/ssh"
 
+	"github.com/trypando/pando/internal/adapter/runtime/docker"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/hostagent"
 )
@@ -167,6 +168,9 @@ func validate(cfg Config, hosts []HostConfig) error {
 	}
 	if controls != 1 {
 		return fmt.Errorf("exactly one host must be the control host, the one Pando runs on; %d are", controls)
+	}
+	if err := docker.CheckNetworkPool(cfg.NetworkPool); err != nil {
+		return err
 	}
 	if pool, ok := networkPool(cfg); !ok || !pool.IsValid() {
 		return errors.New(`network_pool cannot be "off" on several hosts: each host's agent forwards only into the app network range, so it must be one`)

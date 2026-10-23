@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -184,51 +185,80 @@ func (s Sources) fetchUpload(ctx context.Context, src spec.Source) (*Checkout, e
 // directory — a symlink pointing out of it and a later entry written through
 // that symlink is the other, which is why symlinks are dropped entirely.
 func extract(r io.Reader, dir string) error {
+	return extractWithin(r, dir, uploadLimits)
+}
+
+// unpackLimits bound what an archive may unpack to.
+type unpackLimits struct {
+	file, total int64
+	entries     int
+	// archive bounds the whole tar stream once decompressed: headers,
+	// extension records and the data of entries that are skipped, which the
+	// tar reader reads past without them counting toward total.
+	archive int64
+}
+
+var uploadLimits = unpackLimits{
+	file: maxUploadFileBytes, total: maxUnpackedBytes, entries: maxUploadEntries, archive: maxArchiveBytes,
+}
+
+// errArchiveTooLarge is what the capped stream answers past its limit, so the
+// refusal says why rather than that the archive could not be read.
+var errArchiveTooLarge = errors.New("archive larger than its limit once decompressed")
+
+// cappedReader fails, rather than ending cleanly, once more than left bytes
+// have been read: a clean end would make a cut-off archive look complete.
+type cappedReader struct {
+	r    io.Reader
+	left int64
+}
+
+func (c *cappedReader) Read(p []byte) (int, error) {
+	if c.left <= 0 {
+		return 0, errArchiveTooLarge
+	}
+	if int64(len(p)) > c.left {
+		p = p[:c.left]
+	}
+	n, err := c.r.Read(p)
+	c.left -= int64(n)
+	return n, err
+}
+
+func extractWithin(r io.Reader, dir string, limits unpackLimits) error {
 	gz, err := gzip.NewReader(r)
 	if err != nil {
 		return errs.Wrap(errs.ValidInvalid, "That upload is not a gzipped tar archive.", err)
 	}
 	defer func() { _ = gz.Close() }()
 
-	tr := tar.NewReader(gz)
-	for {
+	tr := tar.NewReader(&cappedReader{r: gz, left: limits.archive})
+	var unpacked int64
+	for entries := 1; ; entries++ {
 		header, err := tr.Next()
 		if errors.Is(err, io.EOF) {
 			return nil
 		}
 		if err != nil {
-			return errs.Wrap(errs.ValidInvalid, "That upload could not be read.", err)
+			return readFailed(err, limits)
 		}
-
-		target := filepath.Join(dir, filepath.Clean("/"+header.Name))
-		if !strings.HasPrefix(target, filepath.Clean(dir)+string(os.PathSeparator)) && target != dir {
-			return errs.Newf(errs.ValidInvalid,
-				"That upload contains a path that would write outside the app's directory: %s", header.Name)
+		target, err := checkEntry(header, dir, entries, limits)
+		if err != nil {
+			return err
 		}
 
 		switch header.Typeflag {
 		case tar.TypeDir:
 			if err := os.MkdirAll(target, 0o755); err != nil {
-				return errs.Wrap(errs.Internal, "Pando could not unpack the upload.", err)
+				return errs.Wrap(errs.Internal, couldNotUnpack, err)
 			}
 
 		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-				return errs.Wrap(errs.Internal, "Pando could not unpack the upload.", err)
-			}
-			out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, fileMode(header.Mode))
+			n, err := extractFile(tr, header, target, limits, limits.total-unpacked)
 			if err != nil {
-				return errs.Wrap(errs.Internal, "Pando could not unpack the upload.", err)
+				return readFailed(err, limits)
 			}
-			// Bounded: an archive claiming a petabyte should fail on the limit
-			// rather than on the disk.
-			if _, err := io.Copy(out, io.LimitReader(tr, maxUploadFileBytes)); err != nil {
-				_ = out.Close()
-				return errs.Wrap(errs.Internal, "Pando could not unpack the upload.", err)
-			}
-			if err := out.Close(); err != nil {
-				return errs.Wrap(errs.Internal, "Pando could not unpack the upload.", err)
-			}
+			unpacked += n
 
 		default:
 			// Symlinks, devices, fifos: skipped, not an error. A source tree
@@ -239,7 +269,136 @@ func extract(r io.Reader, dir string) error {
 	}
 }
 
-const maxUploadFileBytes = 1 << 30 // 1 GiB per file
+// readFailed says why reading the archive stopped: past the decompressed
+// limit, or an error already said for the upload, or unreadable.
+func readFailed(err error, limits unpackLimits) error {
+	if errors.Is(err, errArchiveTooLarge) {
+		return archiveTooLarge(limits)
+	}
+	if errs.As(err) != nil {
+		return err
+	}
+	return errs.Wrap(errs.ValidInvalid, "That upload could not be read.", err)
+}
+
+// checkEntry refuses an entry past the entry limit, outside dir, or sparse,
+// and otherwise answers where it unpacks to.
+func checkEntry(header *tar.Header, dir string, entries int, limits unpackLimits) (string, error) {
+	if entries > limits.entries {
+		return "", errs.Newf(errs.ValidInvalid,
+			"That upload holds more than %d files and directories, which is more than Pando unpacks.", limits.entries).
+			WithRemedy(uploadTooBigRemedy)
+	}
+
+	target := filepath.Join(dir, filepath.Clean("/"+header.Name))
+	if !strings.HasPrefix(target, filepath.Clean(dir)+string(os.PathSeparator)) && target != dir {
+		return "", errs.Newf(errs.ValidInvalid,
+			"That upload contains a path that would write outside the app's directory: %s", header.Name)
+	}
+
+	// A sparse entry is a few bytes in the archive standing for a file of
+	// any size, mostly zeros. No source tree needs one, and pando deploy
+	// never writes one.
+	if isSparse(header) {
+		return "", errs.Newf(errs.ValidInvalid,
+			"That upload contains %s as a sparse file, which Pando does not unpack.", header.Name).
+			WithRemedy("Upload the directory with pando deploy, which archives every file whole.")
+	}
+	return target, nil
+}
+
+// Limits on what an upload may unpack to (R-410): far above a large source tree
+// (the deploy QA's largest upload is under 1 MB in 23 files; Pando's own
+// tree, without .git and node_modules as pando deploy sends it, is 18 MB in
+// about 2,100 files), and low enough that an archive compressed to almost
+// nothing cannot fill the disk or keep the unpacking busy. Each is refused
+// when reached, never truncated: a source tree with part of a file missing
+// builds into something nobody wrote.
+const (
+	maxUploadFileBytes = 1 << 30 // 1 GiB per file
+	maxUnpackedBytes   = 4 << 30 // 4 GiB in all
+	maxUploadEntries   = 200_000
+	// The tar stream itself: everything above plus 1 GiB for headers and
+	// extension records, several times what 200,000 entries' headers take.
+	maxArchiveBytes = maxUnpackedBytes + 1<<30
+)
+
+const couldNotUnpack = "Pando could not unpack the upload."
+
+func archiveTooLarge(limits unpackLimits) error {
+	return errs.Newf(errs.ValidInvalid,
+		"That upload is larger than %s once decompressed, which is more than Pando unpacks.", sizeWords(limits.archive)).
+		WithRemedy(uploadTooBigRemedy)
+}
+
+const uploadTooBigRemedy = "Check for build output, dependencies or a .git directory being included, or deploy from a repository instead."
+
+// extractFile writes one regular file of an upload, refusing it when it is
+// larger than one file may be or than what is left of the whole upload's
+// allowance. It returns how many bytes it wrote.
+func extractFile(tr io.Reader, header *tar.Header, target string, limits unpackLimits, left int64) (int64, error) {
+	limit := min(limits.file, left)
+	tooBig := func() error {
+		if limit < limits.file {
+			return errs.Newf(errs.ValidInvalid,
+				"That upload unpacks to more than %s, which is more than Pando unpacks.", sizeWords(limits.total)).
+				WithRemedy(uploadTooBigRemedy)
+		}
+		return errs.Newf(errs.ValidInvalid,
+			"That upload contains %s, which is larger than %s, the most Pando unpacks for one file.",
+			header.Name, sizeWords(limits.file)).
+			WithRemedy(uploadTooBigRemedy)
+	}
+	if header.Size > limit {
+		return 0, tooBig()
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return 0, errs.Wrap(errs.Internal, couldNotUnpack, err)
+	}
+	out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, fileMode(header.Mode))
+	if err != nil {
+		return 0, errs.Wrap(errs.Internal, couldNotUnpack, err)
+	}
+	// Read one byte past the limit, so a file over it is refused rather than
+	// cut short: the header's size is the archive's word, not a promise.
+	n, err := io.Copy(out, io.LimitReader(tr, limit+1))
+	if err != nil {
+		_ = out.Close()
+		return n, errs.Wrap(errs.Internal, couldNotUnpack, err)
+	}
+	if err := out.Close(); err != nil {
+		return n, errs.Wrap(errs.Internal, couldNotUnpack, err)
+	}
+	if n > limit {
+		return n, tooBig()
+	}
+	return n, nil
+}
+
+// sizeWords says a limit in the largest whole unit that fits it.
+func sizeWords(n int64) string {
+	switch {
+	case n >= 1<<30 && n%(1<<30) == 0:
+		return fmt.Sprintf("%d GB", n>>30)
+	case n >= 1<<20 && n%(1<<20) == 0:
+		return fmt.Sprintf("%d MB", n>>20)
+	}
+	return fmt.Sprintf("%d bytes", n)
+}
+
+// isSparse reports whether an entry is a sparse file, in the old GNU format or
+// the PAX one.
+func isSparse(header *tar.Header) bool {
+	if header.Typeflag == tar.TypeGNUSparse {
+		return true
+	}
+	for key := range header.PAXRecords {
+		if strings.HasPrefix(key, "GNU.sparse.") {
+			return true
+		}
+	}
+	return false
+}
 
 // fileMode takes the archive's permissions, within limits.
 //

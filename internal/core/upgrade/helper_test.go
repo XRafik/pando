@@ -15,8 +15,9 @@ import (
 
 // fakeSwap records the helper's steps and fails the one it is told to.
 type fakeSwap struct {
-	steps []string
-	fail  map[string]error
+	steps   []string
+	fail    map[string]error
+	version string
 }
 
 func (f *fakeSwap) step(name string) error {
@@ -26,6 +27,15 @@ func (f *fakeSwap) step(name string) error {
 func (f *fakeSwap) Stop(context.Context) error                 { return f.step("stop") }
 func (f *fakeSwap) Recreate(context.Context, string) error     { return f.step("recreate") }
 func (f *fakeSwap) Ready(context.Context, time.Duration) error { return f.step("ready") }
+func (f *fakeSwap) Version(context.Context) (string, error) {
+	if err := f.step("version"); err != nil {
+		return "", err
+	}
+	if f.version == "" {
+		return "0.4.0", nil
+	}
+	return f.version, nil
+}
 func (f *fakeSwap) Logs(context.Context) string {
 	f.steps = append(f.steps, "logs")
 	return "panic: migration 43"
@@ -43,12 +53,17 @@ func (d fakeDB) Restore(ctx context.Context) error  { return d.s.RestoreDatabase
 
 func runHelper(t *testing.T, fail map[string]error) (upgrade.Attempt, []string) {
 	t.Helper()
+	return runHelperAs(t, fail, "")
+}
+
+func runHelperAs(t *testing.T, fail map[string]error, version string) (upgrade.Attempt, []string) {
+	t.Helper()
 	path := filepath.Join(t.TempDir(), "upgrade", "outcome.json")
 	require.NoError(t, upgrade.WriteOutcome(path, upgrade.Attempt{
 		ID: "upg_1", From: "0.3.1", To: "0.4.0", Image: "trypando/pando@sha256:new",
 		Tag: "trypando/pando:latest", State: upgrade.StateRunning,
 	}))
-	s := &fakeSwap{fail: fail}
+	s := &fakeSwap{fail: fail, version: version}
 	o := upgrade.RunHelper(context.Background(), path, s, fakeDB{s}, time.Minute, clock.NewFake(time.Unix(0, 0)))
 
 	stored, err := upgrade.ReadOutcome(path)
@@ -65,7 +80,7 @@ func TestR359_AFailedUpgradePutsThePreviousVersionBackOnItsOwn(t *testing.T) {
 	t.Run("succeeds, and only then moves the tag", func(t *testing.T) {
 		o, steps := runHelper(t, nil)
 		require.Equal(t, upgrade.StateSucceeded, o.State)
-		require.Equal(t, []string{"stop", "db.snapshot", "recreate", "ready", "finish"}, steps)
+		require.Equal(t, []string{"stop", "db.snapshot", "recreate", "ready", "version", "finish"}, steps)
 		require.False(t, o.SnapshotAt.IsZero(), "the copy is kept, to be dropped after the soak")
 		require.False(t, o.SnapshotGone)
 	})
@@ -114,6 +129,27 @@ func TestR359_AFailedUpgradePutsThePreviousVersionBackOnItsOwn(t *testing.T) {
 		require.Equal(t, upgrade.StateSucceeded, o.State)
 		require.Contains(t, o.Reason, "set the image where Pando is deployed")
 	})
+}
+
+// TestR357_AnUpgradeThatComesUpAsAnotherVersionIsRolledBack asserts the
+// helper confirms the version that started is the one asked for, and puts the
+// previous one back when it is not.
+func TestR357_AnUpgradeThatComesUpAsAnotherVersionIsRolledBack(t *testing.T) {
+	rolledBack := []string{"stop", "db.snapshot", "recreate", "ready", "version", "logs", "discard", "db.restore", "restore"}
+
+	o, steps := runHelperAs(t, nil, "v0.4.0")
+	require.Equal(t, upgrade.StateSucceeded, o.State, "the v is not part of the version")
+	require.Contains(t, steps, "finish")
+
+	o, steps = runHelperAs(t, nil, "0.2.0")
+	require.Equal(t, upgrade.StateRolledBack, o.State)
+	require.Equal(t, rolledBack, steps)
+	require.Contains(t, o.Reason, "reports 0.2.0, not 0.4.0")
+
+	o, steps = runHelperAs(t, map[string]error{"version": errors.New("boom")}, "")
+	require.Equal(t, upgrade.StateRolledBack, o.State)
+	require.Equal(t, rolledBack, steps)
+	require.Contains(t, o.Reason, "could not be read")
 }
 
 func TestNoUpgradeToRunIsAFailureNotAPanic(t *testing.T) {

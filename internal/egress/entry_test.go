@@ -177,8 +177,9 @@ func TestSameIgnoresHowAnEntryWasWritten(t *testing.T) {
 
 // TestR181_PrivateCoversTheRangesBlockingExistsFor asserts R-181 and R-185:
 // the private-range switch covers RFC 1918, loopback, link-local (and so the
-// cloud metadata address), unique-local, carrier-grade NAT and unspecified —
-// however the address is spelled.
+// cloud metadata address), unique-local, carrier-grade NAT, unspecified and
+// the special-purpose ranges no public destination is in — however the
+// address is spelled, an IPv6 zone included.
 func TestR181_PrivateCoversTheRangesBlockingExistsFor(t *testing.T) {
 	t.Parallel()
 	for _, s := range []string{
@@ -191,11 +192,14 @@ func TestR181_PrivateCoversTheRangesBlockingExistsFor(t *testing.T) {
 		"::ffff:10.0.0.1", "::ffff:169.254.169.254", "::ffff:127.0.0.1",
 		"64:ff9b::a00:1", "64:ff9b::a9fe:a9fe",
 		"fec0::1", "255.255.255.255",
+		"192.0.0.8", "198.18.0.1", "198.19.255.254", "240.0.0.1", "250.1.2.3", "100::1",
+		"fe80::1%eth0", "fec0::1%x", "64:ff9b::a9fe:a9fe%x", "::ffff:169.254.169.254%x",
 	} {
 		require.True(t, Private(netip.MustParseAddr(s)), s)
 	}
 	for _, s := range []string{
 		"8.8.8.8", "1.1.1.1", "203.0.113.7", "172.32.0.1", "100.128.0.1", "100.63.255.255",
+		"192.0.1.1", "198.17.255.255", "198.20.0.1", "2001:4860:4860::8888%x",
 		"2001:4860:4860::8888", "64:ff9b::808:808", "::ffff:8.8.8.8",
 	} {
 		require.False(t, Private(netip.MustParseAddr(s)), s)

@@ -159,6 +159,32 @@ func TestSafeNextKeepsASignInOnThisHost(t *testing.T) {
 	}
 }
 
+// TestR043_ASignInLandsOnlyOnThisHost asserts that the destination after an
+// SSO sign-in is judged as the browser will read it: a character the browser
+// removes or rewrites cannot turn a path into another host.
+func TestR043_ASignInLandsOnlyOnThisHost(t *testing.T) {
+	for in, want := range map[string]string{
+		"/\t/evil.example":      "/",
+		"/\t\t/evil.example":    "/",
+		"\t//evil.example":      "/",
+		"/\n/evil.example":      "/",
+		"/\x7f/evil.example":    "/",
+		"/\\/evil.example":      "/evil.example",
+		"/\\\\evil.example":     "/evil.example",
+		"/https://evil.example": "/https://evil.example",
+		"/.//evil.example/":     "/evil.example/",
+		"/a/..//evil.example":   "/evil.example",
+		"///evil.example":       "/evil.example",
+		"/apps/notes#top":       "/apps/notes#top",
+		"/apps/a%2Fb?q=%20x":    "/apps/a%2Fb?q=%20x",
+		"/apps/notes/../files":  "/apps/files",
+		"/apps/view?p=a\\b":     "/apps/view?p=a\\b",
+		"/apps/view#a\\b":       "/apps/view#a%5Cb",
+	} {
+		require.Equal(t, want, SafeNext(in), "%q", in)
+	}
+}
+
 func TestSCIMErrorBody(t *testing.T) {
 	b := (&SCIMError{Status: 409, Type: "uniqueness", Detail: "taken"}).Body()
 	require.Equal(t, "409", b["status"])

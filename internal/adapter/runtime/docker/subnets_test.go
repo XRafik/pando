@@ -1,10 +1,13 @@
 package docker
 
 import (
+	"context"
 	"net/netip"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/trypando/pando/internal/errs"
 )
 
 func blocks(pool string, bits int, used []string, n int) []string {
@@ -101,4 +104,25 @@ func TestTheNetworkPoolCanBeTurnedOffOrMoved(t *testing.T) {
 	a.config.NetworkPool = "not a range"
 	_, ok = a.networkPool()
 	require.False(t, ok, "a range that cannot be read falls back to Docker's")
+}
+
+// TestR181_AnAppNetworkRangeIsPrivate asserts R-181 and R-025: an app
+// network range outside private address space is refused when the runtime is
+// set up, since app networks there would sit where private-range blocking
+// does not see them. Every private range, and the ways of leaving the choice
+// to Docker, are still accepted.
+func TestR181_AnAppNetworkRangeIsPrivate(t *testing.T) {
+	for _, ok := range []string{"", "off", "docker", "not a range", "10.213.0.0/16", "10.208.0.0/12",
+		"172.20.0.0/16", "192.168.100.0/24", "100.64.0.0/16", "fd00::/64"} {
+		require.NoError(t, CheckNetworkPool(ok), ok)
+	}
+	for _, bad := range []string{"8.8.0.0/16", "0.0.0.0/0", "10.0.0.0/7", "203.0.113.0/24", "198.18.0.0/16"} {
+		err := CheckNetworkPool(bad)
+		require.ErrorContains(t, err, "outside private address space", bad)
+	}
+
+	err := New().Configure(context.Background(), []byte(`{"network_pool":"8.8.0.0/16"}`))
+	require.Equal(t, errs.ValidInvalid, errs.CodeOf(err))
+	require.ErrorContains(t, err, "8.8.0.0/16")
+	require.NoError(t, New().Configure(context.Background(), []byte(`{"network_pool":"10.50.0.0/20"}`)))
 }
