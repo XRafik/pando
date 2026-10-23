@@ -92,6 +92,32 @@ func TestR404_ABurstOfWrongPasswordsIsHeldToTheLimit(t *testing.T) {
 	require.Equal(t, 30, byCode[http.StatusTooManyRequests], "refused unchecked: %v", byCode)
 }
 
+// TestR404_ConcurrentRightPasswordsAreNotRefused asserts that right passwords
+// sent all at once for one username — scripts, CI, several tabs — are all
+// signed in: an attempt still being checked is counted against the limit, but
+// a limit reached only by those waits for them rather than refusing.
+func TestR404_ConcurrentRightPasswordsAreNotRefused(t *testing.T) {
+	t.Parallel()
+	i, _ := signInLimited(t)
+	admin := bootstrap.AdminUsername
+
+	codes := make(chan int, 30)
+	var wg sync.WaitGroup
+	for range cap(codes) {
+		wg.Go(func() {
+			_, got := i.signIn(admin, i.adminPassword)
+			codes <- got.Code
+		})
+	}
+	wg.Wait()
+	close(codes)
+	byCode := map[int]int{}
+	for c := range codes {
+		byCode[c]++
+	}
+	require.Equal(t, map[int]int{http.StatusOK: cap(codes)}, byCode)
+}
+
 // TestR404_WrongPasswordsAreLimitedPerAddress asserts R-404's second limit:
 // one address that has tried many wrong passwords — across any usernames — is
 // refused, even for an account it has not guessed at.
@@ -145,6 +171,9 @@ type brokenAttempts struct{ reserveErr error }
 
 func (b brokenAttempts) Reserve(context.Context, ...state.AttemptLimit) (state.Reservation, error) {
 	return state.Reservation{Over: -1}, b.reserveErr
+}
+func (brokenAttempts) Fail(context.Context, state.Reservation) error {
+	return errors.New("database away")
 }
 func (brokenAttempts) Release(context.Context, state.Reservation) error {
 	return errors.New("database away")

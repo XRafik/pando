@@ -63,7 +63,8 @@ type HeldAttempt struct {
 // Reservation is what Reserve decided. Over a limit, Over is that limit's
 // index and Wait how long until it lets another attempt through, never zero,
 // and nothing was counted. Otherwise Over is -1 and Held is the failure
-// counted against each limit, which stands unless it is released.
+// counted against each limit, pending until Fail settles it or Release takes
+// it back.
 type Reservation struct {
 	Held []HeldAttempt
 	Over int
@@ -74,32 +75,69 @@ type Reservation struct {
 // checked.
 func (r Reservation) Refused() bool { return r.Over >= 0 }
 
-// Reserve counts one failure against every limit before the guess is checked,
-// unless one is already reached (R-075a, R-404, R-405). Counting first and in
-// one transaction under each key's lock is what holds a burst of concurrent
-// attempts to the limit: reading the count and recording the failure after
-// the check let every request in the burst see the same count. The caller
-// releases the reservation when the guess was right, or when it was not a
-// guess at all.
+// PendingWait is how long Reserve waits for attempts still being checked
+// when only they stand between an attempt and the limit, before refusing it.
+const PendingWait = 10 * time.Second
+
+// PendingStale is how old a pending attempt is before it counts as a failure:
+// its check never settled it, as when a replica stopped mid-check.
+const PendingStale = 30 * time.Second
+
+// pendingPoll is how often a waiting Reserve looks again.
+const pendingPoll = 25 * time.Millisecond
+
+// Reserve counts one pending failure against every limit before the guess is
+// checked, unless one is already reached (R-075a, R-404, R-405). Counting
+// first and in one transaction under each key's lock is what holds a burst of
+// concurrent attempts to the limit: reading the count and recording the
+// failure after the check let every request in the burst see the same count.
+//
+// A limit reached only because attempts are still being checked is not a
+// refusal yet: Reserve waits, up to PendingWait, for them to settle, so that
+// concurrent right passwords are never refused because of each other. The
+// caller settles the reservation with Fail when the guess was wrong and
+// Release when it was right or not a guess at all.
 func (p *FailedAttempts) Reserve(ctx context.Context, limits ...AttemptLimit) (Reservation, error) {
+	deadline := time.Now().Add(PendingWait)
+	for {
+		res, blocked, err := p.reserveOnce(ctx, limits)
+		if err != nil || !blocked.Refused() {
+			return res, err
+		}
+		if !time.Now().Before(deadline) {
+			return blocked, nil
+		}
+		select {
+		case <-ctx.Done():
+			return Reservation{}, errs.Wrap(errs.Internal, countFailedMessage, ctx.Err())
+		case <-time.After(pendingPoll):
+		}
+	}
+}
+
+// reserveOnce is one try at Reserve. Blocked, when refused, is the refusal to
+// give if pending attempts never settle.
+func (p *FailedAttempts) reserveOnce(ctx context.Context, limits []AttemptLimit) (res, blocked Reservation, err error) {
 	tx, err := p.db.Begin(ctx)
 	if err != nil {
-		return Reservation{}, errs.Wrap(errs.Internal, countFailedMessage, err)
+		return Reservation{}, Reservation{Over: -1}, errs.Wrap(errs.Internal, countFailedMessage, err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 
-	res, err := reserveIn(ctx, tx, limits)
+	res, blocked, err = reserveIn(ctx, tx, limits)
 	if err != nil {
-		return Reservation{}, errs.Wrap(errs.Internal, countFailedMessage, err)
+		return Reservation{}, Reservation{Over: -1}, errs.Wrap(errs.Internal, countFailedMessage, err)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return Reservation{}, errs.Wrap(errs.Internal, countFailedMessage, err)
+		return Reservation{}, Reservation{Over: -1}, errs.Wrap(errs.Internal, countFailedMessage, err)
 	}
-	return res, nil
+	return res, blocked, nil
 }
 
-// reserveIn is Reserve inside its transaction.
-func reserveIn(ctx context.Context, tx pgx.Tx, limits []AttemptLimit) (Reservation, error) {
+// reserveIn is one try at Reserve inside its transaction.
+func reserveIn(ctx context.Context, tx pgx.Tx, limits []AttemptLimit) (res, blocked Reservation, err error) {
+	none := Reservation{Over: -1}
+	blocked = none
 	// Locked in one order whatever order the limits come in, so two
 	// attempts holding the same keys cannot each wait for the other. Each
 	// lock is its own statement, so the counts after it see what the last
@@ -112,46 +150,71 @@ func reserveIn(ctx context.Context, tx pgx.Tx, limits []AttemptLimit) (Reservati
 	for _, key := range slices.Compact(keys) {
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
 			failedAttemptsLockKey+key); err != nil {
-			return Reservation{}, err
+			return Reservation{}, none, err
 		}
 	}
 	for i, l := range limits {
-		var n int
+		var failed, pending int
 		var secs float64
 		if err := tx.QueryRow(ctx, `
-			SELECT count(*),
+			SELECT count(*) FILTER (WHERE NOT pending OR failed_at <= clock_timestamp() - make_interval(secs => $3)),
+			       count(*) FILTER (WHERE pending AND failed_at > clock_timestamp() - make_interval(secs => $3)),
 			       coalesce(extract(epoch FROM min(failed_at) + make_interval(secs => $2) - clock_timestamp()), 0)::float8
 			FROM failed_attempts
 			WHERE key = $1 AND failed_at > clock_timestamp() - make_interval(secs => $2)`,
-			l.Key, l.Window.Seconds()).Scan(&n, &secs); err != nil {
-			return Reservation{}, err
+			l.Key, l.Window.Seconds(), PendingStale.Seconds()).Scan(&failed, &pending, &secs); err != nil {
+			return Reservation{}, none, err
 		}
-		if n >= l.Max {
-			// Never zero once over, so a caller can tell the two apart.
-			return Reservation{Over: i, Wait: max(time.Duration(secs*float64(time.Second)), time.Second)}, nil
+		// Never zero once over, so a caller can tell the two apart.
+		over := Reservation{Over: i, Wait: max(time.Duration(secs*float64(time.Second)), time.Second)}
+		if failed >= l.Max {
+			return over, none, nil
+		}
+		if failed+pending >= l.Max && !blocked.Refused() {
+			blocked = over
 		}
 	}
-	res := Reservation{Over: -1}
+	if blocked.Refused() {
+		return blocked, blocked, nil
+	}
+	res = Reservation{Over: -1}
 	for _, l := range limits {
 		var at time.Time
 		if err := tx.QueryRow(ctx, `
-			INSERT INTO failed_attempts (key, failed_at) VALUES ($1, clock_timestamp()) RETURNING failed_at`,
+			INSERT INTO failed_attempts (key, failed_at, pending) VALUES ($1, clock_timestamp(), true) RETURNING failed_at`,
 			l.Key).Scan(&at); err != nil {
-			return Reservation{}, err
+			return Reservation{}, none, err
 		}
 		if _, err := tx.Exec(ctx, `
 			DELETE FROM failed_attempts WHERE key = $1 AND failed_at <= clock_timestamp() - make_interval(secs => $2)`,
 			l.Key, l.Window.Seconds()); err != nil {
-			return Reservation{}, err
+			return Reservation{}, none, err
 		}
 		res.Held = append(res.Held, HeldAttempt{Key: l.Key, At: at})
 	}
-	return res, nil
+	return res, none, nil
 }
 
 // failedAttemptsLockKey prefixes a key for its advisory lock, so it cannot
 // share one with another use of advisory locks.
 const failedAttemptsLockKey = "failed_attempts|"
+
+// Fail settles a reservation's pending failures as failures: the guess was
+// wrong.
+func (p *FailedAttempts) Fail(ctx context.Context, res Reservation) error {
+	var failed error
+	for _, h := range res.Held {
+		_, err := p.db.Exec(ctx, `
+			UPDATE failed_attempts SET pending = false WHERE ctid = (
+				SELECT ctid FROM failed_attempts WHERE key = $1 AND failed_at = $2 AND pending LIMIT 1)`,
+			h.Key, h.At)
+		failed = errors.Join(failed, err)
+	}
+	if failed != nil {
+		return errs.Wrap(errs.Internal, "Could not record a failed attempt.", failed)
+	}
+	return nil
+}
 
 // Release takes back the failures a reservation counted: the guess was right,
 // or it was never checked. One row per held failure, matched by key and time.

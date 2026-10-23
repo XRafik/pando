@@ -35,6 +35,7 @@ func TestR404_TheInMemoryCountLimitsAndSaysWhen(t *testing.T) {
 		require.NoError(t, err)
 		require.False(t, res.Refused())
 		require.Len(t, res.Held, 1)
+		require.NoError(t, f.Fail(ctx, res))
 	}
 	over, err := f.Reserve(ctx, limit)
 	require.NoError(t, err)
@@ -69,6 +70,7 @@ func TestR075a_ConcurrentGuessesAreHeldToTheLimit(t *testing.T) {
 			res, err := f.Reserve(context.Background(), limit)
 			if err == nil && !res.Refused() {
 				checked.Add(1)
+				_ = f.Fail(context.Background(), res)
 			}
 		})
 	}

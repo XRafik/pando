@@ -22,12 +22,15 @@ import (
 // in one process's memory gave an attacker one allowance per replica behind
 // the load balancer, and a fresh one whenever a replica restarted (issue #72).
 //
-// An attempt is counted as a failure before it is checked, atomically with
-// reading the count, and the failure is released when the guess was right.
-// Read first and recorded after, a burst of concurrent attempts all saw the
-// same count and every one was checked.
+// An attempt is counted as a pending failure before it is checked, atomically
+// with reading the count; a wrong guess settles it as a failure and a right
+// one releases it. Read first and recorded after, a burst of concurrent
+// attempts all saw the same count and every one was checked. A limit reached
+// only by pending attempts waits for them rather than refusing, so concurrent
+// right guesses are not refused because of each other.
 type FailedAttempts interface {
 	Reserve(ctx context.Context, limits ...state.AttemptLimit) (state.Reservation, error)
+	Fail(ctx context.Context, res state.Reservation) error
 	Release(ctx context.Context, res state.Reservation) error
 	Clear(ctx context.Context, key string) error
 }
@@ -37,45 +40,105 @@ type FailedAttempts interface {
 // Server, so that tests in one process do not lock each other out.
 type memoryFailedAttempts struct {
 	mu   sync.Mutex
-	seen map[string][]time.Time
+	seen map[string][]memoryAttempt
 }
 
-// within keeps key's failures inside window and returns them, oldest first.
+// memoryAttempt is one counted attempt, pending until settled.
+type memoryAttempt struct {
+	at      time.Time
+	pending bool
+}
+
+// within keeps key's attempts inside window and returns them, oldest first.
 // The caller holds mu.
-func (l *memoryFailedAttempts) within(key string, window time.Duration) []time.Time {
+func (l *memoryFailedAttempts) within(key string, window time.Duration) []memoryAttempt {
 	now := time.Now()
 	recent := l.seen[key][:0]
-	for _, t := range l.seen[key] {
-		if now.Sub(t) < window {
-			recent = append(recent, t)
+	for _, a := range l.seen[key] {
+		if now.Sub(a.at) < window {
+			recent = append(recent, a)
 		}
 	}
 	l.seen[key] = recent
 	return recent
 }
 
-func (l *memoryFailedAttempts) Reserve(_ context.Context, limits ...state.AttemptLimit) (state.Reservation, error) {
+// memoryPendingPoll is how often a waiting Reserve looks again.
+const memoryPendingPoll = 5 * time.Millisecond
+
+func (l *memoryFailedAttempts) Reserve(ctx context.Context, limits ...state.AttemptLimit) (state.Reservation, error) {
+	deadline := time.Now().Add(state.PendingWait)
+	for {
+		res, waiting := l.reserveOnce(limits)
+		if !waiting || !time.Now().Before(deadline) {
+			return res, nil
+		}
+		select {
+		case <-ctx.Done():
+			return state.Reservation{}, ctx.Err()
+		case <-time.After(memoryPendingPoll):
+		}
+	}
+}
+
+// reserveOnce is one try at Reserve. Waiting reports a refusal only because
+// of attempts still pending.
+func (l *memoryFailedAttempts) reserveOnce(limits []state.AttemptLimit) (state.Reservation, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	blocked := state.Reservation{Over: -1}
 	for i, limit := range limits {
-		if recent := l.within(limit.Key, limit.Window); len(recent) >= limit.Max {
-			return state.Reservation{Over: i, Wait: max(time.Until(recent[0].Add(limit.Window)), time.Second)}, nil
+		recent := l.within(limit.Key, limit.Window)
+		failed := 0
+		for _, a := range recent {
+			if !a.pending || time.Since(a.at) >= state.PendingStale {
+				failed++
+			}
 		}
+		if len(recent) == 0 {
+			continue
+		}
+		over := state.Reservation{Over: i, Wait: max(time.Until(recent[0].at.Add(limit.Window)), time.Second)}
+		if failed >= limit.Max {
+			return over, false
+		}
+		if len(recent) >= limit.Max && !blocked.Refused() {
+			blocked = over
+		}
+	}
+	if blocked.Refused() {
+		return blocked, true
 	}
 	res := state.Reservation{Over: -1}
 	for _, limit := range limits {
 		at := time.Now()
-		l.seen[limit.Key] = append(l.seen[limit.Key], at)
+		l.seen[limit.Key] = append(l.seen[limit.Key], memoryAttempt{at: at, pending: true})
 		res.Held = append(res.Held, state.HeldAttempt{Key: limit.Key, At: at})
 	}
-	return res, nil
+	return res, false
+}
+
+// held is the index of h among its key's attempts, or -1. The caller holds mu.
+func (l *memoryFailedAttempts) held(h state.HeldAttempt) int {
+	return slices.IndexFunc(l.seen[h.Key], func(a memoryAttempt) bool { return a.at.Equal(h.At) && a.pending })
+}
+
+func (l *memoryFailedAttempts) Fail(_ context.Context, res state.Reservation) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, h := range res.Held {
+		if i := l.held(h); i >= 0 {
+			l.seen[h.Key][i].pending = false
+		}
+	}
+	return nil
 }
 
 func (l *memoryFailedAttempts) Release(_ context.Context, res state.Reservation) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	for _, h := range res.Held {
-		if i := slices.Index(l.seen[h.Key], h.At); i >= 0 {
+		if i := l.held(h); i >= 0 {
 			l.seen[h.Key] = slices.Delete(l.seen[h.Key], i, i+1)
 		}
 	}
@@ -93,7 +156,7 @@ func (s *Server) failedAttempts() FailedAttempts {
 	if s.FailedAttempts != nil {
 		return s.FailedAttempts
 	}
-	s.attemptsOnce.Do(func() { s.attempts = &memoryFailedAttempts{seen: map[string][]time.Time{}} })
+	s.attemptsOnce.Do(func() { s.attempts = &memoryFailedAttempts{seen: map[string][]memoryAttempt{}} })
 	return s.attempts
 }
 
@@ -129,15 +192,16 @@ func (s *Server) reserveAttempt(w http.ResponseWriter, r *http.Request, refused 
 }
 
 // settle ends a reserved attempt by how its check came out. A wrong guess
-// (AUTH_INVALID) keeps the failures it was counted as. Anything else — a right
+// (AUTH_INVALID) settles the failures it was counted as. Anything else — a right
 // guess, or a check that could not be made — takes them back, and a right one
 // also forgets the failures under each key in forget.
 func (s *Server) settle(r *http.Request, res state.Reservation, err error, forget ...string) {
-	if err != nil && errs.CodeOf(err) == errs.AuthInvalid {
-		return
-	}
 	ctx := context.WithoutCancel(r.Context())
 	f := s.failedAttempts()
+	if err != nil && errs.CodeOf(err) == errs.AuthInvalid {
+		_ = f.Fail(ctx, res)
+		return
+	}
 	_ = f.Release(ctx, res)
 	if err == nil {
 		for _, key := range forget {

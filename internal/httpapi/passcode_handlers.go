@@ -94,11 +94,13 @@ func (s *Server) handleEnterPasscode(w http.ResponseWriter, r *http.Request) {
 	}
 	right, err := hash.Verify(secret.New(req.Passcode), grant.PasscodeHash)
 	if err != nil || !right {
-		// The failure counted before the check stands.
+		// The pending failure counted before the check is settled as one.
+		wrong := errs.New(errs.AuthInvalid, "That passcode isn't right. Check it with whoever gave it to you.")
+		s.settle(r, res, wrong)
 		s.audit(r, audit.Event{
 			PrincipalKind: audit.KindAnonymous, Action: "app.passcode.denied", AppID: app.ID,
 		})
-		Error(w, r, errs.New(errs.AuthInvalid, "That passcode isn't right. Check it with whoever gave it to you."))
+		Error(w, r, wrong)
 		return
 	}
 	s.settle(r, res, nil, visitor.Key)

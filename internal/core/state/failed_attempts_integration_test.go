@@ -60,6 +60,7 @@ func TestR075a_ReservationsHoldABurstToTheLimit(t *testing.T) {
 			res, err := failures.Reserve(ctx, app, visitor)
 			if err == nil && !res.Refused() {
 				through.Add(1)
+				_ = failures.Fail(ctx, res)
 			}
 		})
 	}
