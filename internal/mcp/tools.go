@@ -716,20 +716,20 @@ var toolList = []tool{
 		},
 	},
 	{
-		Name: "pando_check_image_update",
+		Name: "pando_check_app_image",
 		Description: "For an app deployed from a published image: whether its tag, such as :latest, now names a " +
 			"different build than the one the app runs. Writes nothing. When `update_available` is true, " +
-			"pando_upgrade_image with `latest_digest` deploys that build.",
+			"pando_deploy_newer_image with `latest_digest` deploys that build.",
 		Schema:  appIDSchema(),
 		request: appRequest("GET", "/image-update"),
 	},
 	{
-		Name: "pando_upgrade_image",
-		Description: "Deploy the newer build pando_check_image_update found: writes a revision pinning `digest` and deploys it. " +
+		Name: "pando_deploy_newer_image",
+		Description: "Deploy the newer build pando_check_app_image found: writes a revision pinning `digest` and deploys it. " +
 			"Refused if the tag has moved since the check; check again then. Answers as pando_deploy does, approval included.",
 		Schema: schema(map[string]any{
 			"app_id": str(appIDDescription),
-			"digest": str("The latest_digest from pando_check_image_update."),
+			"digest": str("The latest_digest from pando_check_app_image."),
 		}, "app_id", "digest"),
 		request: func(args map[string]any) (string, string, any, error) {
 			id, digest, err := twoArgs(args, "app_id", "digest")

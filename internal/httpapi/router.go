@@ -963,13 +963,13 @@ func (s *Server) Routes() http.Handler {
 					r.Get("/{key}/value", s.handleReadSecretValue)
 				})
 
-				// The credential an image app's image is pulled with (issue
-				// #41). Not under /secrets: an app secret can reach the app,
-				// and this never does.
 				// A newer build of an image app's tag, and the upgrade to it (R-143a).
 				r.Get("/image-update", s.handleCheckImageUpdate)
 				r.Post("/image-update", s.handleUpgradeImage)
 
+				// The credential an image app's image is pulled with (issue
+				// #41). Not under /secrets: an app secret can reach the app,
+				// and this never does.
 				r.Get("/registry-credential", s.handleGetRegistryCredential)
 				r.Put("/registry-credential", s.handlePutRegistryCredential)
 				r.Delete("/registry-credential", s.handleDeleteRegistryCredential)

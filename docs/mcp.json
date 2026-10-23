@@ -227,8 +227,8 @@
       }
     },
     {
-      "name": "pando_check_image_update",
-      "description": "For an app deployed from a published image: whether its tag, such as :latest, now names a different build than the one the app runs. Writes nothing. When `update_available` is true, pando_upgrade_image with `latest_digest` deploys that build.",
+      "name": "pando_check_app_image",
+      "description": "For an app deployed from a published image: whether its tag, such as :latest, now names a different build than the one the app runs. Writes nothing. When `update_available` is true, pando_deploy_newer_image with `latest_digest` deploys that build.",
       "input_schema": {
         "properties": {
           "app_id": {
@@ -584,6 +584,27 @@
         },
         "required": [
           "app_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_deploy_newer_image",
+      "description": "Deploy the newer build pando_check_app_image found: writes a revision pinning `digest` and deploys it. Refused if the tag has moved since the check; check again then. Answers as pando_deploy does, approval included.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          },
+          "digest": {
+            "description": "The latest_digest from pando_check_app_image.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id",
+          "digest"
         ],
         "type": "object"
       }
@@ -2025,27 +2046,6 @@
         },
         "required": [
           "subscription_id"
-        ],
-        "type": "object"
-      }
-    },
-    {
-      "name": "pando_upgrade_image",
-      "description": "Deploy the newer build pando_check_image_update found: writes a revision pinning `digest` and deploys it. Refused if the tag has moved since the check; check again then. Answers as pando_deploy does, approval included.",
-      "input_schema": {
-        "properties": {
-          "app_id": {
-            "description": "The app's ID.",
-            "type": "string"
-          },
-          "digest": {
-            "description": "The latest_digest from pando_check_image_update.",
-            "type": "string"
-          }
-        },
-        "required": [
-          "app_id",
-          "digest"
         ],
         "type": "object"
       }

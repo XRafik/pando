@@ -2,6 +2,7 @@ package deploy
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/trypando/pando/internal/core/oci"
 	"github.com/trypando/pando/internal/core/spec"
@@ -62,8 +63,9 @@ func (r *Runner) pinnedOnly(ctx context.Context, app state.App) (state.Revision,
 	}
 	if len(revs) > 0 && revs[0].Revision > pinned.Revision {
 		return state.Revision{}, errs.Newf(errs.StateInvalid,
-			"This app has saved changes that are not deployed yet (revision %d).", revs[0].Revision).
-			WithRemedy("Deploy or replace those changes first, then check for an update again.")
+			"This app has changes that are not deployed yet (revision %d).", revs[0].Revision).
+			WithRemedy(fmt.Sprintf("Deploy revision %d, or wait for its approval if it is waiting for one, "+
+				"then check for an update again.", revs[0].Revision))
 	}
 	return pinned, nil
 }
@@ -92,15 +94,15 @@ func checkImage(ctx context.Context, images *oci.Images, appID string, s *spec.A
 		return ImageCheck{}, errs.New(errs.AdapterUnavailable,
 			"Pando cannot read image registries on this server, so it cannot check for a newer build.")
 	}
-	insp, err := images.Inspect(ctx, appID, s.Source.Image, oci.Platform{})
+	latest, err := tagDigest(ctx, images, appID, s)
 	if err != nil {
 		return ImageCheck{}, err
 	}
 	return ImageCheck{
 		Image:     s.Source.Image,
 		Current:   s.Source.Digest,
-		Latest:    insp.Digest,
-		Available: insp.Digest != s.Source.Digest,
+		Latest:    latest,
+		Available: latest != s.Source.Digest,
 	}, nil
 }
 
@@ -121,7 +123,5 @@ func upgradedSpec(ctx context.Context, images *oci.Images, appID string, s *spec
 		return nil, errs.Newf(errs.StateInvalid, "The image %s has changed since it was checked.", check.Image).
 			WithRemedy("Check for an update again, then upgrade to the build it finds.")
 	}
-	upgraded := *s
-	upgraded.Source.Digest = digest
-	return &upgraded, nil
+	return withDigest(s, digest), nil
 }
