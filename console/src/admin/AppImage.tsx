@@ -58,6 +58,15 @@ function Picture({ app }: Readonly<{ app: App }>) {
   );
 }
 
+/** The tile at a list row's size, with nothing to change: the apps list. */
+export function AppTile({ app }: Readonly<{ app: App }>) {
+  return (
+    <span aria-hidden="true" style={{ ...TILE, display: 'block', width: 'var(--control-input)', height: 'var(--control-input)' }}>
+      <Picture app={app} />
+    </span>
+  );
+}
+
 export function AppImage({ app }: { app: App }) {
   // The same verb as the endpoints: PUT and DELETE /icon are app.spec.edit.
   const canEdit = useCan(AppVerb.SpecEdit);

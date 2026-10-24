@@ -22,4 +22,16 @@
   .pando-table > * {
     min-width: 44em;
   }
+
+  /* A table given a stacked row (ui/Table.tsx) is one block per row at this
+     width: nothing to scroll, and no header over a single column. */
+  .pando-table.pando-table-stacked {
+    overflow-x: visible;
+  }
+  .pando-table.pando-table-stacked > * {
+    min-width: 0;
+  }
+  .pando-table.pando-table-stacked > :first-child {
+    display: none;
+  }
 }

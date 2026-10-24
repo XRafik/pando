@@ -72,13 +72,15 @@ const rowOf = (type: string) => document.querySelector<HTMLElement>(`tr[data-eve
 
 // R-378: the app's events of the last 30 days, a line each.
 describe('the events table', () => {
-  it('groups events under Today, Yesterday and the date', () => {
+  it('puts the date in each row’s time, with no day dividers', () => {
     vi.stubGlobal('fetch', unanswered);
     const screen = mount(<AppEvents app={app} />, seed());
-    const days = [...document.querySelectorAll('th[scope="colgroup"]')].map((th) => th.textContent);
-    expect(days[0]).toBe('Today');
-    expect(days[1]).toBe('Yesterday');
-    expect(days).toHaveLength(3);
+    expect(document.querySelectorAll('th[scope="colgroup"]')).toHaveLength(0);
+    expect(screen.text()).not.toContain('Today');
+    expect(screen.text()).not.toContain('Yesterday');
+    const times = [...document.querySelectorAll('tr.pando-event time')].map((t) => t.textContent);
+    expect(times).toHaveLength(4);
+    expect(times[0]).toMatch(/\d{1,2} \d{2}:\d{2}$/);
     expect(screen.text()).toContain('Deployed revision 7 — from a push to main');
     screen.unmount();
   });

@@ -25,7 +25,6 @@ import {
   Skeleton,
   StatusIndicator,
   Tabs,
-  Tooltip,
 } from '@design';
 import type { SidebarItem, TabItem } from '@design';
 
@@ -65,19 +64,16 @@ import { AppVerb, AppVerbs, can, changesAnything, type AppWithVerbs } from './ve
 import { AppPanel, PanelOpener, type PanelTarget } from './AppPanel';
 import { format, settingsPageFor, type Route, type Section, type SettingsPage } from '../app/route';
 import { MEASURE } from '../ui/layout';
-import { relative } from '../ui/time';
-import { ScoreBadge } from '../ui/ScoreBadge';
 import { Sheet } from '../ui/Sheet';
 import { TopoBackground } from '../ui/TopoBackground';
 import { SearchField } from '../ui/SearchField';
 import { ShowMore, totalLabel, usePaged, useSettled, type PageOf } from '../ui/paged';
 import { APP_LIST_KEY, useWatchedRows } from './appList';
-import { AWAITING_IMAGE } from './scanScope';
 import { NameCell } from './NameCell';
-import { accessLabel, accessMeaning } from './share-access';
+import { AccessCell, SecurityCell, StackedAppRow, StatusCell, UpdatedCell, rowStatus, securityFilterValue } from './AppListCells';
+import { accessLabel } from './share-access';
 import { useNarrow } from '../ui/narrow';
 import { Table } from '../ui/Table';
-import { TipButton } from '../ui/TipButton';
 import { RouteLink } from '../ui/RouteLink';
 import { FieldSkeleton, HeadingSkeleton, LineSkeleton, Loading } from '../ui/Loading';
 import { WithCode } from '../ui/ErrorCode';
@@ -465,31 +461,6 @@ function HomeLink({ onLeave }: Readonly<{ onLeave: () => void }>) {
   );
 }
 
-/** The apps list's security column, as a value its filter offers. */
-function securityFilterValue(row: App): string {
-  if (row.security_scanning) return 'Scanning';
-  if (row.security_awaiting_image) return 'Not scored yet';
-  if (row.security_score == null) return 'Not scanned';
-  return row.security_verdict === 'insecure' ? 'Below minimum' : 'Scanned';
-}
-
-/** The apps list's security column. */
-function SecurityCell({ row }: { row: App }) {
-  // A scan under way, whoever started it, as the design system's building
-  // status: the hollow ring, which does not move.
-  if (row.security_scanning) return <StatusIndicator status="building" label="Scanning" />;
-  if (row.security_awaiting_image) {
-    // Its source was scanned and nothing has been built: that number is the
-    // source's, not the app's (R-311).
-    return (
-      <Tooltip content={`${AWAITING_IMAGE}.`}>
-        <span style={{ font: 'var(--type-code-sm)', color: 'var(--ink-secondary)' }}>Not scored yet</span>
-      </Tooltip>
-    );
-  }
-  return <ScoreBadge score={row.security_score} verdict={row.security_verdict as never} />;
-}
-
 function AppsList({
   rows,
   loading,
@@ -516,6 +487,7 @@ function AppsList({
   onAdded: (app: App) => void;
 }) {
   const [adding, setAdding] = useState(false);
+  const narrow = useNarrow();
   const shown = rows;
 
   // The page is not capped — a table's rows and rules run to the edge of the
@@ -542,13 +514,15 @@ function AppsList({
       >
         {/* Sideways rather than clipped, when the window is narrower than
             the columns' least widths: the table is as wide as those at the
-            least, and this scrolls it. */}
-        <div style={{ overflowX: 'auto' }}>
+            least, and this scrolls it. At phone width each row is a block
+            instead, and nothing scrolls. */}
+        <div style={narrow ? undefined : { overflowX: 'auto' }}>
         <Table
-          style={{ minWidth: 'min-content' }}
+          style={narrow ? undefined : { minWidth: 'min-content' }}
           loading={loading}
           onRowClick={onOpen}
           rowHref={hrefOf}
+          stacked={(row: App) => <StackedAppRow row={row} />}
           // A fresh install has no apps, and the list was a set of column
           // headers over nothing. R-002 is about the tenth app; the first one
           // is what makes the install anything at all.
@@ -563,7 +537,9 @@ function AppsList({
                   Add app
                 </Button>
               }
-            />
+            >
+              From a repository, an image or uploaded files.
+            </EmptyState>
             )
           }
           columns={[
@@ -575,20 +551,17 @@ function AppsList({
               header: 'Name',
               width: 'minmax(24ch,1fr)',
               filter: 'text',
+              // The search above the table narrows by name already.
+              phoneFilter: false,
               render: (row: App) => <NameCell row={row} />,
             },
             {
               key: 'state',
               header: 'Status',
-              width: '15ch',
+              width: '17ch',
               filter: 'values',
-              filterValue: (row: App) => statusLabel(row.state, row.stopped_for_idle, row.stopped_for_disk, row.stopped_for_orphan),
-              render: (row: App) => (
-                <StatusIndicator
-                  status={statusSymbol(row.state)}
-                  label={statusLabel(row.state, row.stopped_for_idle, row.stopped_for_disk, row.stopped_for_orphan)}
-                />
-              ),
+              filterValue: rowStatus,
+              render: (row: App) => <StatusCell row={row} />,
             },
             {
               key: 'security_score',
@@ -606,18 +579,7 @@ function AppsList({
               width: '21ch',
               filter: 'values',
               filterValue: (row: App) => accessLabel(row.access),
-              // A button, so the keyboard reaches the meaning as the pointer
-              // does, and a screen reader is told all of it (R-077). Its click
-              // stops there: asking what a label means is not opening the app.
-              render: (row: App) => (
-                <TipButton
-                  tip={accessMeaning(row.access)}
-                  label={`${accessLabel(row.access)}: ${accessMeaning(row.access)}`}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  {accessLabel(row.access)}
-                </TipButton>
-              ),
+              render: (row: App) => <AccessCell row={row} />,
             },
             { key: 'owner_name', header: 'Owner', width: 'minmax(12ch,18ch)', filter: 'values' },
             {
@@ -625,11 +587,7 @@ function AppsList({
               header: 'Updated',
               width: '12ch',
               muted: true,
-              render: (row: App) => (
-                <Tooltip content={row.updated_at}>
-                  <span>{relative(row.updated_at)}</span>
-                </Tooltip>
-              ),
+              render: (row: App) => <UpdatedCell row={row} />,
             },
           ]}
           rows={shown}

@@ -9,10 +9,17 @@
 // Filters on several columns combine. They filter the rows the page already
 // has — the same reasoning as ui/search.ts: one installation's lists are small,
 // and the API returns them whole (R-261).
+//
+// At phone width the headers are too small to hold a filter button each, so
+// the filters become a row of buttons above the rows, one per column, each
+// opening the same checklist the header's does. A table can also give a
+// `stacked` row, which then replaces the columns at phone width.
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Button, Checkbox, Icon, Input, Skeleton, Table as DesignTable } from '@design';
 import type { TableColumn, TableProps as DesignTableProps } from '@design';
+
+import { useNarrow } from './narrow';
 
 export interface Column extends TableColumn {
   /** `text` filters by "contains"; `values` offers the values present. */
@@ -23,6 +30,9 @@ export interface Column extends TableColumn {
    * offered on its own, and the row shown when any of them is chosen.
    */
   filterValue?: (row: any) => string | string[];
+  /** False keeps the filter out of the phone-width row of filter buttons:
+   *  for a column the page's own search already narrows. */
+  phoneFilter?: boolean;
 }
 
 export interface TableProps extends Omit<DesignTableProps, 'columns'> {
@@ -32,6 +42,9 @@ export interface TableProps extends Omit<DesignTableProps, 'columns'> {
    *  say there is nothing. */
   loading?: boolean;
   skeletonRows?: number;
+  /** At phone width, each row as one block in place of the columns, which
+   *  then have no header. */
+  stacked?: (row: any) => React.ReactNode;
 }
 
 export interface ColumnFilter {
@@ -63,32 +76,75 @@ export function filterRows(columns: Column[], rows: any[], filters: Record<strin
   );
 }
 
-export function Table({ className, columns = [], rows = [], empty, loading = false, skeletonRows = 4, ...props }: TableProps) {
+/** A filter button's label: the column, and how many values are chosen. */
+export function filterLabel(label: string, kind: 'text' | 'values', filter: ColumnFilter | undefined): string {
+  if (!active(filter)) return label;
+  return `${label} · ${kind === 'values' ? (filter?.values?.length ?? 0) : 1}`;
+}
+
+export function Table({
+  className,
+  columns = [],
+  rows = [],
+  empty,
+  loading = false,
+  skeletonRows = 4,
+  stacked,
+  ...props
+}: TableProps) {
   const [filters, setFilters] = useState<Record<string, ColumnFilter>>({});
+  const narrow = useNarrow();
 
   const shown = filterRows(columns, rows, filters);
 
   const anyActive = columns.some((c) => c.filter && active(filters[c.key]));
 
+  const filterOf = (c: Column & { filter: 'text' | 'values' }) => ({
+    label: c.header,
+    kind: c.filter,
+    active: active(filters[c.key]),
+    filter: filters[c.key] ?? {},
+    values: c.filter === 'values' ? tally(rows.flatMap((r) => valuesOf(c, r))) : [],
+    onChange: (next: ColumnFilter) => setFilters((all) => ({ ...all, [c.key]: next })),
+  });
+
+  const filtered = columns.filter((c): c is Column & { filter: 'text' | 'values' } => Boolean(c.filter));
+
+  // The design Table renders a header as given; a node works as well as a
+  // string, which is what lets the filter sit in the header.
   const headed = columns.map((c) =>
-    c.filter
+    c.filter && !narrow
       ? {
           ...c,
-          // The design Table renders a header as given; a node works as well
-          // as a string, which is what lets the filter sit in the header.
           header: (
-            <ColumnHeader
-              label={c.header}
-              kind={c.filter}
-              active={active(filters[c.key])}
-              filter={filters[c.key] ?? {}}
-              values={c.filter === 'values' ? tally(rows.flatMap((r) => valuesOf(c, r))) : []}
-              onChange={(next) => setFilters((all) => ({ ...all, [c.key]: next }))}
-            />
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-1)' }}>
+              {c.header}
+              <FilterButton {...filterOf({ ...c, filter: c.filter })} />
+            </span>
           ) as unknown as string,
         }
       : c,
   );
+
+  const phoneFilters = narrow ? filtered.filter((c) => c.phoneFilter !== false) : [];
+  const bar =
+    phoneFilters.length > 0 ? (
+      <div
+        role="group"
+        aria-label="Filters"
+        style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-1)', paddingBottom: 'var(--space-2)' }}
+      >
+        {phoneFilters.map((c) => (
+          <FilterButton key={c.key} labeled {...filterOf(c)} />
+        ))}
+      </div>
+    ) : null;
+
+  const asBlocks = narrow && stacked !== undefined;
+  const shownColumns: Column[] = asBlocks
+    ? [{ key: 'stacked', header: '', width: 'minmax(0,1fr)', render: stacked }]
+    : headed;
+  const classes = ['pando-table', asBlocks ? 'pando-table-stacked' : '', className ?? ''].filter(Boolean).join(' ');
 
   // Each cell a line of placeholder, a little shorter row to row so the
   // block reads as rows of text rather than a grey slab. Only while there is
@@ -96,10 +152,10 @@ export function Table({ className, columns = [], rows = [], empty, loading = fal
   if (loading && rows.length === 0) {
     return (
       <DesignTable
-        className={className ? `pando-table ${className}` : 'pando-table'}
+        className={classes}
         role="status"
         aria-label="Loading"
-        columns={columns.map((c) => ({
+        columns={(asBlocks ? shownColumns : columns).map((c) => ({
           ...c,
           render: (row: { n: number }) => <Skeleton width={c.align === 'right' ? '40%' : `${80 - (row.n % 3) * 15}%`} />,
         }))}
@@ -110,33 +166,36 @@ export function Table({ className, columns = [], rows = [], empty, loading = fal
   }
 
   return (
-    <DesignTable
-      className={className ? `pando-table ${className}` : 'pando-table'}
-      columns={headed}
-      rows={shown}
-      empty={
-        anyActive && rows.length > 0 ? (
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 'var(--space-3)',
-              padding: 'var(--space-3)',
-              font: 'var(--type-body-ui)',
-              color: 'var(--ink-secondary)',
-            }}
-          >
-            No rows match the column filters.
-            <Button variant="ghost" onClick={() => setFilters({})}>
-              Clear column filters
-            </Button>
-          </div>
-        ) : (
-          empty
-        )
-      }
-      {...props}
-    />
+    <>
+      {bar}
+      <DesignTable
+        className={classes}
+        columns={shownColumns}
+        rows={shown}
+        empty={
+          anyActive && rows.length > 0 ? (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 'var(--space-3)',
+                padding: 'var(--space-3)',
+                font: 'var(--type-body-ui)',
+                color: 'var(--ink-secondary)',
+              }}
+            >
+              No rows match the column filters.
+              <Button variant="ghost" onClick={() => setFilters({})}>
+                Clear column filters
+              </Button>
+            </div>
+          ) : (
+            empty
+          )
+        }
+        {...props}
+      />
+    </>
   );
 }
 
@@ -149,14 +208,21 @@ function tally(values: string[]): Array<{ value: string; count: number }> {
     .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value));
 }
 
-function ColumnHeader({
+/**
+ * A column's filter: the button, and the checklist (or "contains" field) it
+ * opens. In a header it is an icon beside the column's name; `labeled`, at
+ * phone width, it is a button named for the column.
+ */
+function FilterButton({
   label,
   kind,
   active,
   filter,
   values,
   onChange,
+  labeled = false,
 }: {
+  labeled?: boolean;
   label: string;
   kind: 'text' | 'values';
   active: boolean;
@@ -207,26 +273,52 @@ function ColumnHeader({
   const chosen = new Set(filter.values ?? []);
 
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-1)' }}>
-      {label}
-      <button
-        ref={button}
-        type="button"
-        aria-label={`Filter ${label}`}
-        aria-expanded={open}
-        aria-pressed={active}
-        onClick={() => setOpen((o) => !o)}
-        style={{
-          display: 'inline-flex',
-          border: 'none',
-          padding: 'var(--space-1)',
-          borderRadius: 'var(--radius-xs)',
-          cursor: 'pointer',
-          background: active ? 'var(--paper-raised)' : 'transparent',
-        }}
-      >
-        <Icon name="list-filter" size={14} color={active ? 'var(--ink)' : 'var(--ink-muted)'} />
-      </button>
+    <>
+      {labeled ? (
+        <button
+          ref={button}
+          type="button"
+          aria-expanded={open}
+          aria-pressed={active}
+          onClick={() => setOpen((o) => !o)}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 'var(--space-1)',
+            height: 'var(--control-console)',
+            padding: '0 var(--space-2)',
+            border: 'none',
+            borderRadius: 'var(--radius-sm)',
+            cursor: 'pointer',
+            font: 'var(--type-label)',
+            color: active ? 'var(--ink)' : 'var(--ink-secondary)',
+            background: active ? 'var(--paper-sunken)' : 'transparent',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {filterLabel(label, kind, filter)}
+          <Icon name={open ? 'chevron-up' : 'chevron-down'} size={12} color="currentColor" />
+        </button>
+      ) : (
+        <button
+          ref={button}
+          type="button"
+          aria-label={`Filter ${label}`}
+          aria-expanded={open}
+          aria-pressed={active}
+          onClick={() => setOpen((o) => !o)}
+          style={{
+            display: 'inline-flex',
+            border: 'none',
+            padding: 'var(--space-1)',
+            borderRadius: 'var(--radius-xs)',
+            cursor: 'pointer',
+            background: active ? 'var(--paper-raised)' : 'transparent',
+          }}
+        >
+          <Icon name="list-filter" size={14} color={active ? 'var(--ink)' : 'var(--ink-muted)'} />
+        </button>
+      )}
 
       {open && (
         <div
@@ -284,6 +376,6 @@ function ColumnHeader({
           )}
         </div>
       )}
-    </span>
+    </>
   );
 }
