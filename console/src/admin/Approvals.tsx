@@ -1,26 +1,31 @@
-// Approvals: every deploy waiting for somebody's sign-off (R-154 – R-156).
+// Approvals: the deployments waiting for this person's sign-off (R-154 – R-156).
 //
-// The approver's inbox. `GET /approvals` answers with the waiting requests on
-// apps the caller can view, each saying whether this caller may decide it, so
-// the screen is the same for an administrator holding install.deploys.approve
-// and for somebody holding app.deploy.approve on two apps: what they may answer
-// has buttons, and the rest is shown read-only.
+// The approver's inbox. `GET /approvals?decidable=true` answers with the
+// waiting requests this caller may approve or reject — install.deploys.approve,
+// or app.deploy.approve on the app — so the screen holds nothing it cannot act
+// on. A request waiting on somebody else is shown on its app instead.
+//
+// Each request is a card that starts closed: the summary and Approve and
+// Reject. One opens at a time. A request answered here stays on the screen
+// with its answer until the screen is next opened, so the answer is seen
+// rather than the card vanishing under the pointer.
 
+import { useState } from 'react';
 import { usePolledHead, type HeadShape } from '../ui/headPoll';
-import { Button, EmptyState } from '@design';
+import { EmptyState } from '@design';
 
 import { api } from '@api/client';
 import { Quiet, Screen, messageOf } from '../install/Accounts';
-import { MEASURE } from '../ui/layout';
 import { LineSkeleton, Loading } from '../ui/Loading';
 import { ShowMore, withParams } from '../ui/paged';
 import { ApprovalRequest } from './ApprovalRequest';
 import type { ApprovalRow } from './approval';
 
 /**
- * The waiting requests. One query key for the sidebar's count and this screen,
- * so the two cannot disagree. A caller the endpoint refuses has nothing waiting
- * for them, which is an answer rather than an error, so it is not retried.
+ * The waiting requests this caller may decide. One query key for the
+ * sidebar's count and this screen, so the two cannot disagree. A caller the
+ * endpoint refuses has nothing waiting for them, which is an answer rather
+ * than an error, so it is not retried.
  */
 type ApprovalsPage = { approvals: ApprovalRow[] | null; next_cursor?: string };
 
@@ -35,9 +40,9 @@ export function useApprovals(enabled: boolean) {
   const query = usePolledHead({
     key: ['approvals'],
     headKey: ['approvals-head'],
-    fetchPage: (cursor) => api.get<ApprovalsPage>(withParams('/approvals', { cursor })),
+    fetchPage: (cursor) => api.get<ApprovalsPage>(withParams('/approvals', { decidable: 'true', cursor })),
     // A page at a time (issue #72). A page can be short and still have a
-    // next one, when the requests it read were on apps this caller can't see.
+    // next one, when the requests it read were ones this caller can't decide.
     nextParam: (last) => last.next_cursor || undefined,
     shape: APPROVALS_SHAPE,
     enabled,
@@ -51,14 +56,29 @@ export function useApprovals(enabled: boolean) {
   return { query, rows: query.data?.pages.flatMap((p) => p.approvals ?? []) ?? [] };
 }
 
-export function Approvals({ onOpenApp }: { onOpenApp: (appID: string) => void }) {
+/** The rows from the server, and the ones answered here that it no longer
+ *  lists, in the order they were requested. */
+export function withAnswered(rows: ApprovalRow[], answered: ReadonlyMap<string, ApprovalRow>): ApprovalRow[] {
+  const ids = new Set(rows.map((r) => r.id));
+  const kept = [...answered.values()].filter((r) => !ids.has(r.id));
+  if (kept.length === 0) return rows;
+  return [...rows, ...kept].sort((a, b) => a.started_at.localeCompare(b.started_at) || a.id.localeCompare(b.id));
+}
+
+export function Approvals({
+  onReview,
+}: Readonly<{
+  /** Opens the app's Deployments panel on a request. */
+  onReview: (appID: string, deploymentID: string) => void;
+}>) {
   const { query: approvals, rows } = useApprovals(true);
+  const [open, setOpen] = useState<string | null>(null);
+  const [answered, setAnswered] = useState<ReadonlyMap<string, ApprovalRow>>(new Map());
+  const shown = withAnswered(rows, answered);
 
   return (
     <Screen heading="Approvals">
-      <div style={{ maxWidth: MEASURE, display: 'flex', flexDirection: 'column' }}>
-        <Quiet>Deploys waiting for approval.</Quiet>
-
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
         {approvals.isPending && (
           <Loading gap="var(--space-3)">
             <LineSkeleton width="24ch" font="var(--type-h4)" />
@@ -68,30 +88,18 @@ export function Approvals({ onOpenApp }: { onOpenApp: (appID: string) => void })
         )}
         {approvals.isError && <Quiet>{messageOf(approvals.error)}</Quiet>}
 
-        {approvals.isSuccess && rows.length === 0 && !approvals.hasNextPage && (
-          <EmptyState heading="Nothing is waiting for approval" />
-        )}
+        {approvals.isSuccess && shown.length === 0 && !approvals.hasNextPage && <EmptyState heading="Nothing waiting" />}
 
-        {rows.map((row) => (
-          <section
+        {shown.map((row) => (
+          <ApprovalRequest
             key={row.id}
-            style={{ padding: 'var(--space-5) 0', borderTop: 'var(--border-width) solid var(--rule)' }}
-          >
-            <ApprovalRequest
-              deployment={row}
-              heading={
-                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 'var(--space-3)' }}>
-                  <h4 style={{ font: 'var(--type-h4)', margin: 0 }}>{row.app_name}</h4>
-                  <span style={{ font: 'var(--type-code-sm)', color: 'var(--ink-secondary)' }}>
-                    {row.spec_revision ? `Revision ${row.spec_revision}` : row.spec_id}
-                  </span>
-                  <Button variant="ghost" onClick={() => onOpenApp(row.app_id)}>
-                    Open app
-                  </Button>
-                </div>
-              }
-            />
-          </section>
+            deployment={row}
+            appName={row.app_name}
+            expanded={open === row.id}
+            onToggle={() => setOpen(open === row.id ? null : row.id)}
+            onReview={() => onReview(row.app_id, row.id)}
+            onAnswered={() => setAnswered((all) => new Map(all).set(row.id, row))}
+          />
         ))}
         <ShowMore query={approvals} label="Show more requests" />
       </div>

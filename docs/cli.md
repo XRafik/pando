@@ -821,6 +821,10 @@ Deploys waiting for approval on the apps you can see
 pando approvals list
 ```
 
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--decidable` |  | Only the deploys you may approve or reject |
+
 #### `approvals reject`
 
 Reject a deploy waiting for approval, which ends the request

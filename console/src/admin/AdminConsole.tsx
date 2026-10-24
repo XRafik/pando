@@ -139,7 +139,7 @@ export function AdminConsole({
   // app, not only by holders of install.deploys.approve: app.deploy.approve is
   // granted per app, through a custom role, and the sidebar has no other way
   // to know who holds it. The item is shown to an install-wide approver
-  // always, and to anybody else while something is waiting that they can see.
+  // always, and to anybody else while something is waiting that they may decide.
   const approvals = useApprovals(administrative || canApproveAll);
   const waiting = approvals.rows;
 
@@ -364,6 +364,7 @@ export function AdminConsole({
               onBack={() => go({ view: 'admin', section: 'accounts' })}
               onAudit={(query) => go({ view: 'admin', section: 'audit', query })}
               onGroups={() => go({ view: 'admin', section: 'identity' })}
+              onOpenApp={(appID) => go({ view: 'admin', section: 'apps', appID })}
             />
           ) : (
             <Accounts onOpen={(a) => go({ view: 'admin', section: 'accounts', userID: a.id })} />
@@ -410,7 +411,7 @@ export function AdminConsole({
         )}
         {section === 'api' && <Reference />}
         {section === 'approvals' && (
-          <Approvals onOpenApp={(appID) => go({ view: 'admin', section: 'apps', appID })} />
+          <Approvals onReview={(appID, deployment) => go(panelRoute(appID, undefined, { view: 'deployments', deployment }))} />
         )}
         {section === 'apps' &&
           (selectedID ? (

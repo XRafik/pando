@@ -1020,6 +1020,10 @@
           "cursor": {
             "description": "The next_cursor from a previous page.",
             "type": "string"
+          },
+          "decidable": {
+            "description": "true to list only the deploys you may approve or reject.",
+            "type": "boolean"
           }
         },
         "required": [],
@@ -1336,7 +1340,7 @@
     },
     {
       "name": "pando_list_users",
-      "description": "The accounts on this installation, newest first, a page at a time: pass `next_cursor` back as `cursor` for the next page. Each carries install_roles — every installation role it holds, and whether it holds it directly or through a group (with the group's name, and the identity provider for a synced group) — and install_role_id, the role granted to the account itself. Needs install.view.",
+      "description": "The accounts on this installation, newest first, a page at a time: pass `next_cursor` back as `cursor` for the next page. Each carries adapter_name — the identity provider it signs in with — and install_roles — every installation role it holds, and whether it holds it directly or through a group (with the group's name, and the identity provider for a synced group) — and install_role_id, the role granted to the account itself. Needs install.view.",
       "input_schema": {
         "properties": {
           "cursor": {

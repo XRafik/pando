@@ -1911,7 +1911,7 @@ export function useAuditLog(filters: AuditFilters) {
  *  the install's whole list. install.audit.read does not imply install.view —
  *  an account can hold only the first — so when the lookup is refused, the
  *  pickers take an ID and the columns show IDs. */
-export function usePeople(events: AuditRecord[], chosen: string[] = []): Person[] {
+function usePeople(events: AuditRecord[], chosen: string[] = []): Person[] {
   return useNamedPeople([
     ...chosen,
     ...events.flatMap((e) => [e.principal_id, e.on_behalf_of, e.target_kind === 'user' ? e.target_id : undefined]),
@@ -2256,7 +2256,7 @@ function ArchivedMonths() {
   );
 }
 
-export function LoadOlder({ log }: { log: ReturnType<typeof useAuditLog>['log'] }) {
+function LoadOlder({ log }: { log: ReturnType<typeof useAuditLog>['log'] }) {
   if (!log.hasNextPage) return null;
   return (
     <div style={{ marginTop: 'var(--space-4)' }}>

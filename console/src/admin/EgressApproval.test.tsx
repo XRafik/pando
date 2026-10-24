@@ -43,7 +43,7 @@ describe('a deploy waiting for approval (R-154 – R-156)', () => {
     const html = render(<ApprovalRequest deployment={{ ...waiting, can_decide: true }} />);
     expect(html).toContain('Waiting for approval');
     expect(html).toContain('This app asks for approval of its own deploys.');
-    expect(html).toContain('1 of 2 approvals.');
+    expect(html).toContain('1 of 2 approvals');
     expect(html).toContain('Ada');
     expect(html).toContain('Looks fine');
     expect(html).toContain('Approve');
@@ -54,7 +54,7 @@ describe('a deploy waiting for approval (R-154 – R-156)', () => {
   it('offers no answer to somebody who may not give one', () => {
     const html = render(<ApprovalRequest deployment={{ ...waiting, can_decide: false }} />);
     expect(html).not.toContain('>Approve<');
-    expect(html).toContain('Answering needs app.deploy.approve');
+    expect(html).not.toContain('>Reject<');
   });
 });
 

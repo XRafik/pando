@@ -1,0 +1,79 @@
+/* Accounts at phone width, and an account's page (Accounts.tsx, Account.tsx).
+ *
+ * Everything else here is inline styles from tokens; these are the rules an
+ * inline style cannot hold — grids that change with the window. 48em is the
+ * breakpoint useNarrow() and narrow.css use.
+ */
+
+/* Accounts at phone width: the name across, then the roles and the status. */
+.pando-account-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.pando-account-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2) var(--space-3);
+  align-items: center;
+  padding: var(--space-3) 0;
+  border-bottom: var(--border-width) solid var(--rule);
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.pando-account-row-name {
+  grid-column: 1 / -1;
+}
+
+.pando-account-row-status {
+  justify-self: end;
+}
+
+/* The account page's details: as many columns as fit. */
+.pando-account-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: var(--space-3) var(--space-5);
+  margin: 0;
+  padding-top: var(--space-3);
+  border-top: var(--border-width) solid var(--rule);
+}
+
+.pando-account-facts > div {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.pando-account-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Access, Apps and Activity: three columns, then two with the third across,
+ * then one. */
+.pando-account-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-4);
+  align-items: stretch;
+}
+
+@media (max-width: 75em) {
+  .pando-account-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .pando-account-cards > :last-child {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 53.75em) {
+  .pando-account-cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

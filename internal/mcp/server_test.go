@@ -283,6 +283,9 @@ func TestEachToolMapsToItsEndpoint(t *testing.T) {
 
 		// R-154: deploy approval, from every surface (R-261).
 		{"pando_list_approvals", `{}`, "GET", "/approvals"},
+		{"pando_list_approvals", `{"decidable":true}`, "GET", "/approvals?decidable=true"},
+		{"pando_list_approvals", `{"decidable":true,"cursor":"c1"}`, "GET", "/approvals?cursor=c1&decidable=true"},
+		{"pando_list_approvals", `{"decidable":false}`, "GET", "/approvals"},
 		{"pando_approve_deploy", `{"app_id":"app_01HQ8","deployment_id":"dep_01"}`, "POST", "/apps/app_01HQ8/deployments/dep_01/approve"},
 		{"pando_reject_deploy", `{"app_id":"app_01HQ8","deployment_id":"dep_01","comment":"not yet"}`, "POST", "/apps/app_01HQ8/deployments/dep_01/reject"},
 		{"pando_get_logs", `{"app_id":"app_01HQ8"}`, "GET", "/apps/app_01HQ8/logs"},
