@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -90,4 +92,26 @@ func TestStatusIsSerializedInTheAPIsVocabulary(t *testing.T) {
 	body, err = json.Marshal(WorkloadStatus{Name: "app"})
 	require.NoError(t, err)
 	require.Contains(t, string(body), `"healthy":null`)
+}
+
+// serviceRows is a ServiceInstances that answers with rows or an error.
+type serviceRows struct {
+	rows []state.ServiceInstance
+	err  error
+}
+
+func (f serviceRows) ForApp(context.Context, string) ([]state.ServiceInstance, error) {
+	return f.rows, f.err
+}
+
+// TestR261_StatusNamesTheServicesPandoRuns asserts that /status reads which
+// dependency each service it runs fills, and still answers without them.
+func TestR261_StatusNamesTheServicesPandoRuns(t *testing.T) {
+	ctx := context.Background()
+	rows := []state.ServiceInstance{{SlotKey: "DATABASE_URL", SlotType: "postgres", Handle: "svc-01HQ8"}}
+
+	require.Nil(t, (&Server{}).providedServices(ctx, "app_1"), "nothing wired, nothing named")
+	require.Nil(t, (&Server{ServiceInstances: serviceRows{err: errors.New("down")}}).providedServices(ctx, "app_1"),
+		"a lookup that fails loses only the names")
+	require.Equal(t, rows, (&Server{ServiceInstances: serviceRows{rows: rows}}).providedServices(ctx, "app_1"))
 }

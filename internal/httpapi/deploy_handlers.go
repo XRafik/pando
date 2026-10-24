@@ -651,12 +651,7 @@ func (s *Server) handleAppStatus(w http.ResponseWriter, r *http.Request) {
 					// presented as the app being broken.
 					body["observability"] = "unreachable"
 				} else {
-					var services []state.ServiceInstance
-					if s.ServiceInstances != nil {
-						// Only a label: a status still answers without it.
-						services, _ = s.ServiceInstances.ForApp(r.Context(), app.ID)
-					}
-					body["workloads"] = workloadStatuses(rev.Body, observed, services)
+					body["workloads"] = workloadStatuses(rev.Body, observed, s.providedServices(r.Context(), app.ID))
 				}
 			}
 			body["revision"] = rev.Revision
@@ -704,6 +699,20 @@ type WorkloadStatus struct {
 	// (R-131's provisioned), so a reader sees a PostgreSQL where the runtime
 	// names a handle such as svc-01h….
 	Service *WorkloadService `json:"service,omitempty"`
+}
+
+// providedServices lists the services Pando runs for an app, to name them in
+// /status. They are only a label: without them, or when they cannot be read,
+// a status still answers.
+func (s *Server) providedServices(ctx context.Context, appID string) []state.ServiceInstance {
+	if s.ServiceInstances == nil {
+		return nil
+	}
+	services, err := s.ServiceInstances.ForApp(ctx, appID)
+	if err != nil {
+		return nil
+	}
+	return services
 }
 
 // WorkloadService names the slot a provisioned workload fills.
