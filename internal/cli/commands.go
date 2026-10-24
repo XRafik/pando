@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -48,6 +49,7 @@ func Commands() []*cobra.Command {
 		withServer(userCmd(client)),
 		withServer(twoFactorCmd(client)),
 		withServer(groupCmd(client)),
+		withServer(roleCmd(client)),
 		withServer(adapterCmd(client)),
 		withServer(sourceCmd(client)),
 		withServer(notifyCmd(client)),
@@ -272,6 +274,7 @@ func appCmd(client func() (*Client, error)) *cobra.Command {
 				Address   string `json:"address"`
 				Access    string `json:"access"`
 				OwnerName string `json:"owner_name"`
+				Notices   int    `json:"notice_count"`
 				Detection *struct {
 					Status string `json:"status"`
 					Stage  string `json:"stage"`
@@ -293,7 +296,7 @@ func appCmd(client func() (*Client, error)) *cobra.Command {
 				return err
 			}
 
-			t := table(cmd.OutOrStdout(), "NAME", "STATE", "ACCESS", "OWNER", "ADDRESS", "ID")
+			t := table(cmd.OutOrStdout(), "NAME", "STATE", "NOTICES", "ACCESS", "OWNER", "ADDRESS", "ID")
 			public := false
 			for _, a := range out.Apps {
 				state := a.State
@@ -305,7 +308,7 @@ func appCmd(client func() (*Client, error)) *cobra.Command {
 					}
 					state += " (detection " + why + ")"
 				}
-				fmt.Fprintf(t, "%s\t%s\t%s\t%s\t%s\t%s\n", a.Name, state, accessPhrase(a.Access),
+				fmt.Fprintf(t, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", a.Name, state, noticeCount(a.Notices), accessPhrase(a.Access),
 					dash(a.OwnerName), dash(a.Address), a.ID)
 				public = public || a.Access == "public" || a.Access == "passcode"
 			}
@@ -1311,6 +1314,9 @@ func grantCmd(client func() (*Client, error)) *cobra.Command {
 // usersPath is where accounts are, under the API.
 const usersPath = "/users/"
 
+// groupsPath is where groups are, under the API.
+const groupsPath = "/groups/"
+
 // generatedPassword asks the server for a password, so the CLI's are the
 // same strength and alphabet as the console's (R-046).
 func generatedPassword(c *Client) (string, error) {
@@ -1511,11 +1517,19 @@ func groupCmd(client func() (*Client, error)) *cobra.Command {
 		},
 	})
 	cmd.AddCommand(&cobra.Command{
+		Use:   "rename <group-id> <name>",
+		Short: "Rename a group made in Pando",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return do("PATCH", groupsPath+url.PathEscape(args[0]), map[string]any{"name": args[1]}, "Renamed.")(cmd, args)
+		},
+	})
+	cmd.AddCommand(&cobra.Command{
 		Use:   "add-member <group-id> <user-id>",
 		Short: "Add an account to a group; it then holds what the group holds",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return do("PUT", "/groups/"+args[0]+"/members/"+args[1], nil, "Added.")(cmd, args)
+			return do("PUT", groupsPath+args[0]+"/members/"+args[1], nil, "Added.")(cmd, args)
 		},
 	})
 	cmd.AddCommand(&cobra.Command{
@@ -1523,7 +1537,7 @@ func groupCmd(client func() (*Client, error)) *cobra.Command {
 		Short: "Remove an account from a group",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return do("DELETE", "/groups/"+args[0]+"/members/"+args[1], nil, "Removed.")(cmd, args)
+			return do("DELETE", groupsPath+args[0]+"/members/"+args[1], nil, "Removed.")(cmd, args)
 		},
 	})
 	var clear bool
@@ -1533,12 +1547,12 @@ func groupCmd(client func() (*Client, error)) *cobra.Command {
 		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if clear {
-				return do("DELETE", "/groups/"+args[0]+"/role", nil, "Role removed.")(cmd, args)
+				return do("DELETE", groupsPath+args[0]+"/role", nil, "Role removed.")(cmd, args)
 			}
 			if len(args) < 2 {
 				return fmt.Errorf("say which role, or pass --clear to take the group's role away")
 			}
-			return do("PUT", "/groups/"+args[0]+"/role", map[string]any{"role_id": args[1]}, "Role set.")(cmd, args)
+			return do("PUT", groupsPath+args[0]+"/role", map[string]any{"role_id": args[1]}, "Role set.")(cmd, args)
 		},
 	}
 	role.Flags().BoolVar(&clear, "clear", false, "take the group's installation role away")
@@ -1553,7 +1567,7 @@ func groupCmd(client func() (*Client, error)) *cobra.Command {
 				return err
 			}
 			var out map[string]any
-			if err := c.Do("GET", "/groups/"+args[0]+"/apps", nil, &out); err != nil {
+			if err := c.Do("GET", groupsPath+args[0]+"/apps", nil, &out); err != nil {
 				return err
 			}
 			return printJSON(cmd.OutOrStdout(), out)
@@ -1936,6 +1950,15 @@ func nameFromURL(raw string) string {
 		return "app"
 	}
 	return trimmed
+}
+
+// noticeCount is how many of an app's notices the caller has not ignored
+// (R-412), or a dash for none, as the other empty columns read.
+func noticeCount(n int) string {
+	if n == 0 {
+		return "-"
+	}
+	return strconv.Itoa(n)
 }
 
 // accessPhrase is who can open an app, in the console's Access words

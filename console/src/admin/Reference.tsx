@@ -17,14 +17,16 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Button, CodeBlock, Dialog, InlineCode, Input } from '@design';
+import { Button, Card, CodeBlock, Dialog, InlineCode, Input, Skeleton } from '@design';
 
 import { api } from '@api/client';
 import type { Token } from '@api/types.gen';
 import { InstallVerb, useInstallVerb } from '../app/principal';
 import { Quiet, Screen } from '../install/Accounts';
-import { MEASURE } from '../ui/layout';
-import { relative } from '../ui/time';
+import { day, stamp } from '../ui/time';
+import { useNarrow } from '../ui/narrow';
+import { CopyField } from '../ui/CopyField';
+import { CardHead } from './settingsParts';
 import { Table } from '../ui/Table';
 import { AIButton, AIDialog, AIPrompt, AnsweredBy } from '../ui/AskAI';
 import { AI_PHRASES, AiThinking } from '../ui/AiThinking';
@@ -94,11 +96,11 @@ function AskHow({ onClose }: { onClose: () => void }) {
 
 /** The published references, one link each. */
 const DOCS = [
-  { label: 'API reference', href: `${DOCS_URL}/api`, about: 'Every endpoint, what it takes and the verb it asks for.' },
-  { label: 'CLI reference', href: `${DOCS_URL}/cli`, about: 'Installing the CLI, signing it in, and every command.' },
-  { label: 'MCP server', href: `${DOCS_URL}/mcp`, about: 'Connecting an agent, and every tool it gets.' },
-  { label: 'Errors', href: `${DOCS_URL}/errors`, about: 'Every error code and what it means.' },
-  { label: 'Events', href: EVENTS_DOCS_URL, about: 'Every event a subscription can receive, and how to verify a delivery.' },
+  { label: 'API reference', href: `${DOCS_URL}/api` },
+  { label: 'CLI', href: `${DOCS_URL}/cli` },
+  { label: 'MCP', href: `${DOCS_URL}/mcp` },
+  { label: 'Errors', href: `${DOCS_URL}/errors` },
+  { label: 'Events', href: EVENTS_DOCS_URL },
 ];
 
 export function Reference() {
@@ -111,52 +113,60 @@ export function Reference() {
     <Screen heading="API and tools" action={aiState !== 'off' && <AIButton onClick={() => setAsking(true)} />}>
       {asking && <AskHow onClose={() => setAsking(false)} />}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-7)', maxWidth: MEASURE }}>
-        <Documentation />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
+        <Connect />
         <Tokens />
       </div>
     </Screen>
   );
 }
 
-// --- documentation ---------------------------------------------------------
+// --- connecting ------------------------------------------------------------
 
-function Documentation() {
-  // The one thing the published docs cannot know: where this installation is.
-  // They write https://pando.example.com; this is what goes there.
+/** A link to a reference, drawn as a small button. */
+const docLink: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  height: 'var(--control-console)',
+  padding: '0 var(--space-3)',
+  border: 'var(--border-width) solid var(--field-border)',
+  borderRadius: 'var(--radius-sm)',
+  font: 'var(--type-label)',
+  color: 'var(--ink)',
+  textDecoration: 'none',
+};
+
+function Connect() {
+  // The one thing the published docs cannot know: where this installation
+  // is. The CLI signs in to it; MCP runs on the machine the CLI signed in
+  // from and speaks over stdio, so it has no address of its own (R-262).
   const origin = window.location.origin;
 
   return (
-    <section>
-      <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-3)' }}>Documentation</h4>
-      <ul
+    <Card padding="md" as="section" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+      <CardHead title="Connect" />
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 20rem), 1fr))', gap: 'var(--space-4)' }}>
+        <CopyField label="CLI" value={`pando login ${origin}`} />
+        <CopyField label="MCP server" value="pando mcp" />
+        <CopyField label="API" value={`${origin}/api/v1`} />
+      </div>
+      <nav
+        aria-label="Documentation"
         style={{
-          listStyle: 'none',
-          margin: 0,
-          padding: 0,
           display: 'flex',
-          flexDirection: 'column',
-          gap: 'var(--space-3)',
+          flexWrap: 'wrap',
+          gap: 'var(--space-2)',
+          paddingTop: 'var(--space-3)',
+          borderTop: 'var(--border-width) solid var(--rule)',
         }}
       >
         {DOCS.map((d) => (
-          <li key={d.href}>
-            <a href={d.href} target="_blank" rel="noopener noreferrer" style={{ font: 'var(--type-body-ui)' }}>
-              {d.label}
-            </a>
-            <div>
-              <Quiet>{d.about}</Quiet>
-            </div>
-          </li>
+          <a key={d.href} href={d.href} target="_blank" rel="noopener noreferrer" style={docLink}>
+            {d.label}
+          </a>
         ))}
-      </ul>
-      <div style={{ marginTop: 'var(--space-4)' }}>
-        <Quiet>
-          This installation is at <InlineCode>{origin}</InlineCode>. Use it wherever the documentation
-          shows <InlineCode>https://pando.example.com</InlineCode>.
-        </Quiet>
-      </div>
-    </section>
+      </nav>
+    </Card>
   );
 }
 
@@ -168,41 +178,32 @@ function Tokens() {
   const canManageTokens = useInstallVerb(InstallVerb.TokensManage);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-7)', maxWidth: MEASURE }}>
-      <TokenList
-        heading="Your tokens"
-        // R-058, R-059, said where somebody is about to make one.
-        note="A token holds exactly your access, and goes when your account does."
-        path="/tokens"
-        queryKey={['tokens']}
-      />
-
-      {canManageTokens && (
-        <TokenList
-          heading="Service tokens"
-          // R-060: the difference that matters, in the place where the choice
-          // between the two is made.
-          note="A service token is its own principal. It holds nothing until an app is shared with it, and outlives whoever created it."
-          path="/tokens/service"
-          queryKey={['tokens', 'service']}
-        />
-      )}
+    <div
+      style={{
+        display: 'grid',
+        // Side by side on a wide window, one above the other below about
+        // 1100px, where two would squeeze their columns.
+        gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 30rem), 1fr))',
+        gap: 'var(--space-5)',
+        alignItems: 'start',
+      }}
+    >
+      <TokenList heading="Your tokens" path="/tokens" queryKey={['tokens']} />
+      {canManageTokens && <TokenList heading="Service tokens" path="/tokens/service" queryKey={['tokens', 'service']} />}
     </div>
   );
 }
 
-function TokenList({
-  heading,
-  note,
-  path,
-  queryKey,
-}: {
-  heading: string;
-  note: string;
-  path: string;
-  queryKey: string[];
-}) {
+/** When a token expires, and when it was last used, in a line under its name. */
+export function tokenLine(t: Pick<Token, 'expires_at' | 'last_used_at'>): string {
+  const expires = t.expires_at ? `Expires ${day(t.expires_at)}` : 'Never expires';
+  const used = t.last_used_at ? `used ${stamp(t.last_used_at)}` : 'never used';
+  return `${expires} · ${used}`;
+}
+
+function TokenList({ heading, path, queryKey }: Readonly<{ heading: string; path: string; queryKey: string[] }>) {
   const queries = useQueryClient();
+  const narrow = useNarrow();
   const [creating, setCreating] = useState(false);
 
   const tokens = useQuery({
@@ -216,60 +217,46 @@ function TokenList({
   });
 
   const rows = (tokens.data?.tokens ?? []).filter((t) => !t.revoked_at);
+  const revokeButton = (row: Token) => (
+    <Button variant="destructive" disabled={revoke.isPending} onClick={() => revoke.mutate(row.id)}>
+      Revoke
+    </Button>
+  );
 
   return (
-    <section>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
-        <h4 style={{ font: 'var(--type-h4)', margin: 0 }}>{heading}</h4>
-        <Button onClick={() => setCreating(true)}>New token</Button>
-      </div>
-      <div style={{ marginTop: 'var(--space-2)' }}>
-        <Quiet>{note}</Quiet>
-      </div>
+    <Card padding="md" as="section" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)', minWidth: 0 }}>
+      <CardHead title={heading} action={<Button onClick={() => setCreating(true)}>New token</Button>} />
 
       {tokens.isError && <FailedBanner error={tokens.error} />}
 
-      <div style={{ marginTop: 'var(--space-4)' }}>
+      {narrow ? (
+        <TokenRows loading={tokens.isPending} rows={rows} action={revokeButton} />
+      ) : (
         <Table
           loading={tokens.isPending}
           skeletonRows={2}
           columns={[
-            { key: 'name', header: 'Name', width: 'minmax(0,30ch)' },
+            { key: 'name', header: 'Name', width: 'minmax(0,1fr)' },
             {
               key: 'expires_at',
               header: 'Expires',
-              width: '18ch',
+              width: '10ch',
               muted: true,
-              render: (row: Token) =>
-                row.expires_at ? new Date(row.expires_at).toLocaleDateString() : 'Never',
+              render: (row: Token) => (row.expires_at ? day(row.expires_at) : 'Never'),
             },
             {
               key: 'last_used_at',
               header: 'Last used',
-              width: '18ch',
+              width: '14ch',
               muted: true,
-              render: (row: Token) => (row.last_used_at ? relative(row.last_used_at) : 'Never'),
+              render: (row: Token) => (row.last_used_at ? stamp(row.last_used_at) : 'Never'),
             },
-            {
-              key: 'actions',
-              header: '',
-              width: '18ch',
-              align: 'right',
-              render: (row: Token) => (
-                <Button
-                  variant="destructive"
-                  disabled={revoke.isPending}
-                  onClick={() => revoke.mutate(row.id)}
-                >
-                  Revoke
-                </Button>
-              ),
-            },
+            { key: 'actions', header: '', width: '12ch', align: 'right', render: revokeButton },
           ]}
           rows={rows}
           empty={<Quiet>No tokens.</Quiet>}
         />
-      </div>
+      )}
 
       {revoke.isError && <FailedBanner error={revoke.error} />}
 
@@ -281,7 +268,40 @@ function TokenList({
           onCreated={() => void queries.invalidateQueries({ queryKey })}
         />
       )}
-    </section>
+    </Card>
+  );
+}
+
+/** Tokens at phone width: a row each, its dates under its name. */
+function TokenRows({
+  loading,
+  rows,
+  action,
+}: Readonly<{ loading: boolean; rows: Token[]; action: (row: Token) => React.ReactNode }>) {
+  if (loading) return <Skeleton width="60%" />;
+  if (rows.length === 0) return <Quiet>No tokens.</Quiet>;
+  return (
+    <div>
+      {rows.map((t) => (
+        <div
+          key={t.id}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 'var(--space-3)',
+            padding: 'var(--space-2) 0',
+            borderTop: 'var(--border-width) solid var(--rule)',
+          }}
+        >
+          <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+            <span style={{ font: 'var(--type-label)', overflowWrap: 'anywhere' }}>{t.name}</span>
+            <span style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)' }}>{tokenLine(t)}</span>
+          </span>
+          {action(t)}
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -341,6 +361,8 @@ function NewToken({
       open
       onClose={onClose}
       title={heading === 'Service tokens' ? 'New service token' : 'New token'}
+      // R-060: its own principal, holding only what is shared with it.
+      description={heading === 'Service tokens' ? 'Holds nothing until an app is shared with it.' : undefined}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -356,7 +378,6 @@ function NewToken({
         <Input
           label="Name"
           value={name}
-          helper="Shown in the audit log."
           onChange={(e) => setName(e.target.value)}
         />
 

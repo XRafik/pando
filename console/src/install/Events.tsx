@@ -6,9 +6,13 @@
 // ntfy). Anybody who administers an app may subscribe to it; an install-wide
 // subscription, and seeing everybody's, needs install.events.manage.
 //
+// The screen is a table with one filter row; a row opens the subscription in
+// the side panel, with its recent deliveries, each of which opens in place to
+// its attempts (R-369). An app's Events tab shows the same subscriptions as a
+// column of cards.
+//
 // The signing key is shown once, at creation, in the dialog that made it, the
-// way a token is. Pando cannot show it again, and the screen says so where the
-// key is rather than in a help page.
+// way a token is (R-371).
 
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -23,11 +27,10 @@ import {
   Icon,
   InlineCode,
   Input,
-  Radio,
   Select,
   Skeleton,
   StatusIndicator,
-  Tag,
+  StatusSymbol,
 } from '@design';
 
 import { api } from '@api/client';
@@ -36,84 +39,40 @@ import { Quiet, Screen, messageOf, refusal } from './Accounts';
 import { useNotifyChannels } from './Notify';
 import { Table } from '../ui/Table';
 import { ShowMore, usePaged, type PageOf } from '../ui/paged';
-import { relative } from '../ui/time';
+import { relative, stamp } from '../ui/time';
 import { Disclosure } from '../ui/Disclosure';
 import { deliveriesInterval } from '../ui/polling';
 import { EVENTS_DOCS_URL } from '../ui/docs';
+import { SidePanel } from '../ui/SidePanel';
+import { Segmented } from '../ui/Segmented';
+import { FilterMenu } from '../ui/FilterMenu';
+import { SearchField } from '../ui/SearchField';
+import { useNarrow } from '../ui/narrow';
+import {
+  NO_FILTERS,
+  STATE_NAMES,
+  destinationLabel,
+  destinationOf,
+  eventsSummary,
+  filterSubscriptions,
+  groupName,
+  groupsOf,
+  optionsOf,
+  requestLine,
+  scopeName,
+  stateOf,
+  subscriptionName,
+  attemptLine,
+  deliveryResult,
+  type Delivery,
+  type Destination,
+  type EventDef,
+  type Subscription,
+  type SubscriptionFilters,
+  type SubscriptionState,
+} from './subscriptionText';
 
-interface EventDef {
-  name: string;
-  scope: 'app' | 'install';
-  summary: string;
-  fields: { name: string; description: string }[];
-}
-
-interface Destination {
-  id: string;
-  name?: string;
-  kind: string;
-  audience: 'people' | 'channel';
-  /** A subscription to it names a channel: Slack. */
-  channels?: boolean;
-}
-
-interface Subscription {
-  id: string;
-  owner_id: string;
-  owner_name?: string;
-  app_id?: string;
-  app_name?: string;
-  events: string[];
-  destination: 'webhook' | 'notify';
-  channel?: string;
-  url?: string;
-  adapter_id?: string;
-  description: string;
-  enabled: boolean;
-  disabled_reason?: string;
-  consecutive_failures: number;
-  created_at: string;
-  signing_key?: string;
-  owner_token_id?: string;
-  method?: string;
-  content_type?: string;
-  payload_template?: string;
-  header_names?: string[];
-}
-
-interface Delivery {
-  id: string;
-  event_id: string;
-  event: string;
-  status: 'pending' | 'succeeded' | 'failed';
-  attempts: number;
-  next_attempt_at?: string;
-  last_status_code?: number;
-  last_error?: string;
-  created_at: string;
-  attempt_log?: {
-    attempt: number;
-    attempted_at: string;
-    status_code?: number;
-    error?: string;
-    duration_ms: number;
-  }[];
-  payload?: unknown;
-}
-
-const KIND_NAMES: Record<string, string> = {
-  console: 'Console',
-  smtp: 'Email',
-  slack: 'Slack',
-  teams: 'Microsoft Teams',
-  discord: 'Discord',
-  ntfy: 'ntfy',
-};
-
-function destinationName(d: Destination | undefined, id: string): string {
-  if (!d) return id;
-  return `${KIND_NAMES[d.kind] ?? d.kind} (${d.id})`;
-}
+const caption = { font: 'var(--type-caption)', color: 'var(--ink-secondary)', margin: 0 };
 
 function useCatalog() {
   return useQuery({
@@ -121,6 +80,16 @@ function useCatalog() {
     queryFn: () => api.get<{ events: EventDef[]; destinations: Destination[] }>('/events'),
     staleTime: 60_000,
   });
+}
+
+/** Everything that shows a subscription, read again after it changes. */
+function useRefresh(id: string) {
+  const queries = useQueryClient();
+  return () => {
+    void queries.invalidateQueries({ queryKey: ['subscriptions'] });
+    void queries.invalidateQueries({ queryKey: ['subscription', id] });
+    void queries.invalidateQueries({ queryKey: ['deliveries', id] });
+  };
 }
 
 export function Events({ canManageAll, apps }: { canManageAll: boolean; apps: App[] }) {
@@ -134,24 +103,22 @@ export function Events({ canManageAll, apps }: { canManageAll: boolean; apps: Ap
         </Button>
       }
     >
-      <Quiet>
-        Send Pando events to a webhook, Slack, Teams, Discord, email or ntfy.
-      </Quiet>
-      <Subscriptions
-        apps={apps}
-        canManageAll={canManageAll}
-        creating={creating}
-        onCreating={setCreating}
-      />
+      <Subscriptions apps={apps} canManageAll={canManageAll} creating={creating} onCreating={setCreating} />
     </Screen>
   );
 }
 
+const STATUS_OPTIONS = (['on', 'failing', 'off'] as const).map((s) => ({ value: s, label: STATE_NAMES[s] }));
+const WHOSE = [
+  { value: 'mine', label: 'Mine' },
+  { value: 'everyone', label: 'Everyone' },
+];
+
 /**
- * Subscriptions, as a table with the dialogs that make, show and change one.
- * The Events screen shows the caller's across the installation; an app's
- * Events tab passes `app` and shows that app's, and makes new ones about it —
- * as a column of cards beside the app's events (`layout="cards"`).
+ * Subscriptions, as a table with the panel and dialogs that make, show and
+ * change one. The Events screen shows the caller's across the installation;
+ * an app's Events tab passes `app` and shows that app's, and makes new ones
+ * about it — as a column of cards beside the app's events (`layout="cards"`).
  */
 export function Subscriptions({
   apps,
@@ -169,9 +136,9 @@ export function Subscriptions({
   onCreating: (open: boolean) => void;
 }) {
   const [everyone, setEveryone] = useState(false);
+  const [filters, setFilters] = useState<SubscriptionFilters>(NO_FILTERS);
   const [created, setCreated] = useState<Subscription | null>(null);
   const [open, setOpen] = useState<string | null>(null);
-  const [log, setLog] = useState<string | null>(null);
 
   const catalog = useCatalog();
   // Newest first, a page at a time (issue #72).
@@ -182,101 +149,122 @@ export function Subscriptions({
     params: { everyone: everyone ? 'true' : undefined, app_id: app?.id },
   });
   const subs = paged.query;
-
   const destinations = catalog.data?.destinations ?? [];
   const rows = paged.rows;
+  const shown = useMemo(() => filterSubscriptions(rows, filters, destinations), [rows, filters, destinations]);
+  const options = useMemo(() => optionsOf(rows, destinations), [rows, destinations]);
+  const set = (patch: Partial<SubscriptionFilters>) => setFilters((f) => ({ ...f, ...patch }));
+  const narrow = useNarrow();
+  const empty =
+    rows.length > 0 ? (
+      <Quiet>No subscriptions match.</Quiet>
+    ) : (
+      <EmptyState
+        heading="No subscriptions yet"
+        action={
+          <Button variant="primary" onClick={() => onCreating(true)}>
+            New subscription
+          </Button>
+        }
+      />
+    );
 
   return (
     <>
-      {canManageAll && (
-        <Checkbox
-          label="Show everybody's subscriptions"
-          checked={everyone}
-          onChange={(e) => setEveryone(e.target.checked)}
-        />
-      )}
-
       {subs.isError && <Quiet>{messageOf(subs.error)}</Quiet>}
 
       {layout === 'cards' ? (
-        <SubscriptionCards
-          loading={subs.isPending}
-          rows={rows}
-          destinations={destinations}
-          onEdit={setOpen}
-          onDeliveries={setLog}
-        />
+        <SubscriptionCards loading={subs.isPending} rows={rows} destinations={destinations} onOpen={setOpen} />
       ) : (
-      <Table
-        loading={subs.isPending}
-        onRowClick={(row: Subscription) => setOpen(row.id)}
-        empty={
-          <EmptyState
-            heading="No subscriptions yet"
-            action={
-              <Button variant="primary" onClick={() => onCreating(true)}>
-                New subscription
-              </Button>
-            }
-          >
-            Send events to a webhook or a notification channel.
-          </EmptyState>
-        }
-        columns={[
-          ...(app
-            ? []
-            : [
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 'var(--space-2)' }}>
+            <SearchField value={filters.search} onChange={(search) => set({ search })} placeholder="Search subscriptions" />
+            {canManageAll && (
+              <FilterMenu
+                single
+                label="Whose"
+                options={WHOSE}
+                chosen={[everyone ? 'everyone' : 'mine']}
+                onChange={([v]) => setEveryone(v === 'everyone')}
+              />
+            )}
+            {!app && (
+              <FilterMenu label="Scope" options={options.scope} chosen={filters.scope} onChange={(scope) => set({ scope })} />
+            )}
+            <FilterMenu
+              label="Destination"
+              options={options.destination}
+              chosen={filters.destination}
+              onChange={(destination) => set({ destination })}
+            />
+            <FilterMenu
+              label="Status"
+              options={STATUS_OPTIONS}
+              chosen={filters.status}
+              onChange={(status) => set({ status: status as SubscriptionState[] })}
+            />
+          </div>
+          {narrow ? (
+            <SubscriptionRows loading={subs.isPending} rows={shown} destinations={destinations} empty={empty} onOpen={setOpen} />
+          ) : (
+            <Table
+              loading={subs.isPending}
+              onRowClick={(row: Subscription) => setOpen(row.id)}
+              empty={empty}
+              columns={[
                 {
-                  key: 'about',
-                  header: 'Scope',
-                  width: 'minmax(0,20ch)',
-                  render: (row: Subscription) => (row.app_id ? row.app_name || row.app_id : 'Installation'),
-                },
-              ]),
-          {
-            key: 'events',
-            header: 'Events',
-            width: 'minmax(0,1fr)',
-            mono: true,
-            render: (row: Subscription) => row.events.join(', '),
-          },
-          {
-            key: 'to',
-            header: 'Destination',
-            width: 'minmax(0,28ch)',
-            muted: true,
-            render: (row: Subscription) =>
-              row.destination === 'webhook'
-                ? row.url
-                : destinationName(
-                    destinations.find((d) => d.id === row.adapter_id),
-                    row.adapter_id ?? '',
+                  key: 'name',
+                  header: 'Subscription',
+                  width: 'minmax(0,1.2fr)',
+                  render: (row: Subscription) => (
+                    <Stacked first={<span style={{ font: 'var(--type-label)' }}>{subscriptionName(row)}</span>} second={scopeName(row)} />
                   ),
-          },
-          {
-            key: 'status',
-            header: 'Status',
-            width: '16ch',
-            render: (row: Subscription) => <SubscriptionStatus sub={row} />,
-          },
-          ...(everyone
-            ? [{ key: 'owner_name', header: 'Owner', width: 'minmax(0,16ch)', muted: true }]
-            : []),
-        ]}
-        rows={rows}
-      />
+                },
+                {
+                  key: 'events',
+                  header: 'Events',
+                  width: 'minmax(0,1fr)',
+                  render: (row: Subscription) => eventsSummary(row.events),
+                },
+                {
+                  key: 'to',
+                  header: 'Destination',
+                  width: 'minmax(0,1.2fr)',
+                  render: (row: Subscription) => {
+                    const to = destinationOf(row, destinations);
+                    return <Stacked first={to.kind} second={to.target} />;
+                  },
+                },
+                {
+                  key: 'status',
+                  header: 'Status',
+                  width: '12ch',
+                  render: (row: Subscription) => <SubscriptionStatus sub={row} />,
+                },
+                {
+                  key: 'last',
+                  header: 'Last delivery',
+                  width: '16ch',
+                  muted: true,
+                  render: (row: Subscription) => (row.last_delivery_at ? stamp(row.last_delivery_at) : 'Never'),
+                },
+              ]}
+              rows={shown}
+            />
+          )}
+        </div>
       )}
       <ShowMore query={subs} label="Show more subscriptions" />
 
       {creating && (
-        <CreateSubscription
+        <SubscriptionForm
           apps={app ? [app] : apps}
           fixedApp={app}
           canManageAll={canManageAll}
           catalog={catalog.data?.events ?? []}
           destinations={destinations}
           onClose={() => onCreating(false)}
-          onCreated={(s) => {
+          onSaved={(s) => {
             onCreating(false);
             if (s.signing_key) setCreated(s);
           }}
@@ -284,20 +272,103 @@ export function Subscriptions({
       )}
       {created && <SigningKey sub={created} onClose={() => setCreated(null)} />}
       {open && (
-        <SubscriptionDetail
+        <SubscriptionPanel
           id={open}
+          catalog={catalog.data?.events ?? []}
           destinations={destinations}
           onClose={() => setOpen(null)}
           onKey={(s) => setCreated(s)}
         />
       )}
-      {log && <DeliveriesDialog id={log} onClose={() => setLog(null)} />}
     </>
   );
 }
 
+/** The subscriptions at phone width: a row each, its name and status, then
+ *  its scope and destination, and its last delivery. */
+function SubscriptionRows({
+  loading,
+  rows,
+  destinations,
+  empty,
+  onOpen,
+}: Readonly<{
+  loading: boolean;
+  rows: Subscription[];
+  destinations: Destination[];
+  empty: React.ReactNode;
+  onOpen: (id: string) => void;
+}>) {
+  if (loading) return <Skeleton width="60%" />;
+  if (rows.length === 0) return <>{empty}</>;
+  return (
+    <div style={{ borderTop: 'var(--border-width) solid var(--rule-strong)' }}>
+      {rows.map((s) => {
+        const to = destinationOf(s, destinations);
+        return (
+          <button
+            key={s.id}
+            type="button"
+            onClick={() => onOpen(s.id)}
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'minmax(0,1fr) auto',
+              gap: 'var(--space-1) var(--space-3)',
+              width: '100%',
+              padding: 'var(--space-3) 0',
+              border: 0,
+              borderBottom: 'var(--border-width) solid var(--rule)',
+              background: 'transparent',
+              color: 'var(--ink)',
+              font: 'var(--type-body-ui)',
+              textAlign: 'left',
+              cursor: 'pointer',
+            }}
+          >
+            <span style={{ font: 'var(--type-label)', overflowWrap: 'anywhere' }}>{subscriptionName(s)}</span>
+            <SubscriptionStatus sub={s} />
+            <span style={{ ...caption, overflowWrap: 'anywhere' }}>{`${scopeName(s)} · ${to.kind}`}</span>
+            <span style={{ ...caption, whiteSpace: 'nowrap' }}>{s.last_delivery_at ? stamp(s.last_delivery_at) : 'Never'}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** A value with a caption under it, as a table cell or a panel row shows one. */
+function Stacked({ first, second, mono = false }: Readonly<{ first: React.ReactNode; second?: string; mono?: boolean }>) {
+  return (
+    <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+      <span>{first}</span>
+      {second && (
+        <span
+          style={{
+            font: mono ? 'var(--type-code-sm)' : 'var(--type-caption)',
+            color: 'var(--ink-secondary)',
+            overflowWrap: 'anywhere',
+          }}
+        >
+          {second}
+        </span>
+      )}
+    </span>
+  );
+}
+
+const STATUS_LOOK: Record<SubscriptionState, 'running' | 'failed' | 'stopped'> = {
+  on: 'running',
+  failing: 'failed',
+  off: 'stopped',
+};
+
+function SubscriptionStatus({ sub }: { sub: Subscription }) {
+  const state = stateOf(sub);
+  return <StatusIndicator status={STATUS_LOOK[state]} label={STATE_NAMES[state]} />;
+}
+
 /**
- * One card per subscription: where it sends, what it sends, whether it is on,
+ * One card per subscription: what it is, where it sends, whether it is on,
  * and what can be done to it. A subscription Pando turned off after failing
  * (R-370) says why, with the way to turn it back on beside the reason.
  */
@@ -305,14 +376,12 @@ function SubscriptionCards({
   loading,
   rows,
   destinations,
-  onEdit,
-  onDeliveries,
+  onOpen,
 }: {
   loading: boolean;
   rows: Subscription[];
   destinations: Destination[];
-  onEdit: (id: string) => void;
-  onDeliveries: (id: string) => void;
+  onOpen: (id: string) => void;
 }) {
   if (loading) {
     return (
@@ -321,53 +390,26 @@ function SubscriptionCards({
       </Card>
     );
   }
-  if (rows.length === 0) {
-    return <EmptyState heading="No subscriptions yet">Send events to a webhook or a notification channel.</EmptyState>;
-  }
+  if (rows.length === 0) return <EmptyState heading="No subscriptions yet" />;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
       {rows.map((s) => (
-        <SubscriptionCard
-          key={s.id}
-          sub={s}
-          destinations={destinations}
-          onEdit={() => onEdit(s.id)}
-          onDeliveries={() => onDeliveries(s.id)}
-        />
+        <SubscriptionCard key={s.id} sub={s} destinations={destinations} onOpen={() => onOpen(s.id)} />
       ))}
     </div>
   );
 }
 
-/** Where a subscription sends, as a card's first line says it: the kind of
- *  destination, and the channel or address after it. */
-function destinationLine(
-  s: Pick<Subscription, 'destination' | 'url' | 'adapter_id' | 'channel'>,
-  destinations: Pick<Destination, 'id' | 'kind'>[],
-): { kind: string; target?: string } {
-  if (s.destination === 'webhook') return { kind: 'Webhook', target: s.url };
-  const d = destinations.find((x) => x.id === s.adapter_id);
-  const kind = d ? (KIND_NAMES[d.kind] ?? d.kind) : (s.adapter_id ?? 'Notification');
-  return { kind, target: s.channel || undefined };
-}
-
 function SubscriptionCard({
   sub,
   destinations,
-  onEdit,
-  onDeliveries,
+  onOpen,
 }: {
   sub: Subscription;
   destinations: Destination[];
-  onEdit: () => void;
-  onDeliveries: () => void;
+  onOpen: () => void;
 }) {
-  const queries = useQueryClient();
-  const refresh = () => {
-    void queries.invalidateQueries({ queryKey: ['subscriptions'] });
-    void queries.invalidateQueries({ queryKey: ['subscription', sub.id] });
-    void queries.invalidateQueries({ queryKey: ['deliveries', sub.id] });
-  };
+  const refresh = useRefresh(sub.id);
   const turnOn = useMutation({
     mutationFn: () => api.patch<Subscription>(`/subscriptions/${sub.id}`, { enabled: true }),
     onSuccess: refresh,
@@ -376,36 +418,26 @@ function SubscriptionCard({
     mutationFn: () => api.post<Delivery>(`/subscriptions/${sub.id}/test`, {}),
     onSuccess: refresh,
   });
-  const to = destinationLine(sub, destinations);
+  const to = destinationOf(sub, destinations);
   const failure = turnOn.error ?? test.error;
-  const caption = { font: 'var(--type-caption)', color: 'var(--ink-secondary)', margin: 0 };
 
   return (
     <Card padding="md" as="article" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-3)' }}>
-        <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 'var(--space-2)', minWidth: 0, font: 'var(--type-label)' }}>
-          {to.kind}
-          {to.target && sub.destination !== 'webhook' && <span style={{ ...caption, overflowWrap: 'anywhere' }}>{to.target}</span>}
-        </span>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 'var(--space-3)' }}>
+        <Stacked
+          first={<span style={{ font: 'var(--type-label)' }}>{subscriptionName(sub)}</span>}
+          second={to.target ? `${to.kind} · ${to.target}` : to.kind}
+        />
         <SubscriptionStatus sub={sub} />
       </div>
-      {sub.destination === 'webhook' && to.target && (
-        <code style={{ font: 'var(--type-code-sm)', color: 'var(--ink)', overflowWrap: 'anywhere' }}>{to.target}</code>
-      )}
-      <span style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-1)' }}>
-        {sub.events.map((e) => (
-          <Tag key={e} mono>
-            {e}
-          </Tag>
-        ))}
-      </span>
+      {(sub.description ?? '').trim() && <p style={caption}>{eventsSummary(sub.events)}</p>}
       {!sub.enabled && sub.disabled_reason && (
-        <span style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--space-2)', font: 'var(--type-caption)', color: 'var(--contour-text)' }}>
+        <span style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--space-2)', ...caption, color: 'var(--contour-text)' }}>
           <Icon name="triangle-alert" color="var(--contour-text)" />
           <span>{sub.disabled_reason}</span>
         </span>
       )}
-      {test.isSuccess && <p style={caption}>Test sent. Its delivery is under Deliveries.</p>}
+      {test.isSuccess && <p style={caption}>Test sent.</p>}
       {failure && <p style={{ ...caption, color: 'var(--marker-deep)' }}>{messageOf(failure)}</p>}
       <span style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-1)' }}>
         {!sub.enabled && (
@@ -414,322 +446,42 @@ function SubscriptionCard({
           </Button>
         )}
         <Button variant="ghost" disabled={!sub.enabled || test.isPending} onClick={() => test.mutate()}>
-          {test.isPending ? 'Sending test' : 'Send a test'}
+          {test.isPending ? 'Sending test' : 'Send test'}
         </Button>
-        <Button variant="ghost" onClick={onEdit}>
-          Edit
-        </Button>
-        <Button variant="ghost" onClick={onDeliveries}>
-          Deliveries
+        <Button variant="ghost" onClick={onOpen}>
+          Details
         </Button>
       </span>
     </Card>
   );
 }
 
-/** A subscription's deliveries, on their own. */
-function DeliveriesDialog({ id, onClose }: { id: string; onClose: () => void }) {
-  return (
-    <Dialog
-      open
-      width={880}
-      title="Deliveries"
-      onClose={onClose}
-      footer={
-        <Button variant="secondary" onClick={onClose}>
-          Close
-        </Button>
-      }
-    >
-      <DeliveryLog id={id} />
-    </Dialog>
-  );
-}
+// --- the panel ---------------------------------------------------------------
 
-function SubscriptionStatus({ sub }: { sub: Subscription }) {
-  if (!sub.enabled) return <StatusIndicator status="stopped" label="Turned off" />;
-  if (sub.consecutive_failures > 0) return <StatusIndicator status="failed" label="Failing" />;
-  return <StatusIndicator status="running" label="On" />;
-}
-
-/** Event names grouped by what they are about, in catalog order. */
-function groupsOf(catalog: EventDef[]): [string, EventDef[]][] {
-  const groups = new Map<string, EventDef[]>();
-  for (const e of catalog) {
-    const prefix = e.name.split('.')[0] ?? e.name;
-    groups.set(prefix, [...(groups.get(prefix) ?? []), e]);
-  }
-  return [...groups.entries()];
-}
-
-function CreateSubscription({
-  apps,
-  fixedApp,
-  canManageAll,
+/** One subscription in the side panel: what can be done to it, what it is,
+ *  and its recent deliveries. */
+function SubscriptionPanel({
+  id,
   catalog,
   destinations,
   onClose,
-  onCreated,
-}: {
-  apps: App[];
-  /** Made from an app's own Events tab: about that app, without asking. */
-  fixedApp?: App;
-  canManageAll: boolean;
+  onKey,
+}: Readonly<{
+  id: string;
   catalog: EventDef[];
   destinations: Destination[];
   onClose: () => void;
-  onCreated: (s: Subscription) => void;
-}) {
-  const queries = useQueryClient();
-  const [appID, setAppID] = useState(fixedApp?.id ?? (canManageAll ? '' : (apps[0]?.id ?? '')));
-  const [request, setRequest] = useState<RequestOptions>(DEFAULT_REQUEST);
-  const [chosen, setChosen] = useState<string[]>([]);
-  const [kind, setKind] = useState<'webhook' | 'notify'>('webhook');
-  const [url, setURL] = useState('');
-  const [adapterID, setAdapterID] = useState(destinations[0]?.id ?? '');
-  const [channel, setChannel] = useState('');
-  const takesChannel = kind === 'notify' && destinations.some((d) => d.id === adapterID && d.channels);
-  const [description, setDescription] = useState('');
-
-  // An install event never reaches an app subscription, so it is not offered
-  // for one: a box that can be ticked and never fires is a broken promise.
-  const offered = useMemo(
-    () => catalog.filter((e) => !appID || e.scope === 'app'),
-    [catalog, appID],
-  );
-  const everything = chosen.includes('*');
-
-  const toggle = (pattern: string, on: boolean) =>
-    setChosen((cur) => (on ? [...cur.filter((c) => c !== pattern), pattern] : cur.filter((c) => c !== pattern)));
-
-  const create = useMutation({
-    mutationFn: () =>
-      api.post<Subscription>('/subscriptions', {
-        app_id: appID || undefined,
-        events: chosen,
-        destination: kind,
-        url: kind === 'webhook' ? url : undefined,
-        adapter_id: kind === 'notify' ? adapterID : undefined,
-        channel: takesChannel ? channel : undefined,
-        description,
-        ...(kind === 'webhook' ? requestBody(request, true) : {}),
-      }),
-    onSuccess: (s) => {
-      void queries.invalidateQueries({ queryKey: ['subscriptions'] });
-      onCreated(s);
-    },
-  });
-
-  const aboutOptions = [
-    ...(canManageAll ? [{ value: '', label: 'Installation' }] : []),
-    ...apps.map((a) => ({ value: a.id, label: a.name })),
-  ];
-
-  const ready =
-    chosen.length > 0 &&
-    (kind === 'webhook'
-      ? url.trim() !== '' && !parseHeaders(request.headers).problem
-      : adapterID !== '' && (!takesChannel || channel !== '')) &&
-    (Boolean(fixedApp) || aboutOptions.length > 0);
-
-  return (
-    <Dialog
-      open
-      width={720}
-      title="New subscription"
-      onClose={onClose}
-      footer={
-        <>
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button variant="primary" disabled={!ready || create.isPending} onClick={() => create.mutate()}>
-            {create.isPending ? 'Subscribing' : 'Subscribe'}
-          </Button>
-        </>
-      }
-    >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
-        {create.isError && <Banner tone="failed">{messageOf(create.error)}</Banner>}
-
-        {!fixedApp && (
-          <Select
-            label="Scope"
-            value={appID}
-            options={aboutOptions}
-            helper={
-              appID
-                ? 'Delivered while you can see the app.'
-                : 'Every app, plus sign-ins, policy, adapters and upgrades.'
-            }
-            onChange={(e) => {
-              setAppID(e.target.value);
-              setChosen([]);
-            }}
-          />
-        )}
-
-        <fieldset style={{ border: 0, margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-          <legend style={{ font: 'var(--type-label)', color: 'var(--ink)', marginBottom: 'var(--space-2)' }}>
-            Events
-          </legend>
-          <Checkbox
-            label="Everything"
-            description="Includes events added in later versions."
-            checked={everything}
-            onChange={(e) => setChosen(e.target.checked ? ['*'] : [])}
-          />
-          {!everything &&
-            groupsOf(offered).map(([prefix, defs]) => (
-              <div key={prefix} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-                <Checkbox
-                  label={`All ${prefix} events`}
-                  checked={chosen.includes(`${prefix}.*`)}
-                  onChange={(e) => toggle(`${prefix}.*`, e.target.checked)}
-                />
-                {!chosen.includes(`${prefix}.*`) && (
-                  <div
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: 'repeat(auto-fill, minmax(32ch, 1fr))',
-                      gap: 'var(--space-2)',
-                      paddingLeft: 'var(--space-5)',
-                    }}
-                  >
-                    {defs.map((d) => (
-                      <Checkbox
-                        key={d.name}
-                        label={d.name}
-                        description={d.summary}
-                        checked={chosen.includes(d.name)}
-                        onChange={(e) => toggle(d.name, e.target.checked)}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-        </fieldset>
-
-        <fieldset style={{ border: 0, margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-          <legend style={{ font: 'var(--type-label)', color: 'var(--ink)', marginBottom: 'var(--space-2)' }}>
-            Destination
-          </legend>
-          <Radio
-            name="destination"
-            label="Webhook"
-            description="Signed JSON posted to a URL."
-            checked={kind === 'webhook'}
-            onChange={() => setKind('webhook')}
-          />
-          <Radio
-            name="destination"
-            label="Notification channel"
-            description={
-              destinations.length > 0
-                ? 'Slack, Teams, Discord, email or ntfy, set up under Adapters. Email goes to you.'
-                : 'None set up yet. An administrator adds one under Adapters.'
-            }
-            disabled={destinations.length === 0}
-            checked={kind === 'notify'}
-            onChange={() => setKind('notify')}
-          />
-          {kind === 'webhook' ? (
-            <Input
-              label="Webhook URL"
-              value={url}
-              placeholder="https://example.com/hooks/pando"
-              helper="Pando retries for about a day until it gets a 2xx response."
-              onChange={(e) => setURL(e.target.value)}
-            />
-          ) : null}
-          {kind === 'webhook' ? (
-            <Disclosure show="Request options" hide="Request options">
-              <RequestFields value={request} onChange={setRequest} />
-            </Disclosure>
-          ) : (
-            <Select
-              label="Adapter"
-              value={adapterID}
-              options={destinations.map((d) => ({ value: d.id, label: destinationName(d, d.id) }))}
-              onChange={(e) => {
-                setAdapterID(e.target.value);
-                setChannel('');
-              }}
-            />
-          )}
-          {takesChannel && <ChannelPicker adapterID={adapterID} value={channel} onChange={setChannel} />}
-        </fieldset>
-
-        <Input
-          label="Description"
-          value={description}
-          helper="Optional."
-          onChange={(e) => setDescription(e.target.value)}
-        />
-      </div>
-    </Dialog>
-  );
-}
-
-/** The signing key, the one time Pando can show it. */
-function SigningKey({ sub, onClose }: { sub: Subscription; onClose: () => void }) {
-  return (
-    <Dialog
-      open
-      width={640}
-      title="Save the signing key"
-      description={`Pando signs every delivery to ${sub.url} with this key.`}
-      onClose={onClose}
-      footer={
-        <Button variant="primary" onClick={onClose}>
-          I&rsquo;ve saved it
-        </Button>
-      }
-    >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-        <Banner tone="info">
-          Pando shows this key only once. If you lose it, rotate it from the subscription.
-        </Banner>
-        <CodeBlock copyable lines={sub.signing_key ?? ''} />
-        <Quiet>
-          Check each delivery&rsquo;s <InlineCode>Pando-Signature</InlineCode> header against it. The{' '}
-          <a href={EVENTS_DOCS_URL} target="_blank" rel="noopener noreferrer">
-            events reference
-          </a>{' '}
-          shows how.
-        </Quiet>
-      </div>
-    </Dialog>
-  );
-}
-
-function SubscriptionDetail({
-  id,
-  destinations,
-  onClose,
-  onKey,
-}: {
-  id: string;
-  destinations: Destination[];
-  onClose: () => void;
   onKey: (s: Subscription) => void;
-}) {
+}>) {
   const queries = useQueryClient();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [editing, setEditing] = useState(false);
+  const refresh = useRefresh(id);
 
   const sub = useQuery({
     queryKey: ['subscription', id],
     queryFn: () => api.get<Subscription>(`/subscriptions/${id}`),
   });
-
-  const refresh = () => {
-    void queries.invalidateQueries({ queryKey: ['subscriptions'] });
-    void queries.invalidateQueries({ queryKey: ['subscription', id] });
-    void queries.invalidateQueries({ queryKey: ['deliveries', id] });
-  };
-
   const setEnabled = useMutation({
     mutationFn: (enabled: boolean) => api.patch<Subscription>(`/subscriptions/${id}`, { enabled }),
     onSuccess: refresh,
@@ -751,111 +503,135 @@ function SubscriptionDetail({
   });
 
   const s = sub.data;
-  const failure = setEnabled.error ?? test.error ?? rotate.error ?? remove.error;
+  const failure = setEnabled.error ?? test.error ?? rotate.error;
+  const to = s && destinationOf(s, destinations);
 
   return (
-    <Dialog
-      open
-      width={880}
-      title={s ? (s.app_id ? `${s.app_name || s.app_id} events` : 'Installation events') : 'Subscription'}
-      description={s?.description || undefined}
+    <SidePanel
+      title={s ? subscriptionName(s) : 'Subscription'}
+      under={s && <SubscriptionStatus sub={s} />}
+      width="min(36rem, 100%)"
       onClose={onClose}
-      footer={
-        s && (
-          <>
-            {confirmDelete ? (
-              <Button variant="destructive" disabled={remove.isPending} onClick={() => remove.mutate()}>
-                {remove.isPending ? 'Deleting' : 'Delete subscription and its log'}
-              </Button>
-            ) : (
-              <Button variant="ghost" onClick={() => setConfirmDelete(true)}>
-                Delete
-              </Button>
-            )}
-            {s.destination === 'webhook' && (
-              <>
-                <Button variant="secondary" onClick={() => setEditing(true)}>
-                  Request options
-                </Button>
-                <Button variant="secondary" disabled={rotate.isPending} onClick={() => rotate.mutate()}>
-                  Rotate signing key
-                </Button>
-              </>
-            )}
-            <Button variant="secondary" disabled={setEnabled.isPending} onClick={() => setEnabled.mutate(!s.enabled)}>
-              {s.enabled ? 'Turn off' : 'Turn on'}
-            </Button>
-            <Button variant="primary" disabled={!s.enabled || test.isPending} onClick={() => test.mutate()}>
+    >
+      <div
+        style={{
+          flex: '1 1 auto',
+          minHeight: 0,
+          overflowY: 'auto',
+          padding: 'var(--space-4) var(--space-5) var(--space-6)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 'var(--space-4)',
+        }}
+      >
+        {sub.isError && <Quiet>{messageOf(sub.error)}</Quiet>}
+        {s && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-2)' }}>
+            <Button variant="secondary" disabled={!s.enabled || test.isPending} onClick={() => test.mutate()}>
               {test.isPending ? 'Sending test' : 'Send test'}
             </Button>
-          </>
-        )
-      }
-    >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-        {sub.isError && <Quiet>{messageOf(sub.error)}</Quiet>}
+            <Button variant="secondary" onClick={() => setEditing(true)}>
+              Edit
+            </Button>
+            <Button variant="ghost" disabled={setEnabled.isPending} onClick={() => setEnabled.mutate(!s.enabled)}>
+              {s.enabled ? 'Turn off' : 'Turn on'}
+            </Button>
+            <Button variant="destructive" onClick={() => setConfirmDelete(true)}>
+              Delete
+            </Button>
+          </div>
+        )}
+        {test.isSuccess && <p style={caption}>Test sent.</p>}
         {failure && <Banner tone="failed">{messageOf(failure)}</Banner>}
         {s && !s.enabled && s.disabled_reason && <Banner tone="failed">{s.disabled_reason}</Banner>}
 
-        {s && (
-          <dl
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'max-content 1fr',
-              gap: 'var(--space-2) var(--space-4)',
-              margin: 0,
-              font: 'var(--type-body-ui)',
-            }}
-          >
-            <dt style={{ color: 'var(--ink-secondary)' }}>Status</dt>
-            <dd style={{ margin: 0 }}>
-              <SubscriptionStatus sub={s} />
-            </dd>
-            <dt style={{ color: 'var(--ink-secondary)' }}>Events</dt>
-            <dd style={{ margin: 0, display: 'flex', flexWrap: 'wrap', gap: 'var(--space-1)' }}>
-              {s.events.map((e) => (
-                <Tag key={e} mono>
-                  {e}
-                </Tag>
-              ))}
-            </dd>
-            <dt style={{ color: 'var(--ink-secondary)' }}>Destination</dt>
-            <dd style={{ margin: 0, overflowWrap: 'anywhere' }}>
-              {s.destination === 'webhook' ? s.url : notifyDestination(s, destinations)}
-            </dd>
+        {s && to && (
+          <dl style={{ margin: 0, font: 'var(--type-body-ui)' }}>
+            <Row term="Scope">{scopeName(s)}</Row>
+            <Row term="Events">{eventsSummary(s.events)}</Row>
+            <Row term="Destination">
+              <Stacked first={to.kind} second={s.destination === 'webhook' ? s.url : to.target} mono={s.destination === 'webhook'} />
+            </Row>
             {s.destination === 'webhook' && (
               <>
-                <dt style={{ color: 'var(--ink-secondary)' }}>Request</dt>
-                <dd style={{ margin: 0, display: 'flex', flexWrap: 'wrap', gap: 'var(--space-1)' }}>
-                  <Tag mono>{s.method || 'POST'}</Tag>
-                  <Tag mono>{s.content_type || 'application/json'}</Tag>
-                  {(s.header_names ?? []).map((h) => (
-                    <Tag key={h} mono>
-                      {h}
-                    </Tag>
-                  ))}
-                  {s.payload_template ? <Tag>Custom body</Tag> : <Tag>Default body</Tag>}
-                </dd>
+                <Row term="Request">{requestLine(s)}</Row>
+                <Row term="Signing key">
+                  <Button variant="ghost" disabled={rotate.isPending} onClick={() => rotate.mutate()}>
+                    {rotate.isPending ? 'Rotating' : 'Rotate'}
+                  </Button>
+                </Row>
               </>
             )}
-            <dt style={{ color: 'var(--ink-secondary)' }}>Owner</dt>
-            <dd style={{ margin: 0 }}>{s.owner_name || s.owner_id}</dd>
-            <dt style={{ color: 'var(--ink-secondary)' }}>ID</dt>
-            <dd style={{ margin: 0, font: 'var(--type-mono)' }}>{s.id}</dd>
+            <Row term="Owner">{s.owner_name || s.owner_id}</Row>
           </dl>
         )}
 
-        <h4 style={{ font: 'var(--type-h4)', margin: 'var(--space-2) 0 0' }}>Recent deliveries</h4>
-        <DeliveryLog id={id} />
-        {editing && s && <EditRequest sub={s} onClose={() => setEditing(false)} onSaved={refresh} />}
+        <section style={{ display: 'flex', flexDirection: 'column' }}>
+          <h3 style={{ font: 'var(--type-label)', color: 'var(--ink-secondary)', margin: '0 0 var(--space-2)' }}>
+            Recent deliveries
+          </h3>
+          <DeliveryLog id={id} />
+        </section>
       </div>
-    </Dialog>
+
+      {editing && s && (
+        <SubscriptionForm
+          editing={s}
+          apps={[]}
+          canManageAll={false}
+          catalog={catalog}
+          destinations={destinations}
+          onClose={() => setEditing(false)}
+          onSaved={() => {
+            setEditing(false);
+            refresh();
+          }}
+        />
+      )}
+      {confirmDelete && (
+        <Dialog
+          open
+          title="Delete this subscription?"
+          description="Its deliveries are deleted with it."
+          onClose={() => setConfirmDelete(false)}
+          footer={
+            <>
+              <Button variant="ghost" onClick={() => setConfirmDelete(false)}>
+                Cancel
+              </Button>
+              <Button variant="destructive" disabled={remove.isPending} onClick={() => remove.mutate()}>
+                {remove.isPending ? 'Deleting' : 'Delete'}
+              </Button>
+            </>
+          }
+        >
+          {remove.isError && <Banner tone="failed">{messageOf(remove.error)}</Banner>}
+        </Dialog>
+      )}
+    </SidePanel>
   );
 }
 
-/** A subscription's recent deliveries; one opens to its attempts. */
+function Row({ term, children }: Readonly<{ term: string; children: React.ReactNode }>) {
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: '8rem minmax(0,1fr)',
+        gap: 'var(--space-3)',
+        alignItems: 'baseline',
+        padding: 'var(--space-2) 0',
+        borderTop: 'var(--border-width) solid var(--rule)',
+      }}
+    >
+      <dt style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)' }}>{term}</dt>
+      <dd style={{ margin: 0, overflowWrap: 'anywhere' }}>{children}</dd>
+    </div>
+  );
+}
+
+/** A subscription's recent deliveries; each opens in place to its attempts. */
 function DeliveryLog({ id }: { id: string }) {
-  const queries = useQueryClient();
   const [openDelivery, setOpenDelivery] = useState<string | null>(null);
   const deliveries = useQuery({
     queryKey: ['deliveries', id],
@@ -865,144 +641,111 @@ function DeliveryLog({ id }: { id: string }) {
     // through hours of retries.
     refetchInterval: (q) => deliveriesInterval(q.state.data?.deliveries),
   });
-  const refresh = () => {
-    void queries.invalidateQueries({ queryKey: ['subscriptions'] });
-    void queries.invalidateQueries({ queryKey: ['deliveries', id] });
-  };
+  if (deliveries.isPending) return <Skeleton width="60%" />;
+  if (deliveries.isError) return <Quiet>{messageOf(deliveries.error)}</Quiet>;
+  const list = deliveries.data.deliveries ?? [];
+  if (list.length === 0) return <Quiet>No deliveries yet.</Quiet>;
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-        <Table
-          loading={deliveries.isPending}
-          onRowClick={(row: Delivery) => setOpenDelivery(openDelivery === row.id ? null : row.id)}
-          empty={<Quiet>No deliveries yet. Send a test to check the endpoint.</Quiet>}
-          columns={[
-            { key: 'event', header: 'Event', width: 'minmax(0,22ch)', mono: true },
-            {
-              key: 'status',
-              header: 'Status',
-              width: '18ch',
-              render: (row: Delivery) => <DeliveryStatus d={row} />,
-            },
-            {
-              key: 'attempts',
-              header: 'Attempts',
-              width: '10ch',
-              align: 'right',
-              muted: true,
-            },
-            {
-              key: 'last_error',
-              header: 'Last response',
-              width: 'minmax(0,1fr)',
-              muted: true,
-              render: (row: Delivery) =>
-                row.last_error || (row.last_status_code ? `${row.last_status_code}` : '—'),
-            },
-            {
-              key: 'created_at',
-              header: 'Time',
-              width: '16ch',
-              muted: true,
-              render: (row: Delivery) => relative(row.created_at),
-            },
-          ]}
-          rows={deliveries.data?.deliveries ?? []}
+    <div>
+      {list.map((d) => (
+        <DeliveryRow
+          key={d.id}
+          subscriptionID={id}
+          d={d}
+          open={openDelivery === d.id}
+          onToggle={() => setOpenDelivery(openDelivery === d.id ? null : d.id)}
         />
-        {openDelivery && <DeliveryDetail subscriptionID={id} deliveryID={openDelivery} onChange={refresh} />}
+      ))}
     </div>
   );
 }
 
-function DeliveryStatus({ d }: { d: Delivery }) {
-  switch (d.status) {
-    case 'succeeded':
-      return <StatusIndicator status="running" label="Delivered" />;
-    case 'failed':
-      return <StatusIndicator status="failed" label="Failed" />;
-    default:
-      return <StatusIndicator status="building" label={d.attempts > 0 ? 'Retrying' : 'Sending'} />;
-  }
+const DELIVERY_LOOK: Record<Delivery['status'], 'running' | 'failed' | 'building'> = {
+  succeeded: 'running',
+  failed: 'failed',
+  pending: 'building',
+};
+
+function DeliveryRow({
+  subscriptionID,
+  d,
+  open,
+  onToggle,
+}: Readonly<{ subscriptionID: string; d: Delivery; open: boolean; onToggle: () => void }>) {
+  return (
+    <div style={{ borderTop: 'var(--border-width) solid var(--rule)' }}>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={onToggle}
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'auto minmax(0,1fr) auto',
+          gap: 'var(--space-1) var(--space-3)',
+          alignItems: 'baseline',
+          width: '100%',
+          padding: 'var(--space-2) 0',
+          border: 0,
+          background: 'transparent',
+          color: 'var(--ink)',
+          font: 'var(--type-body-ui)',
+          textAlign: 'left',
+          cursor: 'pointer',
+        }}
+      >
+        <StatusSymbol status={DELIVERY_LOOK[d.status]} />
+        <Stacked first={<span style={{ font: 'var(--type-code-sm)' }}>{d.event}</span>} second={deliveryResult(d)} />
+        <span style={{ ...caption, whiteSpace: 'nowrap' }}>{stamp(d.created_at)}</span>
+      </button>
+      {open && <DeliveryDetail subscriptionID={subscriptionID} deliveryID={d.id} />}
+    </div>
+  );
 }
 
-function DeliveryDetail({
-  subscriptionID,
-  deliveryID,
-  onChange,
-}: {
-  subscriptionID: string;
-  deliveryID: string;
-  onChange: () => void;
-}) {
+function DeliveryDetail({ subscriptionID, deliveryID }: Readonly<{ subscriptionID: string; deliveryID: string }>) {
+  const refresh = useRefresh(subscriptionID);
+  const [payload, setPayload] = useState(false);
   const path = `/subscriptions/${subscriptionID}/deliveries/${deliveryID}`;
   const d = useQuery({ queryKey: ['delivery', deliveryID], queryFn: () => api.get<Delivery>(path) });
   const redeliver = useMutation({
     mutationFn: () => api.post<Delivery>(`${path}/redeliver`, {}),
     onSuccess: () => {
-      onChange();
+      refresh();
       void d.refetch();
     },
   });
 
-  if (d.isPending) return <Quiet>Reading the delivery.</Quiet>;
-  if (d.isError) return <Quiet>{messageOf(d.error)}</Quiet>;
+  const inner = { display: 'flex', flexDirection: 'column' as const, gap: 'var(--space-1)', padding: '0 0 var(--space-3) var(--space-5)' };
+  if (d.isPending) return <div style={inner}><Skeleton width="40%" /></div>;
+  if (d.isError) return <div style={inner}><Quiet>{messageOf(d.error)}</Quiet></div>;
   const delivery = d.data;
 
   return (
-    <section style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-3)' }}>
-        <h4 style={{ font: 'var(--type-h4)', margin: 0 }}>
-          {delivery.event} <span style={{ font: 'var(--type-mono)', color: 'var(--ink-secondary)' }}>{delivery.id}</span>
-        </h4>
-        <Button variant="secondary" disabled={redeliver.isPending} onClick={() => redeliver.mutate()}>
-          {redeliver.isPending ? 'Sending again' : 'Send again'}
-        </Button>
-      </div>
-      {redeliver.isError && <Banner tone="failed">{messageOf(redeliver.error)}</Banner>}
+    <div style={inner}>
+      {(delivery.attempt_log ?? []).map((a) => (
+        <span key={a.attempt} style={caption}>
+          {attemptLine(a)}
+          {a.error && ` · ${a.error}`}
+        </span>
+      ))}
       {delivery.status === 'pending' && delivery.next_attempt_at && (
-        <Quiet>Next attempt {relative(delivery.next_attempt_at).toLowerCase()}.</Quiet>
+        <span style={caption}>Next attempt {relative(delivery.next_attempt_at).toLowerCase()}</span>
       )}
-      <Table
-        dense
-        empty={<Quiet>Not attempted yet.</Quiet>}
-        columns={[
-          { key: 'attempt', header: 'Attempt', width: '8ch', align: 'right' },
-          {
-            key: 'attempted_at',
-            header: 'When',
-            width: '22ch',
-            muted: true,
-            render: (row: NonNullable<Delivery['attempt_log']>[number]) =>
-              new Date(row.attempted_at).toLocaleString(),
-          },
-          {
-            key: 'status_code',
-            header: 'Response',
-            width: '8ch',
-            mono: true,
-            render: (row: NonNullable<Delivery['attempt_log']>[number]) => row.status_code ?? '—',
-          },
-          {
-            key: 'duration_ms',
-            header: 'Duration',
-            width: '10ch',
-            align: 'right',
-            muted: true,
-            render: (row: NonNullable<Delivery['attempt_log']>[number]) => `${row.duration_ms} ms`,
-          },
-          {
-            key: 'error',
-            header: 'Error',
-            width: 'minmax(0,1fr)',
-            muted: true,
-            render: (row: NonNullable<Delivery['attempt_log']>[number]) => row.error || '—',
-          },
-        ]}
-        rows={(delivery.attempt_log ?? []).map((a) => ({ ...a, id: String(a.attempt) }))}
-      />
-      <CodeBlock title="Payload" dense copyable lines={JSON.stringify(delivery.payload, null, 2)} />
-    </section>
+      {redeliver.isError && <Banner tone="failed">{messageOf(redeliver.error)}</Banner>}
+      <span style={{ display: 'flex', gap: 'var(--space-2)', paddingTop: 'var(--space-2)' }}>
+        <Button variant="secondary" disabled={redeliver.isPending} onClick={() => redeliver.mutate()}>
+          {redeliver.isPending ? 'Redelivering' : 'Redeliver'}
+        </Button>
+        <Button variant="ghost" aria-expanded={payload} onClick={() => setPayload(!payload)}>
+          Payload
+        </Button>
+      </span>
+      {payload && <CodeBlock dense copyable lines={JSON.stringify(delivery.payload, null, 2)} />}
+    </div>
   );
 }
+
+// --- making and changing one -------------------------------------------------
 
 /** How a webhook is sent (R-375), as a form edits it. */
 interface RequestOptions {
@@ -1074,10 +817,7 @@ function RequestFields({
         label="Headers"
         value={value.headers}
         placeholder="Authorization: Bearer …"
-        helper={
-          headerNote ??
-          'One per line, as Name: value. Stored encrypted and never shown again.'
-        }
+        helper={headerNote ?? 'One per line, as Name: value. Never shown again.'}
         error={problem}
         onChange={(e) => onChange({ ...value, headers: e.target.value })}
       />
@@ -1089,76 +829,284 @@ function RequestFields({
         label="Body"
         value={value.template}
         placeholder={'{"text": {{json .Subject}}, "link": {{json .Link}}}'}
-        helper="Leave empty to send Pando’s event as JSON. Otherwise a Go template with .Type, .Subject, .Body, .Link, .App.Name, .Data and .Envelope; use json to encode a value."
+        helper="Empty sends the event as JSON. Otherwise a Go template."
         onChange={(e) => onChange({ ...value, template: e.target.value })}
       />
     </div>
   );
 }
 
-/** Changes how a webhook is sent. Header values are never shown back, so
- *  the headers field starts empty and replaces every header only if it is
- *  changed. */
-function EditRequest({ sub, onClose, onSaved }: { sub: Subscription; onClose: () => void; onSaved: () => void }) {
-  const [value, setValue] = useState<RequestOptions>({
-    method: sub.method || 'POST',
-    contentType: sub.content_type || 'application/json',
-    headers: '',
-    template: sub.payload_template ?? '',
-  });
+const WEBHOOK = 'webhook';
+
+/** Chosen in Send to: "webhook", or "notify:" and an adapter's ID. */
+function sendTo(s: Pick<Subscription, 'destination' | 'adapter_id'>): string {
+  return s.destination === 'webhook' ? WEBHOOK : `notify:${s.adapter_id ?? ''}`;
+}
+
+/**
+ * New subscription, or Edit: one dialog. Name, scope (new only — it cannot
+ * be changed), events, and where it sends. An existing subscription keeps its
+ * kind of destination (the API changes a webhook's URL or a channel's
+ * adapter, not one into the other), and its header values are never shown
+ * back, so the headers field starts empty and replaces them only if changed.
+ */
+function SubscriptionForm({
+  editing,
+  apps,
+  fixedApp,
+  canManageAll,
+  catalog,
+  destinations,
+  onClose,
+  onSaved,
+}: Readonly<{
+  editing?: Subscription;
+  apps: App[];
+  /** Made from an app's own Events tab: about that app, without asking. */
+  fixedApp?: App;
+  canManageAll: boolean;
+  catalog: EventDef[];
+  destinations: Destination[];
+  onClose: () => void;
+  onSaved: (s: Subscription) => void;
+}>) {
+  const queries = useQueryClient();
+  const [description, setDescription] = useState(editing?.description ?? '');
+  const [appID, setAppID] = useState(() => appOf(editing, fixedApp, canManageAll, apps));
+  const [chosen, setChosen] = useState<string[]>(editing?.events ?? ['*']);
+  const [target, setTarget] = useState(editing ? sendTo(editing) : WEBHOOK);
+  const [url, setURL] = useState(editing?.url ?? '');
+  const [channel, setChannel] = useState(editing?.channel ?? '');
+  const [request, setRequest] = useState<RequestOptions>(() => requestOf(editing));
   const [removeHeaders, setRemoveHeaders] = useState(false);
-  const replaceHeaders = removeHeaders || value.headers.trim() !== '';
+
+  const webhook = target === WEBHOOK;
+  const adapterID = webhook ? '' : target.slice('notify:'.length);
+  const takesChannel = !webhook && destinations.some((d) => d.id === adapterID && d.channels);
+  const everything = chosen.includes('*');
+  const headerNames = editing?.header_names ?? [];
+  const replaceHeaders = !editing || removeHeaders || request.headers.trim() !== '';
+
+  // An install event never reaches an app subscription, so it is not offered
+  // for one: a box that can be ticked and never fires is a broken promise.
+  const offered = useMemo(() => catalog.filter((e) => !appID || e.scope === 'app'), [catalog, appID]);
+  const toggle = (pattern: string, on: boolean) =>
+    setChosen((cur) => (on ? [...cur.filter((c) => c !== pattern), pattern] : cur.filter((c) => c !== pattern)));
+
+  const where = (): Record<string, unknown> => {
+    if (webhook) return { url, ...requestBody(removeHeaders ? { ...request, headers: '' } : request, replaceHeaders) };
+    const out: Record<string, unknown> = { adapter_id: adapterID };
+    if (takesChannel) out.channel = channel;
+    else if (editing?.channel) out.channel = '';
+    return out;
+  };
+  const body = (): Record<string, unknown> => ({ description, events: chosen, ...where() });
   const save = useMutation({
     mutationFn: () =>
-      api.patch<Subscription>(
-        `/subscriptions/${sub.id}`,
-        requestBody(removeHeaders ? { ...value, headers: '' } : value, replaceHeaders),
-      ),
-    onSuccess: () => {
-      onSaved();
-      onClose();
+      editing
+        ? api.patch<Subscription>(`/subscriptions/${editing.id}`, body())
+        : api.post<Subscription>('/subscriptions', {
+            ...body(),
+            app_id: appID || undefined,
+            destination: webhook ? 'webhook' : 'notify',
+          }),
+    onSuccess: (s) => {
+      void queries.invalidateQueries({ queryKey: ['subscriptions'] });
+      onSaved(s);
     },
   });
-  const names = sub.header_names ?? [];
+
+  const scopeOptions = [
+    ...(canManageAll ? [{ value: '', label: 'Installation' }] : []),
+    ...apps.map((a) => ({ value: a.id, label: a.name })),
+  ];
+  const sendOptions = sendOptionsOf(editing, destinations);
+
+  const ready =
+    chosen.length > 0 &&
+    (webhook ? url.trim() !== '' && !parseHeaders(request.headers).problem : adapterID !== '' && (!takesChannel || channel !== '')) &&
+    (Boolean(editing) || Boolean(fixedApp) || scopeOptions.length > 0);
+
+  let saveLabel = editing ? 'Save' : 'Create';
+  if (save.isPending) saveLabel = editing ? 'Saving' : 'Creating';
+
   return (
     <Dialog
       open
-      width={720}
-      title="Request options"
+      width={640}
+      title={editing ? 'Edit subscription' : 'New subscription'}
       onClose={onClose}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button
-            variant="primary"
-            disabled={save.isPending || Boolean(parseHeaders(value.headers).problem)}
-            onClick={() => save.mutate()}
-          >
-            {save.isPending ? 'Saving' : 'Save'}
+          <Button variant="primary" disabled={!ready || save.isPending} onClick={() => save.mutate()}>
+            {saveLabel}
           </Button>
         </>
       }
     >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
         {save.isError && <Banner tone="failed">{messageOf(save.error)}</Banner>}
-        <RequestFields
-          value={value}
-          onChange={setValue}
-          headerNote={
-            names.length > 0
-              ? `Sent now: ${names.join(', ')}. Enter headers to replace them all, or leave empty to keep them.`
-              : undefined
-          }
-        />
-        {names.length > 0 && (
-          <Checkbox
-            label="Remove every header"
-            checked={removeHeaders}
-            onChange={(e) => setRemoveHeaders(e.target.checked)}
+
+        <Input label="Name" value={description} onChange={(e) => setDescription(e.target.value)} />
+
+        {!editing && !fixedApp && (
+          <Select
+            label="Scope"
+            value={appID}
+            options={scopeOptions}
+            onChange={(e) => {
+              setAppID(e.target.value);
+              setChosen(['*']);
+            }}
           />
         )}
+
+        <fieldset style={{ border: 0, margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+          <legend style={{ font: 'var(--type-label)', color: 'var(--ink)', marginBottom: 'var(--space-2)' }}>Events</legend>
+          <Segmented
+            label="Events"
+            value={everything ? 'all' : 'some'}
+            options={[
+              { value: 'all', label: 'Everything' },
+              { value: 'some', label: 'Choose' },
+            ]}
+            onChange={(v) => setChosen(v === 'all' ? ['*'] : [])}
+          />
+          {!everything && (
+            <EventChecklist groups={groupsOf(offered)} chosen={chosen} onToggle={toggle} />
+          )}
+        </fieldset>
+
+        <Select
+          label="Send to"
+          value={target}
+          options={sendOptions}
+          onChange={(e) => {
+            setTarget(e.target.value);
+            setChannel('');
+          }}
+        />
+        {webhook && (
+          <>
+            <Input label="URL" value={url} placeholder="https://example.com/hooks/pando" onChange={(e) => setURL(e.target.value)} />
+            <Disclosure show="Request options" hide="Request options">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+                <RequestFields
+                  value={request}
+                  onChange={setRequest}
+                  headerNote={headerNames.length > 0 ? `Sent now: ${headerNames.join(', ')}. New headers replace them all.` : undefined}
+                />
+                {headerNames.length > 0 && (
+                  <Checkbox label="Remove every header" checked={removeHeaders} onChange={(e) => setRemoveHeaders(e.target.checked)} />
+                )}
+              </div>
+            </Disclosure>
+          </>
+        )}
+        {takesChannel && <ChannelPicker adapterID={adapterID} value={channel} onChange={setChannel} />}
+      </div>
+    </Dialog>
+  );
+}
+
+/** The app a subscription's form starts with: its own, the app it is made
+ *  from, the installation for someone who can subscribe to it, or else the
+ *  first app. */
+function appOf(editing: Subscription | undefined, fixedApp: App | undefined, canManageAll: boolean, apps: App[]): string {
+  if (editing?.app_id !== undefined) return editing.app_id;
+  if (fixedApp) return fixedApp.id;
+  return canManageAll ? '' : (apps[0]?.id ?? '');
+}
+
+/** The request options a subscription's form starts with: its own, or the defaults for a new one. */
+function requestOf(editing?: Subscription): RequestOptions {
+  if (!editing) return DEFAULT_REQUEST;
+  return {
+    method: editing.method || 'POST',
+    contentType: editing.content_type || 'application/json',
+    headers: '',
+    template: editing.payload_template ?? '',
+  };
+}
+
+/** Where a subscription can send: a webhook or a notification adapter, and
+ *  once made, only the kind it already is. */
+function sendOptionsOf(editing: Subscription | undefined, destinations: Destination[]) {
+  return [
+    ...(!editing || editing.destination === 'webhook' ? [{ value: WEBHOOK, label: 'Webhook' }] : []),
+    ...(!editing || editing.destination === 'notify'
+      ? destinations.map((d) => ({ value: `notify:${d.id}`, label: destinationLabel(d, destinations) }))
+      : []),
+  ];
+}
+
+/** Each group of events, and its events under it while the group is not chosen whole. */
+function EventChecklist({
+  groups,
+  chosen,
+  onToggle,
+}: Readonly<{ groups: [string, EventDef[]][]; chosen: string[]; onToggle: (pattern: string, on: boolean) => void }>) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+      {groups.map(([prefix, defs]) => {
+        const whole = chosen.includes(`${prefix}.*`);
+        return (
+          <div key={prefix} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+            <Checkbox label={groupName(prefix)} checked={whole} onChange={(e) => onToggle(`${prefix}.*`, e.target.checked)} />
+            {!whole && (
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(24ch, 1fr))',
+                  gap: 'var(--space-2)',
+                  paddingLeft: 'var(--space-5)',
+                }}
+              >
+                {defs.map((d) => (
+                  <Checkbox
+                    key={d.name}
+                    label={d.name}
+                    checked={chosen.includes(d.name)}
+                    onChange={(e) => onToggle(d.name, e.target.checked)}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** The signing key, the one time Pando can show it. */
+function SigningKey({ sub, onClose }: { sub: Subscription; onClose: () => void }) {
+  return (
+    <Dialog
+      open
+      width={640}
+      title="Save the signing key"
+      description={`Pando signs every delivery to ${sub.url} with this key.`}
+      onClose={onClose}
+      footer={
+        <Button variant="primary" onClick={onClose}>
+          I&rsquo;ve saved it
+        </Button>
+      }
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+        <Banner tone="info">Pando shows this key only once. If you lose it, rotate it from the subscription.</Banner>
+        <CodeBlock copyable lines={sub.signing_key ?? ''} />
+        <Quiet>
+          Check each delivery&rsquo;s <InlineCode>Pando-Signature</InlineCode> header against it. The{' '}
+          <a href={EVENTS_DOCS_URL} target="_blank" rel="noopener noreferrer">
+            events reference
+          </a>{' '}
+          shows how.
+        </Quiet>
       </div>
     </Dialog>
   );
@@ -1186,13 +1134,4 @@ function ChannelPicker({
       onChange={(e) => onChange(e.target.value)}
     />
   );
-}
-
-/** Where a notify subscription sends: its adapter, and the channel it chose. */
-function notifyDestination(s: Subscription, destinations: Destination[]): string {
-  const name = destinationName(
-    destinations.find((d) => d.id === s.adapter_id),
-    s.adapter_id ?? '',
-  );
-  return s.channel ? `${name}, channel ${s.channel}` : name;
 }

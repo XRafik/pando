@@ -76,10 +76,6 @@ export const LOOSENING: ReadonlyArray<readonly [Loosening, string, string]> = [
   ['forbidden', 'Not allowed', 'A deploy that would loosen these rules is refused.'],
 ];
 
-/** The helper under the install's list: every form an entry can take (R-185). */
-export const ENTRY_FORMS =
-  'One destination per line: a hostname (api.example.com), a wildcard of its subdomains (*.example.com), an IP address, or a CIDR range (10.0.0.0/8). Any of them may end in a port (api.example.com:443, [2001:db8::1]:443). * on its own means everywhere.';
-
 /** How many approvals a deploy needs, with zero read as the server reads it. */
 export function approvalsNeeded(count: number | undefined): number {
   return count && count > 0 ? count : 1;

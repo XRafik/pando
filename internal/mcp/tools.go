@@ -90,6 +90,9 @@ const (
 	usersPrefix  = "/users/"
 )
 
+// newNameArg describes the name argument of a tool that renames something.
+const newNameArg = "The new name."
+
 // appIDSchema is the schema of a tool that takes only an app.
 func appIDSchema() map[string]any {
 	return schema(map[string]any{"app_id": str(appIDDescription)}, "app_id")
@@ -255,6 +258,8 @@ var toolList = []tool{
 			"`private` (its owner alone), `shared` (its owner and the people or groups it is shared " +
 			"with), `public` (anyone on the internet, without signing in) or `passcode` (anyone on " +
 			"the internet who has the passcode). " +
+			"`notice_count` is how many of its notices you have not ignored (pando_list_notices " +
+			"lists them), left out when none. " +
 			"`total` is how many match; pass `next_cursor` back as `cursor` for the next page.",
 		Schema: schema(map[string]any{
 			"q":      str("Only apps whose name or slug contains this."),
@@ -755,10 +760,22 @@ var toolList = []tool{
 			"why it needs approval, the approvals it has so far, and `can_decide`: whether you may approve or reject it. " +
 			"Oldest first, a page at a time: pass `next_cursor` back as `cursor` for the next page.",
 		Schema: schema(map[string]any{
-			"cursor": str("The next_cursor from a previous page."),
+			"cursor":    str("The next_cursor from a previous page."),
+			"decidable": map[string]any{"type": "boolean", "description": "true to list only the deploys you may approve or reject."},
 		}),
 		request: func(args map[string]any) (string, string, any, error) {
-			return pagedGet("/approvals", args, "cursor")
+			method, path, body, err := pagedGet("/approvals", args, "cursor")
+			if err != nil {
+				return "", "", nil, err
+			}
+			if decidable, _ := args["decidable"].(bool); decidable {
+				if strings.Contains(path, "?") {
+					path += "&decidable=true"
+				} else {
+					path += "?decidable=true"
+				}
+			}
+			return method, path, body, nil
 		},
 	},
 	{
@@ -1096,7 +1113,7 @@ var toolList = []tool{
 		Description: "Change an app's display name. Its ID and address do not change.",
 		Schema: schema(map[string]any{
 			"app_id": str(appIDDescription),
-			"name":   str("The new name."),
+			"name":   str(newNameArg),
 		}, "app_id", "name"),
 		request: func(args map[string]any) (string, string, any, error) {
 			id, name, err := twoArgs(args, "app_id", "name")
@@ -1219,7 +1236,7 @@ var toolList = []tool{
 	{
 		Name: "pando_list_users",
 		Description: "The accounts on this installation, newest first, a page at a time: pass `next_cursor` " +
-			"back as `cursor` for the next page. Each carries install_roles — every installation role it holds, " +
+			"back as `cursor` for the next page. Each carries adapter_name — the identity provider it signs in with — and install_roles — every installation role it holds, " +
 			"and whether it holds it directly or through a group (with the group's name, and the identity " +
 			"provider for a synced group) — and install_role_id, the role granted to the account itself. " +
 			"Needs install.view.",
@@ -1330,11 +1347,79 @@ var toolList = []tool{
 		},
 	},
 	{
+		Name: "pando_rename_group",
+		Description: "Rename a group made in Pando. A group synced from an identity provider is renamed there. " +
+			"Needs install.users.manage.",
+		Schema: schema(map[string]any{
+			"group_id": str("The group's ID."),
+			"name":     str(newNameArg),
+		}, "group_id", "name"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, name, err := twoArgs(args, "group_id", "name")
+			if err != nil {
+				return "", "", nil, err
+			}
+			return "PATCH", "/groups/" + url.PathEscape(id), map[string]any{"name": name}, nil
+		},
+	},
+	{
+		Name: "pando_edit_role",
+		Description: "Rename a custom role, replace its permissions, or both. The verbs must be of the role's " +
+			"scope; built-in roles cannot be changed. Changing an installation role needs every installation " +
+			"permission it carries before and after; permissions added to an app role must be yours on every app " +
+			"it is granted on. Needs install.users.manage.",
+		Schema: schema(map[string]any{
+			"role_id": str("The role's ID."),
+			"name":    str("The new name. Leave out to keep it."),
+			"verbs":   strList("Every permission the role carries, from the verb catalog. Leave out to keep them."),
+		}, "role_id"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, err := stringArg(args, "role_id", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			body := map[string]any{}
+			if name, err := stringArg(args, "name", false); err != nil {
+				return "", "", nil, err
+			} else if name != "" {
+				body["name"] = name
+			}
+			if _, ok := args["verbs"]; ok {
+				verbs, err := stringListArg(args, "verbs")
+				if err != nil {
+					return "", "", nil, err
+				}
+				body["verbs"] = verbs
+			}
+			if len(body) == 0 {
+				return "", "", nil, fmt.Errorf("give name, verbs, or both")
+			}
+			return "PATCH", "/roles/" + url.PathEscape(id), body, nil
+		},
+	},
+	{
+		Name: "pando_list_role_holders",
+		Description: "Who holds a role: the groups granted it, then the accounts holding it, each with via — " +
+			"direct, or group for an account holding it only through a group. An app role's holders are those " +
+			"holding it on any app. A page at a time: pass `next_cursor` back as `cursor`. Needs install.view.",
+		Schema: schema(map[string]any{
+			"role_id": str("The role's ID."),
+			"cursor":  str("The next_cursor from a previous page."),
+		}, "role_id"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, err := stringArg(args, "role_id", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			return pagedGet("/roles/"+url.PathEscape(id)+"/holders", args, "cursor")
+		},
+	},
+	{
 		Name:        "pando_rename_section",
 		Description: "Rename one of your launcher sections.",
 		Schema: schema(map[string]any{
 			"section_id": str("The section's ID."),
-			"name":       str("The new name."),
+			"name":       str(newNameArg),
 		}, "section_id", "name"),
 		request: func(args map[string]any) (string, string, any, error) {
 			id, name, err := twoArgs(args, "section_id", "name")
@@ -1390,7 +1475,9 @@ var toolList = []tool{
 		Name: "pando_list_audit",
 		Description: "Read the audit log, newest first. Every filter is optional and they combine: " +
 			"what was done (an action prefix such as app. or grant.delete), who did it, which app, " +
-			"what it was done to, and when (RFC 3339 times; since inclusive, until exclusive).",
+			"what it was done to, how it ended, text to search for, and when (RFC 3339 times; since " +
+			"inclusive, until exclusive). Each event has a summary in plain words, such as " +
+			"\"Deployed crewmate\", beside its action.",
 		Schema: schema(map[string]any{
 			"action":         str("Actions starting with this, e.g. app."),
 			"principal_id":   str("Who did it: a user or token ID, or system, reconciler or detection."),
@@ -1399,13 +1486,15 @@ var toolList = []tool{
 			"target_kind":    str("What kind of thing it was done to, e.g. user, role, app."),
 			"target_id":      str("The ID of the thing it was done to."),
 			"involving":      str("Events where this ID is the actor or the target: everything to do with one account."),
+			"outcome":        str("Only events with this outcome: success, denied or failed."),
+			"q":              str("Text found in the action, the actor's name, email or ID, the target's ID, or the app's ID or name."),
 			"since":          str("From this time, RFC 3339."),
 			"until":          str("Up to this time, RFC 3339."),
 			"before":         str("The next_before from a previous page, to read further back."),
 		}),
 		request: func(args map[string]any) (string, string, any, error) {
 			q := url.Values{}
-			for _, key := range []string{"action", "principal_id", "principal_kind", "app_id", "target_kind", "target_id", "involving", "since", "until", "before"} {
+			for _, key := range []string{"action", "principal_id", "principal_kind", "app_id", "target_kind", "target_id", "involving", "outcome", "q", "since", "until", "before"} {
 				v, err := stringArg(args, key, false)
 				if err != nil {
 					return "", "", nil, err

@@ -111,3 +111,13 @@ func TestR154_EveryReasonSaysWhatItMeans(t *testing.T) {
 		require.True(t, len(m) > 20 && m[len(m)-1] == '.', m)
 	}
 }
+
+// TestR154_ReasonsSayDeployment asserts the reasons use the console's word,
+// "deployment", as the screens they are shown on do.
+func TestR154_ReasonsSayDeployment(t *testing.T) {
+	for _, r := range []approval.Reason{approval.ReasonInstall, approval.ReasonAppPolicy, approval.ReasonAppSpec, approval.ReasonEgressLoosening} {
+		m := r.Message()
+		require.Contains(t, m, "deployment", m)
+		require.NotRegexp(t, `\bdeploys?\b`, m)
+	}
+}

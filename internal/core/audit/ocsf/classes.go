@@ -208,6 +208,7 @@ var classes = map[string]Mapping{
 	"policy.update":                      apiUpdate,
 	"role.create":                        apiCreate,
 	"role.delete":                        apiDelete,
+	"role.update":                        apiUpdate,
 	"routing.change":                     apiUpdate,
 	"secret.delete":                      apiDelete,
 	"secret.write":                       apiCreate,

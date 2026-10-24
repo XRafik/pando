@@ -555,15 +555,23 @@ function Group({
   );
 }
 
+/** The tile grid's columns: fixed on a wide window, shared out on a phone. */
+export function gridColumns(narrow: boolean): string {
+  // Fixed tracks, not 1fr: a tile that stretched to fill the row would be a
+  // different size on every window, and a poster on a wide one. On a phone
+  // two or three fixed tracks left a strip of empty screen beside them, so
+  // there the tracks share the width.
+  return narrow ? 'repeat(auto-fill, minmax(12ch, 1fr))' : 'repeat(auto-fill, 16ch)';
+}
+
 function Grid({ children }: { children: React.ReactNode }) {
+  const narrow = useNarrow();
   return (
     <div
       style={{
         display: 'grid',
-        // Fixed tracks, not 1fr: a tile that stretched to fill the row would be
-        // a different size on every window, and a poster on a wide one.
-        gridTemplateColumns: 'repeat(auto-fill, 16ch)',
-        gap: 'var(--space-5)',
+        gridTemplateColumns: gridColumns(narrow),
+        gap: narrow ? 'var(--space-4)' : 'var(--space-5)',
       }}
     >
       {children}

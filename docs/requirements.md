@@ -225,7 +225,7 @@ app is made public states it in full. *(Amended for discussion #262: the apps li
 
 ### 6.3 Groups
 
-**R-078 [D]** Groups may be Pando-native or pushed from an IdP (R-048). **Permissions attached to a group are defined in Pando**, never inherited from the IdP. The IdP says who is in a group; Pando says what the group can do. A group may hold an installation role and roles on apps, exactly as an account can, and everyone in it holds them for as long as they are in it (R-079) — so adding someone to a team's group is how they get the team's access.
+**R-078 [D]** Groups may be Pando-native or pushed from an IdP (R-048). **Permissions attached to a group are defined in Pando**, never inherited from the IdP. The IdP says who is in a group; Pando says what the group can do. A group may hold an installation role and roles on apps, exactly as an account can, and everyone in it holds them for as long as they are in it (R-079) — so adding someone to a team's group is how they get the team's access. A group made in Pando may be renamed; a synced group keeps its provider's name, which the provider sends at every sign-in and push.
 
 **R-079 [D]** Group membership is evaluated **live** at request time, not expanded to a member list at grant time. Otherwise upstream removals do not take effect. The proxy may keep what it read for a request until anything it read changes, and never longer than 30 seconds (design 06 §3.1, amended with issue #93).
 
@@ -300,8 +300,8 @@ not hold:
 
 - **Handing one on, or taking it away.** Granting or removing an installation role, replacing one,
   changing the members of a group that holds one, linking a provider's group to such a group, and
-  creating or deleting an installation-scoped custom role each need every install verb the role
-  carries.
+  creating, editing or deleting an installation-scoped custom role each need every install verb the role
+  carries — for an edit, before and after.
 - **Becoming someone who holds it.** On someone else's account, resetting the password, changing the
   status, username or email, linking or unlinking an identity, revoking a token, changing the role and
   deleting the account each need every install verb that account holds, directly or through a group.
@@ -347,7 +347,7 @@ managing an app is not using it: opening an app through the proxy still needs a 
 ownership (R-072, R-087). App viewer, App manager and Auditor are Viewer and Owner on every
 app, and the security reviewer's role; a custom role may hold any one `install.apps.*` verb alone.
 
-**R-082 [D]** Custom roles may be composed from the verb list and assigned to users or groups. A role's name is unique ignoring case and surrounding spaces, and no custom role may take the name of a built-in one.
+**R-082 [D]** Custom roles may be composed from the verb list and assigned to users or groups. A role's name is unique ignoring case and surrounding spaces, and no custom role may take the name of a built-in one. A custom role's name and verbs may be changed later, and its holders hold the new verbs at once; its scope may not change. A verb added to an app role must be held, on every app the role is granted on, by whoever adds it, as granting the role there would require.
 
 **R-083 [D]** `app.secrets.write` is deliberately separable from `app.secrets.read` — rotating a credential and reading it are different levels of trust. Secrets are write-only after creation for anyone below owner.
 
@@ -844,7 +844,7 @@ without touching core (O-6 resolved).
 
 #### Streaming and export *(issue #129, design 12)*
 
-**R-379 [D]** **Every audit event names its actor, target, outcome and source.** The actor is the principal's kind and ID, the user a token acted for (R-229), and that user's display name and email as they were when the event was written. The target is always set: an event about nothing narrower is about the app it names, or else about the installation. The outcome is `success`, `denied` or `failed`. The source is the client's address (R-380), the address that connected to Pando, and the client's user agent, for every event written during a request. Each event carries a schema version, so a consumer survives fields being added.
+**R-379 [D]** **Every audit event names its actor, target, outcome and source.** The actor is the principal's kind and ID, the user a token acted for (R-229), and that user's display name and email as they were when the event was written. The target is always set: an event about nothing narrower is about the app it names, or else about the installation. The outcome is `success`, `denied` or `failed`. The source is the client's address (R-380), the address that connected to Pando, and the client's user agent, for every event written during a request. Each event carries a schema version, so a consumer survives fields being added. Read back, each event also carries a summary in plain words — *Deployed crewmate* — made from its action and the names its app and target go by now, and its action itself when Pando has no wording for it; the action stays beside it, so the summary is never the only record of what happened.
 
 **R-380 [D]** **The client address is the connecting peer, unless that peer is a configured trusted proxy.** From a trusted proxy, Pando reads `X-Forwarded-For` from the right and records the first address that is not itself a trusted proxy, so a client cannot choose what is written. No proxy is trusted by default. A range covering the whole internet, or most of it, is refused at startup. The connecting address is recorded beside it either way. The list decides the audited address and nothing else (O-19).
 

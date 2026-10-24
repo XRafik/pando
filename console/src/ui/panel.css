@@ -1,4 +1,4 @@
-/* The side panel over an app's screen (AppPanel.tsx): it slides in from the
+/* The side panel (SidePanel.tsx): it slides in from the
  * right on the panel duration, and under prefers-reduced-motion it is simply
  * there. */
 

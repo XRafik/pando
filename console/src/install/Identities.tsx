@@ -14,7 +14,16 @@ import type { Identity, ProviderView } from '@api/types.gen';
 import { Quiet, refusal } from './Accounts';
 import { LineSkeleton } from '../ui/Loading';
 
-export function Identities({ userID, manage }: { userID: string; manage: boolean }) {
+export function Identities({
+  userID,
+  manage,
+  bare = false,
+}: {
+  userID: string;
+  manage: boolean;
+  /** Without its heading: inside a dialog that already says what it is. */
+  bare?: boolean;
+}) {
   const queries = useQueryClient();
   const ids = useQuery({
     queryKey: ['users', userID, 'identities'],
@@ -32,7 +41,7 @@ export function Identities({ userID, manage }: { userID: string; manage: boolean
   return (
     <section>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 'var(--space-3)' }}>
-        <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-3)' }}>Sign-in identities</h4>
+        {!bare && <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-3)' }}>Sign-in identities</h4>}
         {manage && (
           <Button variant="ghost" onClick={() => setLinking(true)}>
             Link identity

@@ -12,12 +12,14 @@
 // when they were taken; committed is as of the request.
 
 import { useQuery } from '@tanstack/react-query';
-import { Button, Skeleton } from '@design';
+import { Button, Skeleton, Tooltip } from '@design';
 
 import { api } from '@api/client';
 import { Quiet, messageOf } from './Accounts';
 import { Disclosure } from '../ui/Disclosure';
 import { bytes, cores } from '../admin/usage-format';
+import { relative } from '../ui/time';
+import { SystemCard } from './Updates';
 
 export interface RuntimeCapacity {
   adapter_ref: string;
@@ -57,60 +59,60 @@ export function Capacity({ names }: { names: Record<string, string> }) {
   const asOf = capacity.data?.as_of;
   const every = capacity.data?.refresh_seconds;
 
-  return (
-    <section>
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 'var(--space-3)',
-          margin: 'var(--space-6) 0 var(--space-3)',
-        }}
-      >
-        <h4 style={{ font: 'var(--type-h4)', margin: 0 }}>Capacity</h4>
-        {runtimes.length > 0 && (
-          <Button variant="secondary" disabled={capacity.isFetching} onClick={() => void capacity.refetch()}>
-            {capacity.isFetching ? 'Refreshing' : 'Refresh'}
-          </Button>
-        )}
+  let body: React.ReactNode;
+  if (capacity.isPending) {
+    body = (
+      <div role="status" aria-label="Loading" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+        <Skeleton width="16ch" />
+        {['CPU', 'Memory', 'Disk'].map((label) => (
+          <div key={label} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
+            <span style={{ font: 'var(--type-label)', color: 'var(--ink-secondary)' }}>{label}</span>
+            <Skeleton width="28ch" />
+            <Skeleton width="32ch" height="var(--space-2)" radius="xs" />
+          </div>
+        ))}
       </div>
+    );
+  } else if (capacity.isError) {
+    body = <Quiet>{messageOf(capacity.error)}</Quiet>;
+  } else if (runtimes.length === 0) {
+    body = <Quiet>No runtime is set up.</Quiet>;
+  } else {
+    body = (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
+        {runtimes.map((rt, i) => (
+          <Runtime key={rt.adapter_ref} rt={rt} name={names[rt.adapter_ref]} last={i === runtimes.length - 1} />
+        ))}
+      </div>
+    );
+  }
 
-      {capacity.isPending ? (
-        <div role="status" aria-label="Loading" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-          <Skeleton width="16ch" />
-          {['CPU', 'Memory', 'Disk'].map((label) => (
-            <div key={label} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
-              <span style={{ font: 'var(--type-label)', color: 'var(--ink-secondary)' }}>{label}</span>
-              <Skeleton width="28ch" />
-              <Skeleton width="32ch" height="var(--space-2)" radius="xs" />
-            </div>
-          ))}
-        </div>
-      ) : capacity.isError ? (
-        <Quiet>{messageOf(capacity.error)}</Quiet>
-      ) : runtimes.length === 0 ? (
-        <Quiet>No runtime is set up. Add a runtime adapter above.</Quiet>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
-          {asOf && (
-            <p style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)', margin: 0 }}>
-              Runtimes read at {new Date(asOf).toLocaleTimeString()}
-              {every ? `, refreshed every ${every} seconds` : ''}.
-            </p>
-          )}
-          {runtimes.map((rt) => (
-            <Runtime key={rt.adapter_ref} rt={rt} name={names[rt.adapter_ref]} />
-          ))}
-        </div>
-      )}
-    </section>
+  return (
+    <SystemCard
+      heading="Capacity"
+      action={
+        runtimes.length > 0 && (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+            {asOf && (
+              <Tooltip content={every ? `Read again every ${every} seconds.` : new Date(asOf).toLocaleString()}>
+                <span style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)' }}>{relative(asOf)}</span>
+              </Tooltip>
+            )}
+            <Button variant="secondary" disabled={capacity.isFetching} onClick={() => void capacity.refetch()}>
+              {capacity.isFetching ? 'Refreshing' : 'Refresh'}
+            </Button>
+          </span>
+        )
+      }
+    >
+      {body}
+    </SystemCard>
   );
 }
 
 /** One runtime's readings: a block of its own, named, since there can be
  *  several on one installation. */
-function Runtime({ rt, name }: { rt: RuntimeCapacity; name?: string }) {
+function Runtime({ rt, name, last }: Readonly<{ rt: RuntimeCapacity; name?: string; last: boolean }>) {
   const reportsUse = rt.in_use_cpu_millis !== undefined;
   const reportsNothing =
     rt.status === 'ok' && !rt.total_cpu_millis && !rt.total_memory_bytes && !rt.total_disk_bytes && !reportsUse;
@@ -121,8 +123,8 @@ function Runtime({ rt, name }: { rt: RuntimeCapacity; name?: string }) {
         display: 'flex',
         flexDirection: 'column',
         gap: 'var(--space-4)',
-        paddingBottom: 'var(--space-5)',
-        borderBottom: 'var(--border-width) solid var(--rule)',
+        paddingBottom: last ? 0 : 'var(--space-5)',
+        borderBottom: last ? undefined : 'var(--border-width) solid var(--rule)',
       }}
     >
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 'var(--space-1) var(--space-3)' }}>
@@ -139,7 +141,7 @@ function Runtime({ rt, name }: { rt: RuntimeCapacity; name?: string }) {
 
       {rt.status === 'unreachable' ? (
         <Quiet>
-          Pando couldn&rsquo;t reach this runtime. Its status is in the adapters table above.
+          Pando couldn&rsquo;t reach this runtime.
         </Quiet>
       ) : reportsNothing ? (
         <Quiet>This runtime doesn&rsquo;t report its capacity. Pando doesn&rsquo;t check room before deploying to it.</Quiet>
@@ -241,7 +243,6 @@ function Reading({
             style={{
               position: 'relative',
               height: 'var(--space-2)',
-              maxWidth: '40ch',
               background: 'var(--paper-sunken)',
               borderRadius: 'var(--radius-xs)',
               overflow: 'hidden',

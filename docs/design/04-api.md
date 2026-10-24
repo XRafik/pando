@@ -272,6 +272,7 @@ DELETE /api/v1/users/{id}/role            revoke it; install.users.manage
 
 GET    /api/v1/groups
 POST   /api/v1/groups
+PATCH  /api/v1/groups/{id}                rename a Pando group; a synced one keeps its provider's name (R-078)
 PUT    /api/v1/groups/{id}/members
 
 GET    /api/v1/tokens
@@ -280,6 +281,8 @@ DELETE /api/v1/tokens/{id}
 
 GET    /api/v1/roles
 POST   /api/v1/roles                      custom roles (R-082)
+PATCH  /api/v1/roles/{id}                 rename a custom role or replace its verbs; built-ins refuse (R-081)
+GET    /api/v1/roles/{id}/holders         groups and accounts holding it, direct or through a group
 GET    /api/v1/verbs                      the verb catalog, for building custom roles
 ```
 

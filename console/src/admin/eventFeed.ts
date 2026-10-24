@@ -72,44 +72,18 @@ export function actorName(
   return name || actor.id;
 }
 
-function startOfDay(d: Date): number {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-}
-
-/** The divider over a day's events: Today, Yesterday, then the date. */
-export function dayLabel(iso: string, now: Date = new Date()): string {
+/** When an event happened, in the Time column: its date and time, such as
+ *  "Oct 24 14:32", with the year only when it is not this one. Each row
+ *  carries its own date rather than sitting under a divider row per day. */
+export function timeOf(iso: string, now: Date = new Date()): string {
   const at = new Date(iso);
-  const days = Math.round((startOfDay(now) - startOfDay(at)) / 86_400_000);
-  if (days === 0) return 'Today';
-  if (days === 1) return 'Yesterday';
-  return at.toLocaleDateString(undefined, {
+  const date = at.toLocaleDateString(undefined, {
     month: 'short',
     day: 'numeric',
     ...(at.getFullYear() === now.getFullYear() ? {} : { year: 'numeric' }),
   });
-}
-
-export type FeedLine = { kind: 'day'; key: string; label: string } | { kind: 'event'; key: string; item: FeedItem };
-
-/** The rows of the table: each event, with a divider wherever the day changes.
- *  The feed is newest first, so a day's events are together. */
-export function byDay(items: FeedItem[], now: Date = new Date()): FeedLine[] {
-  const out: FeedLine[] = [];
-  let last = '';
-  for (const item of items) {
-    const label = dayLabel(item.occurred_at, now);
-    if (label !== last) {
-      out.push({ kind: 'day', key: `day-${item.id}`, label });
-      last = label;
-    }
-    out.push({ kind: 'event', key: item.id, item });
-  }
-  return out;
-}
-
-/** The time of day an event happened, in the Time column. */
-export function timeOf(iso: string): string {
-  return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  const time = at.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  return `${date} ${time}`;
 }
 
 /** Whether a scrolling box is close enough to its end that the next page

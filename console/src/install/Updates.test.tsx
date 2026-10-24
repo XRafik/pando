@@ -10,8 +10,9 @@ import { renderToString } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import type { Attempt, Plan, Status } from '@api/types.gen';
-import { Policy } from './Installation';
-import { Updates } from './Updates';
+import { UpdateSettings } from './PolicyPages';
+import { PandoCard } from './Updates';
+import { PolicyDraftContext, usePolicyDraft } from './policyDraft';
 
 const status: Status = {
   current: '0.3.1',
@@ -41,7 +42,7 @@ function render(
   // React separates adjacent text with empty comments in server output.
   return renderToString(
     <QueryClientProvider client={queries}>
-      <Updates onPolicy={() => {}} />
+      <PandoCard settings={<span>settings</span>} />
     </QueryClientProvider>,
   ).replaceAll('<!-- -->', '');
 }
@@ -56,30 +57,40 @@ const possible: Plan = {
   note: 'Every app is unreachable while Pando restarts.',
 };
 
-describe('checking now (R-349)', () => {
-  it('offers a check beside when Pando last checked', () => {
+describe('the Pando card (R-349, R-351)', () => {
+  it('says what runs, the latest, its status and when Pando checked', () => {
     const html = render(possible);
-    expect(html).toMatch(/Checked<\/span><span[^>]*>[^<]+<\/span><button[^>]*>Check for updates<\/button>/);
+    for (const k of ['>Running<', '>Latest<', '>Status<', '>Checked<', '0.3.1', '0.4.0', 'Update, with breaking changes']) {
+      expect(html).toContain(k);
+    }
+    expect(html).toContain('Check now');
+    expect(html).toContain('Release notes');
+    expect(html).toContain('Update settings');
   });
 
   it('offers a check before the first one', () => {
     const html = render(possible, null, undefined, { ...status, checked_at: undefined, available: false, releases: [] });
     expect(html).toContain('hasn’t checked for releases yet');
-    expect(html).toContain('Check for updates');
+    expect(html).toContain('Check now');
   });
 
   it('offers none while the check is off', () => {
     const html = render(possible, null, undefined, { ...status, enabled: false, available: false, releases: [] });
-    expect(html).not.toContain('Check for updates');
+    expect(html).not.toContain('Check now');
+    expect(html).toContain('The update check is off.');
+  });
+
+  it('marks a security fix', () => {
+    expect(render(possible, null, undefined, { ...status, security: true })).toContain('Security fix');
   });
 });
 
 describe('upgrading in place from the Updates screen (R-355 – R-359)', () => {
-  it('offers the upgrade when Pando can replace itself, beside the command', () => {
+  it('offers the upgrade when Pando can replace itself', () => {
     const html = render(possible);
     expect(html).toContain('Upgrade to 0.4.0');
-    expect(html).toContain('Or upgrade it yourself');
-    expect(html).toContain('docker compose up -d');
+    expect(html).toContain('has breaking changes');
+    expect(html).not.toContain('docker compose up -d');
   });
 
   it('says it needs install.upgrade to someone without it', () => {
@@ -98,7 +109,8 @@ describe('upgrading in place from the Updates screen (R-355 – R-359)', () => {
     });
     expect(html).toContain('Pando can&#x27;t upgrade itself from here');
     expect(html).toContain('pinned to trypando/pando:0.3.1');
-    expect(html).toContain('Open policy');
+    // And the command to upgrade it by hand.
+    expect(html).toContain('docker compose up -d');
   });
 
   it('shows a rollback with why, and the new version’s last lines', () => {
@@ -122,31 +134,45 @@ describe('upgrading in place from the Updates screen (R-355 – R-359)', () => {
   });
 });
 
-describe('the Policy screen’s in-place settings (R-355, R-361)', () => {
-  function renderPolicy(policy: object, fixed: object[] = []) {
+describe('the update settings (R-349, R-355, R-361)', () => {
+  function Harness() {
+    const draft = usePolicyDraft(true, true);
+    return (
+      <PolicyDraftContext.Provider value={draft}>
+        <UpdateSettings />
+      </PolicyDraftContext.Provider>
+    );
+  }
+  function renderSettings(policy: object, fixed: object[] = []) {
     const queries = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
     queries.setQueryData(['policy'], policy);
     queries.setQueryData(['config'], { file: '', settings: [], policy: fixed });
-    queries.setQueryData(['apps'], { apps: [] });
     return renderToString(
       <QueryClientProvider client={queries}>
-        <Policy canEdit />
+        <Harness />
       </QueryClientProvider>,
     );
   }
 
   it('says how to turn it on in the deployment, and why the tag matters', () => {
-    const html = renderPolicy({});
-    expect(html).toContain('Let Pando upgrade itself');
+    const html = renderSettings({});
+    expect(html).toContain('Upgrade from here');
     expect(html).toContain('PANDO_POLICY_UPGRADE_IN_PLACE');
     expect(html).toContain('trypando/pando:latest');
-    expect(html).toContain('puts the old version back');
+    expect(html).toContain('A pinned version is put back');
   });
 
   it('says automatic upgrades take no full backup, and shows the window', () => {
-    const html = renderPolicy({ upgrade_in_place: true, auto_upgrade_patches: true, maintenance_window: 'sun 02:00 2h' });
-    expect(html).toContain('takes no full backup');
+    const html = renderSettings({ upgrade_in_place: true, auto_upgrade_patches: true, maintenance_window: 'sun 02:00 2h' });
+    expect(html).toContain('No full backup is taken.');
     expect(html).toContain('Maintenance window, in UTC');
     expect(html).toContain('sun 02:00 2h');
+    expect(html).not.toContain('PANDO_POLICY_UPGRADE_IN_PLACE');
+  });
+
+  it('reads the check as on unless policy turns it off', () => {
+    const check = (html: string) => html.match(/<input[^>]*aria-label="Check for updates"[^>]*>/)?.[0] ?? '';
+    expect(check(renderSettings({}))).toContain('checked=""');
+    expect(check(renderSettings({ disable_update_check: true }))).not.toContain('checked=""');
   });
 });

@@ -72,13 +72,15 @@ const rowOf = (type: string) => document.querySelector<HTMLElement>(`tr[data-eve
 
 // R-378: the app's events of the last 30 days, a line each.
 describe('the events table', () => {
-  it('groups events under Today, Yesterday and the date', () => {
+  it('puts the date in each row’s time, with no day dividers', () => {
     vi.stubGlobal('fetch', unanswered);
     const screen = mount(<AppEvents app={app} />, seed());
-    const days = [...document.querySelectorAll('th[scope="colgroup"]')].map((th) => th.textContent);
-    expect(days[0]).toBe('Today');
-    expect(days[1]).toBe('Yesterday');
-    expect(days).toHaveLength(3);
+    expect(document.querySelectorAll('th[scope="colgroup"]')).toHaveLength(0);
+    expect(screen.text()).not.toContain('Today');
+    expect(screen.text()).not.toContain('Yesterday');
+    const times = [...document.querySelectorAll('tr.pando-event time')].map((t) => t.textContent);
+    expect(times).toHaveLength(4);
+    expect(times[0]).toMatch(/\d{1,2} \d{2}:\d{2}$/);
     expect(screen.text()).toContain('Deployed revision 7 — from a push to main');
     screen.unmount();
   });
@@ -236,12 +238,12 @@ describe('subscription cards', () => {
     vi.stubGlobal('fetch', unanswered);
     const screen = mount(<AppEvents app={app} />, seed({ subscriptions: [on, off] }));
     const text = screen.text();
-    expect(text).toContain('Slack#crewmate-alerts');
-    expect(text).toContain('deploy.failed');
-    expect(text).toContain('deploy.*');
-    expect(text).toContain('https://hooks.example.com/pando');
+    expect(text).toContain('Deploy failed, backup failed');
+    expect(text).toContain('Slack · #crewmate-alerts');
+    expect(text).toContain('Deployments');
+    expect(text).toContain('Webhook · hooks.example.com/pando');
     expect(text).toContain('On');
-    expect(text).toContain('Turned off');
+    expect(text).toContain('Off');
     expect(text).toContain('Pando turned this off after a day of failed deliveries.');
     screen.unmount();
   });
@@ -261,7 +263,7 @@ describe('subscription cards', () => {
     screen.unmount();
   });
 
-  it('sends a test, and opens the deliveries and the subscription', async () => {
+  it('sends a test, and opens the subscription with its deliveries', async () => {
     const calls: string[] = [];
     vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
       calls.push(`${init?.method ?? 'GET'} ${String(url)}`);
@@ -271,19 +273,17 @@ describe('subscription cards', () => {
       return unanswered();
     });
     const screen = mount(<AppEvents app={app} />, seed({ subscriptions: [on] }));
-    await screen.press('Send a test');
+    await screen.press('Send test');
     expect(calls.some((c) => c.startsWith('POST') && c.endsWith('/subscriptions/sub_1/test'))).toBe(true);
     expect(screen.text()).toContain('Test sent.');
 
-    await screen.press('Deliveries');
-    await tick();
-    expect(screen.text()).toContain('No deliveries yet.');
-    await screen.press('Close');
-
-    await screen.press('Edit');
+    await screen.press('Details');
     await tick();
     expect(calls.some((c) => c.startsWith('GET') && c.endsWith('/subscriptions/sub_1'))).toBe(true);
+    expect(screen.text()).toContain('No deliveries yet.');
     expect(screen.text()).toContain('Turn off');
+    await screen.toggle('Close');
+    expect(screen.text()).not.toContain('Recent deliveries');
     screen.unmount();
   });
 

@@ -35,6 +35,7 @@ export interface App {
   can_manage?: boolean;
   owner_name?: string;
   access?: string;
+  notice_count?: number;
   detection?: DetectionSummary;
 }
 

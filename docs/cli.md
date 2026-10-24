@@ -821,6 +821,10 @@ Deploys waiting for approval on the apps you can see
 pando approvals list
 ```
 
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--decidable` |  | Only the deploys you may approve or reject |
+
 #### `approvals reject`
 
 Reject a deploy waiting for approval, which ends the request
@@ -855,6 +859,8 @@ Lists what was done on this installation, newest first. The filters combine.
 | `--before` |  | the page before this cursor, as printed after a full page |
 | `--involving` |  | events where this ID is the actor or the target, e.g. a user ID |
 | `--limit` | `0` | how many events (default 100, at most 500) |
+| `--outcome` |  | how it ended: success, denied or failed |
+| `--search` |  | text in the action, the actor, the target or the app |
 | `--since` |  | from this time, or this long ago (24h) |
 | `--target` |  | the ID of the thing it was done to |
 | `--target-kind` |  | what kind of thing it was done to, e.g. user, role, app |
@@ -1182,6 +1188,14 @@ Remove an account from a group
 
 ```
 pando group remove-member <group-id> <user-id>
+```
+
+#### `group rename`
+
+Rename a group made in Pando
+
+```
+pando group rename <group-id> <name>
 ```
 
 #### `group role`
@@ -1545,6 +1559,35 @@ Restart Pando. Requests in flight finish first, and apps behind Pando are unreac
 | Flag | Default | What it does |
 | --- | --- | --- |
 | `--wait` | `1m30s` | how long to wait for Pando to come back; 0 returns at once |
+
+### `role`
+
+Work with roles and who holds them
+
+```
+pando role
+```
+
+#### `role edit`
+
+Rename a custom role, or replace its permissions
+
+```
+pando role edit <role-id>
+```
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--name` |  | the role's new name |
+| `--verbs` | `[]` | every permission the role carries, comma-separated |
+
+#### `role holders`
+
+Show the groups and accounts holding a role, directly or through a group
+
+```
+pando role holders <role-id>
+```
 
 ### `rollback`
 

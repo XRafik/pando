@@ -9,19 +9,19 @@ vi.hoisted(() => {
 import { renderToString } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-import { AuditSinks } from './AuditSinks';
+import { AuditSinkLine, AuditSinks } from './AuditSinks';
 import type { AuditSink } from './AuditSinks';
 import { AuditTable } from './Installation';
 import type { AuditRecord } from './Installation';
 
-function render(sinks: AuditSink[]) {
+function render(sinks: AuditSink[], line = false) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   client.setQueryData(['audit-sinks'], { audit_sinks: sinks });
   // Without the markers React puts between adjacent pieces of text, so a
   // sentence can be looked for as it reads.
   return renderToString(
     <QueryClientProvider client={client}>
-      <AuditSinks onAdapters={() => {}} />
+      {line ? <AuditSinkLine onAdapters={() => {}} href="/admin/system/adapters/audit_sink" /> : <AuditSinks onAdapters={() => {}} />}
     </QueryClientProvider>,
   ).replace(/<!-- -->/g, '');
 }
@@ -44,18 +44,21 @@ const splunk: AuditSink = {
 };
 
 describe('Audit sinks on the Audit log screen (R-385)', () => {
-  it('says that a copy of the log leaves, and where', () => {
-    const html = render([splunk]);
-    expect(html).toContain('Every audit event is sent to splunk.example.com:8088 over HTTPS.');
-    expect(html).toContain('Delivering');
-    expect(html).toContain('Last delivered');
-    expect(html).toContain('12 events behind.');
-    expect(html).toContain('Open adapters');
+  it('says in one line that a copy of the log leaves, and where, beside a link to the sinks', () => {
+    const html = render([splunk], true);
+    expect(html).toContain('Also copied to');
+    expect(html).toContain('Splunk, splunk.example.com:8088');
+    expect(html).toContain('href="/admin/system/adapters/audit_sink"');
+    expect(html).toContain('>Audit sinks<');
+    // A sink sending as it should is not drawn again in full.
+    expect(render([splunk])).toBe('');
   });
 
-  it('says at least, when the backlog is too long to count', () => {
-    const html = render([{ ...splunk, backlog: 100_000, backlog_capped: true }]);
-    expect(html).toContain('At least 100,000 events behind.');
+  it('leaves out of the line a sink not sending as it should, and draws it in full', () => {
+    const failing = { ...splunk, failing_since: '2026-10-08T09:00:00Z', backlog: 100_000, backlog_capped: true };
+    expect(render([failing], true)).toBe('');
+    expect(render([failing])).toContain('At least 100,000 events behind.');
+    expect(render([{ ...splunk, unusable: 'Its token is missing' }])).toContain('Unusable');
   });
 
   it('shows a failing sink’s error and since when', () => {
@@ -127,7 +130,13 @@ describe('Audit log rows (R-379)', () => {
     expect(html).toContain('Dana Reyes');
     expect(html).toContain('Denied');
     expect(html).toContain('Failed');
-    expect(html).toContain('203.0.113.7');
+  });
+
+  it('reads an event as its sentence, with the action under it', () => {
+    const html = table([row({ summary: 'Deleted crewmate', occurred_at: '2026-10-24T14:32:00' })]);
+    expect(html).toContain('Deleted crewmate');
+    expect(html).toContain('app.delete');
+    expect(html).toContain('Oct 24 14:32');
   });
 
   it('reads an event from before R-379 as it did', () => {

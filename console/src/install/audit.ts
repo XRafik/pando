@@ -21,6 +21,10 @@ export interface AuditFilters {
   /** datetime-local values, in the viewer's own clock. */
   since: string;
   until: string;
+  /** Text in the action, the actor, the target or the app (`q`). */
+  q: string;
+  /** success, denied or failed; empty for any. */
+  outcome: string;
 }
 
 export const NO_FILTERS: AuditFilters = {
@@ -33,6 +37,8 @@ export const NO_FILTERS: AuditFilters = {
   when: '',
   since: '',
   until: '',
+  q: '',
+  outcome: '',
 };
 
 export const WHEN: { value: string; label: string; hours?: number }[] = [
@@ -41,8 +47,19 @@ export const WHEN: { value: string; label: string; hours?: number }[] = [
   { value: '24h', label: 'Last 24 hours', hours: 24 },
   { value: '7d', label: 'Last 7 days', hours: 24 * 7 },
   { value: '30d', label: 'Last 30 days', hours: 24 * 30 },
-  { value: 'custom', label: 'Custom range' },
+  { value: 'custom', label: 'Custom' },
 ];
+
+/** A query's since and until: a preset counted back from now, or a custom range. */
+function setTimes(q: URLSearchParams, f: AuditFilters, now: number) {
+  const preset = WHEN.find((w) => w.value === f.when);
+  if (preset?.hours) q.set('since', new Date(now - preset.hours * 3_600_000).toISOString());
+  if (f.when === 'custom') {
+    // datetime-local is the viewer's own clock; the wire is UTC (RFC 3339).
+    if (f.since) q.set('since', new Date(f.since).toISOString());
+    if (f.until) q.set('until', new Date(f.until).toISOString());
+  }
+}
 
 /** The GET /audit query string for a set of filters, times resolved now. */
 export function auditQuery(f: AuditFilters, before?: string, now = Date.now()): string {
@@ -55,13 +72,9 @@ export function auditQuery(f: AuditFilters, before?: string, now = Date.now()): 
   if (f.targetKind) q.set('target_kind', f.targetKind);
   if (f.targetID) q.set('target_id', f.targetID.trim());
   if (f.involving) q.set('involving', f.involving);
-  const preset = WHEN.find((w) => w.value === f.when);
-  if (preset?.hours) q.set('since', new Date(now - preset.hours * 3_600_000).toISOString());
-  if (f.when === 'custom') {
-    // datetime-local is the viewer's own clock; the wire is UTC (RFC 3339).
-    if (f.since) q.set('since', new Date(f.since).toISOString());
-    if (f.until) q.set('until', new Date(f.until).toISOString());
-  }
+  if (f.outcome) q.set('outcome', f.outcome);
+  if (f.q.trim()) q.set('q', f.q.trim());
+  setTimes(q, f, now);
   if (before) q.set('before', before);
   const s = q.toString();
   return s ? `?${s}` : '';
@@ -80,6 +93,8 @@ const LINK_KEYS: (keyof AuditFilters)[] = [
   'when',
   'since',
   'until',
+  'q',
+  'outcome',
 ];
 
 /** Filters as the query string of a link to the Audit log screen, without `?`. */

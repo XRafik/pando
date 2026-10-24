@@ -33,6 +33,27 @@ export function useCloseOnOutside(root: Roots, open: boolean, close: () => void)
   useEffect(() => (open ? listenOutside(document, root, close) : undefined), [open, root]);
 }
 
+/**
+ * Calls close on Escape pressed inside root, while open, and keeps that
+ * Escape from reaching anything around it, such as a side panel that would
+ * close too. Listened to on the element itself rather than through an
+ * onKeyDown, since root is a popover's container and not a control.
+ */
+export function useEscapeInside(root: RefObject<HTMLElement | null>, open: boolean, close: () => void) {
+  useEffect(() => {
+    const el = root.current;
+    if (!open || !el) return undefined;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      close();
+    };
+    el.addEventListener('keydown', onKey);
+    return () => el.removeEventListener('keydown', onKey);
+    // close is a fresh closure on every render, as in useCloseOnOutside.
+  }, [open, root]);
+}
+
 /** The index ArrowDown or ArrowUp moves to from i, in a list of n, wrapping. */
 export function stepIndex(key: string, i: number, n: number): number {
   return key === 'ArrowDown' ? (i + 1) % n : (i - 1 + n) % n;

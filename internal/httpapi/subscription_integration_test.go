@@ -199,6 +199,47 @@ func TestR369_AWebhookDeliveryIsSignedAndRecorded(t *testing.T) {
 	require.NotContains(t, got.String(), sub.SigningKey)
 }
 
+// TestR369_ASubscriptionSaysWhenItLastDelivered asserts R-369: the record of
+// deliveries is read from the subscription itself — its list row says when
+// Pando last tried to deliver, and says nothing before the first delivery.
+func TestR369_ASubscriptionSaysWhenItLastDelivered(t *testing.T) {
+	i := newInstall(t)
+	i.allowPrivateWebhooks()
+	hook := newReceiver(t)
+
+	sub := i.subscribe(i.admin(), map[string]any{
+		"events": []string{"app.created"}, "destination": "webhook", "url": hook.URL,
+	})
+	lastDelivery := func() *time.Time {
+		got := i.do(i.admin(), http.MethodGet, "/subscriptions", nil)
+		require.Equal(t, http.StatusOK, got.Code, got.String())
+		var out struct {
+			Subscriptions []state.Subscription `json:"subscriptions"`
+		}
+		got.JSON(t, &out)
+		for _, s := range out.Subscriptions {
+			if s.ID == sub.ID {
+				return s.LastDeliveryAt
+			}
+		}
+		t.Fatalf("subscription %s is not listed", sub.ID)
+		return nil
+	}
+	require.Nil(t, lastDelivery(), "nothing delivered yet")
+
+	before := time.Now().Add(-time.Minute)
+	i.createApp(i.admin(), "billing")
+	i.Dispatcher.Pass(context.Background())
+	require.Equal(t, 1, hook.count())
+
+	at := lastDelivery()
+	require.NotNil(t, at)
+	require.True(t, at.After(before), "the last delivery is the one just sent")
+
+	one := i.do(i.admin(), http.MethodGet, "/subscriptions/"+sub.ID, nil)
+	require.Contains(t, one.String(), `"last_delivery_at"`)
+}
+
 // TestR371_TheSigningKeyIsStoredSealed asserts R-371 (and R-190): the key is
 // held as the secrets adapter's ciphertext, nowhere in the clear, and
 // rotating it returns a new one once.

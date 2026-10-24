@@ -46,6 +46,16 @@ type Record struct {
 	ActorName     string `json:"actor_name,omitempty"`
 	ActorEmail    string `json:"actor_email,omitempty"`
 	SchemaVersion int    `json:"schema_version"`
+
+	// AppName and TargetName are the names the app and the target go by now,
+	// read beside the event rather than stored in it; empty once the thing is
+	// gone, or for a kind of target that has no name.
+	AppName    string `json:"app_name,omitempty"`
+	TargetName string `json:"target_name,omitempty"`
+
+	// Summary is the event in plain words, such as "Deployed crewmate", or the
+	// action when Pando has no wording for it (R-379).
+	Summary string `json:"summary"`
 }
 
 // Line is one native line (design 12 §6.1) decoded: the row as row_to_json
@@ -126,6 +136,13 @@ type Query struct {
 	// means unbounded.
 	Since time.Time
 	Until time.Time
+
+	// Outcome narrows to success, denied or failed (R-379).
+	Outcome string
+
+	// Search finds events whose action, actor, target or app contains it,
+	// case-insensitive: the box a person types a name or an ID into.
+	Search string
 
 	// Limit defaults to 100, capped at 500. PageSize is the clamp.
 	Limit int
@@ -215,6 +232,18 @@ func (r *Reader) List(ctx context.Context, q Query) ([]Record, error) {
 	if !q.Until.IsZero() {
 		where = append(where, "occurred_at < "+arg(q.Until))
 	}
+	if q.Outcome != "" {
+		where = append(where, "outcome = "+arg(q.Outcome))
+	}
+	if s := strings.TrimSpace(q.Search); s != "" {
+		v := arg("%" + escapeLike(s) + "%")
+		like := func(col string) string { return col + " ILIKE " + v + " ESCAPE '\\'" }
+		where = append(where, "("+strings.Join([]string{
+			like("action"), like("actor_name"), like("actor_email"), like("principal_id"),
+			like("target_id"), like("app_id"),
+			"EXISTS (SELECT 1 FROM apps a WHERE a.id = audit_events.app_id AND " + like("a.name") + ")",
+		}, " OR ")+")")
+	}
 	if q.Cursor > 0 {
 		where = append(where, "id < "+arg(q.Cursor))
 	}
@@ -225,7 +254,8 @@ func (r *Reader) List(ctx context.Context, q Query) ([]Record, error) {
 	               coalesce(request_id, ''), detail,
 	               coalesce(outcome, ''), coalesce(source_ip, ''), coalesce(peer_ip, ''),
 	               coalesce(user_agent, ''), coalesce(actor_name, ''), coalesce(actor_email, ''),
-	               coalesce(schema_version, 1)
+	               coalesce(schema_version, 1),
+	               ` + namesSQL + `
 	        FROM audit_events`
 	if len(where) > 0 {
 		sql += " WHERE " + strings.Join(where, " AND ")
@@ -246,7 +276,7 @@ func (r *Reader) List(ctx context.Context, q Query) ([]Record, error) {
 			&rec.OnBehalfOf, &rec.Action, &rec.AppID, &rec.TargetKind, &rec.TargetID,
 			&rec.RequestID, &detail,
 			&rec.Outcome, &rec.SourceIP, &rec.PeerIP, &rec.UserAgent, &rec.ActorName, &rec.ActorEmail,
-			&rec.SchemaVersion); err != nil {
+			&rec.SchemaVersion, &rec.AppName, &rec.TargetName); err != nil {
 			return nil, errs.Wrap(errs.Internal, "Could not read the audit log.", err)
 		}
 		if len(detail) > 0 {
@@ -257,10 +287,28 @@ func (r *Reader) List(ctx context.Context, q Query) ([]Record, error) {
 				rec.Detail = map[string]any{"unreadable": true}
 			}
 		}
+		rec.Summary = Summarize(rec)
 		out = append(out, rec)
 	}
 	return out, rows.Err()
 }
+
+// namesSQL reads the names an event's app and target go by now, for its
+// summary: looked up beside the row, by primary key, rather than stored in it,
+// so a renamed app reads as its new name and a deleted one as nothing. A kind
+// of target with no name of its own has none.
+const namesSQL = `coalesce((SELECT a.name FROM apps a WHERE a.id = coalesce(audit_events.app_id,
+	                   CASE WHEN audit_events.target_kind = 'app' THEN audit_events.target_id END)), ''),
+	               coalesce(CASE audit_events.target_kind
+	                   WHEN 'app' THEN (SELECT a.name FROM apps a WHERE a.id = audit_events.target_id)
+	                   WHEN 'user' THEN (SELECT coalesce(nullif(u.display_name, ''), u.external_id)
+	                                     FROM users u WHERE u.id = audit_events.target_id)
+	                   WHEN 'group' THEN (SELECT g.name FROM groups g WHERE g.id = audit_events.target_id)
+	                   WHEN 'role' THEN (SELECT r.name FROM roles r WHERE r.id = audit_events.target_id)
+	                   WHEN 'adapter' THEN (SELECT c.name FROM adapter_configs c WHERE c.id = audit_events.target_id)
+	                   WHEN 'source_connection' THEN (SELECT c.name FROM adapter_configs c WHERE c.id = audit_events.target_id)
+	                   WHEN 'identity_provider' THEN (SELECT i.name FROM identity_adapters i WHERE i.id = audit_events.target_id)
+	               END, '')`
 
 // escapeLike neutralizes the wildcards in a user-supplied prefix.
 func escapeLike(s string) string {

@@ -25,7 +25,6 @@ import {
   Skeleton,
   StatusIndicator,
   Tabs,
-  Tooltip,
 } from '@design';
 import type { SidebarItem, TabItem } from '@design';
 
@@ -36,14 +35,15 @@ import { AccountPage } from '../install/Account';
 import { Accounts, messageOf } from '../install/Accounts';
 import { filtersFrom, linkQuery } from '../install/audit';
 import { Identity } from '../install/Identity';
+import { GroupPage } from '../install/GroupPage';
+import { RolePage } from '../install/RolePage';
 import { SignIn } from '../install/SignIn';
-import { Backups } from '../install/Backups';
 import { Events } from '../install/Events';
 import { InboxButton } from '../ui/Inbox';
 import { FeedbackButton } from '../ui/Feedback';
-import { Updates, useUpdates } from '../install/Updates';
-import { SystemTabs } from '../install/systemTabs';
-import { Audit, Installation, Policy } from '../install/Installation';
+import { useUpdates } from '../install/Updates';
+import { System, systemPages } from '../install/System';
+import { Audit } from '../install/Installation';
 import { statusLabel, statusSymbol } from '../ui/status';
 import { AppOnboarding } from './AppOnboarding';
 import { Sharing } from './Sharing';
@@ -65,22 +65,22 @@ import { AppVerb, AppVerbs, can, changesAnything, type AppWithVerbs } from './ve
 import { AppPanel, PanelOpener, type PanelTarget } from './AppPanel';
 import { format, settingsPageFor, type Route, type Section, type SettingsPage } from '../app/route';
 import { MEASURE } from '../ui/layout';
-import { relative } from '../ui/time';
-import { ScoreBadge } from '../ui/ScoreBadge';
 import { Sheet } from '../ui/Sheet';
 import { TopoBackground } from '../ui/TopoBackground';
 import { SearchField } from '../ui/SearchField';
 import { ShowMore, totalLabel, usePaged, useSettled, type PageOf } from '../ui/paged';
 import { APP_LIST_KEY, useWatchedRows } from './appList';
-import { AWAITING_IMAGE } from './scanScope';
 import { NameCell } from './NameCell';
-import { accessLabel, accessMeaning } from './share-access';
+import { AccessCell, SecurityCell, StackedAppRow, StatusCell, UpdatedCell, rowStatus, securityFilterValue } from './AppListCells';
+import { accessLabel } from './share-access';
 import { useNarrow } from '../ui/narrow';
 import { Table } from '../ui/Table';
-import { TipButton } from '../ui/TipButton';
 import { RouteLink } from '../ui/RouteLink';
 import { FieldSkeleton, HeadingSkeleton, LineSkeleton, Loading } from '../ui/Loading';
 import { WithCode } from '../ui/ErrorCode';
+
+/** An app's row at phone width, in place of the columns. */
+const stackedRow = (row: App) => <StackedAppRow row={row} />;
 
 export function AdminConsole({
   route,
@@ -139,7 +139,7 @@ export function AdminConsole({
   // app, not only by holders of install.deploys.approve: app.deploy.approve is
   // granted per app, through a custom role, and the sidebar has no other way
   // to know who holds it. The item is shown to an install-wide approver
-  // always, and to anybody else while something is waiting that they can see.
+  // always, and to anybody else while something is waiting that they may decide.
   const approvals = useApprovals(administrative || canApproveAll);
   const waiting = approvals.rows;
 
@@ -205,21 +205,13 @@ export function AdminConsole({
   // Identity providers are adapters (R-040): read with install.view, changed
   // with install.adapters.manage.
   if (canView) items.push({ value: 'sign-in', label: 'Sign-in' });
-  // How the installation itself is set up and kept (issue #154). Each tab
+  // How the installation itself is set up and kept (issue #154). Each page
   // keeps the verb it had as a sidebar item of its own, and System is shown
   // only when one of them is, so nobody sees a screen here they could not see
-  // before. The versions behind ride on System as well as on its tab, so they
-  // are not hidden behind a click.
-  const systemTabs: TabItem[] = [];
-  if (canView) systemTabs.push({ value: 'adapters', label: 'Adapters' });
-  if (canView || canManagePolicy) systemTabs.push({ value: 'policy', label: 'Policy' });
-  if (canManageBackups) systemTabs.push({ value: 'backups', label: 'Backups' });
-  if (canView) {
-    systemTabs.push({ value: 'updates', label: 'Updates', trailing: behind > 0 ? <Badge count={behind} /> : undefined });
-  }
-  for (const t of systemTabs) t.href = format({ view: 'admin', section: 'system', tab: t.value });
-  const systemTab = systemTabs.find((t) => t.value === route.tab)?.value ?? systemTabs[0]?.value;
-  if (systemTabs.length > 0) {
+  // before. The versions behind ride on System as well as on Overview, so
+  // they are not hidden behind a click.
+  const systemPagesShown = systemPages({ view: canView, managePolicy: canManagePolicy, manageBackups: canManageBackups });
+  if (systemPagesShown.length > 0) {
     items.push({ value: 'system', label: 'System', trailing: behind > 0 ? <Badge count={behind} /> : undefined });
   }
   if (canReadAudit) items.push({ value: 'audit', label: 'Audit log' });
@@ -364,11 +356,21 @@ export function AdminConsole({
               onBack={() => go({ view: 'admin', section: 'accounts' })}
               onAudit={(query) => go({ view: 'admin', section: 'audit', query })}
               onGroups={() => go({ view: 'admin', section: 'identity' })}
+              onOpenApp={(appID) => go({ view: 'admin', section: 'apps', appID })}
             />
           ) : (
             <Accounts onOpen={(a) => go({ view: 'admin', section: 'accounts', userID: a.id })} />
           ))}
-        {section === 'identity' && <Identity canEdit={canManageUsers} />}
+        {section === 'identity' && route.groupID && <GroupPage groupID={route.groupID} canEdit={canManageUsers} go={go} />}
+        {section === 'identity' && route.roleID && <RolePage roleID={route.roleID} canEdit={canManageUsers} go={go} />}
+        {section === 'identity' && !route.groupID && !route.roleID && (
+          <Identity
+            canEdit={canManageUsers}
+            tab={route.tab === 'roles' ? 'roles' : 'groups'}
+            onTab={(tab) => go({ view: 'admin', section: 'identity', ...(tab === 'roles' ? { tab } : {}) }, true)}
+            go={go}
+          />
+        )}
         {section === 'sign-in' && (
           <SignIn
             canEdit={canManageAdapters}
@@ -377,22 +379,8 @@ export function AdminConsole({
             onClearTest={() => go({ view: 'admin', section: 'sign-in' }, true)}
           />
         )}
-        {section === 'system' && systemTab && (
-          <SystemTabs.Provider
-            value={{
-              value: systemTab,
-              items: systemTabs,
-              // Replaced rather than pushed, as an app's tabs are.
-              onChange: (tab) => go({ view: 'admin', section: 'system', tab }, true),
-            }}
-          >
-            {systemTab === 'adapters' && <Installation query={route.query} />}
-            {systemTab === 'policy' && <Policy canEdit={canManagePolicy} />}
-            {systemTab === 'backups' && <Backups />}
-            {systemTab === 'updates' && (
-              <Updates onPolicy={() => go({ view: 'admin', section: 'system', tab: 'policy' })} />
-            )}
-          </SystemTabs.Provider>
+        {section === 'system' && (
+          <System route={route} go={go} pages={systemPagesShown} canManagePolicy={canManagePolicy} behind={behind} />
         )}
         {section === 'events' && <Events canManageAll={canManageEvents} apps={rows} />}
         {section === 'audit' && (
@@ -405,12 +393,13 @@ export function AdminConsole({
               const query = linkQuery(f);
               go(query ? { view: 'admin', section: 'audit', query } : { view: 'admin', section: 'audit' }, true);
             }}
-            onAdapters={canView ? () => go({ view: 'admin', section: 'system', tab: 'adapters' }) : undefined}
+            onAdapters={canView ? () => go({ view: 'admin', section: 'system', tab: 'adapters', sub: 'audit_sink' }) : undefined}
+            adaptersHref={format({ view: 'admin', section: 'system', tab: 'adapters', sub: 'audit_sink' })}
           />
         )}
         {section === 'api' && <Reference />}
         {section === 'approvals' && (
-          <Approvals onOpenApp={(appID) => go({ view: 'admin', section: 'apps', appID })} />
+          <Approvals onReview={(appID, deployment) => go(panelRoute(appID, undefined, { view: 'deployments', deployment }))} />
         )}
         {section === 'apps' &&
           (selectedID ? (
@@ -465,31 +454,6 @@ function HomeLink({ onLeave }: Readonly<{ onLeave: () => void }>) {
   );
 }
 
-/** The apps list's security column, as a value its filter offers. */
-function securityFilterValue(row: App): string {
-  if (row.security_scanning) return 'Scanning';
-  if (row.security_awaiting_image) return 'Not scored yet';
-  if (row.security_score == null) return 'Not scanned';
-  return row.security_verdict === 'insecure' ? 'Below minimum' : 'Scanned';
-}
-
-/** The apps list's security column. */
-function SecurityCell({ row }: { row: App }) {
-  // A scan under way, whoever started it, as the design system's building
-  // status: the hollow ring, which does not move.
-  if (row.security_scanning) return <StatusIndicator status="building" label="Scanning" />;
-  if (row.security_awaiting_image) {
-    // Its source was scanned and nothing has been built: that number is the
-    // source's, not the app's (R-311).
-    return (
-      <Tooltip content={`${AWAITING_IMAGE}.`}>
-        <span style={{ font: 'var(--type-code-sm)', color: 'var(--ink-secondary)' }}>Not scored yet</span>
-      </Tooltip>
-    );
-  }
-  return <ScoreBadge score={row.security_score} verdict={row.security_verdict as never} />;
-}
-
 function AppsList({
   rows,
   loading,
@@ -516,6 +480,7 @@ function AppsList({
   onAdded: (app: App) => void;
 }) {
   const [adding, setAdding] = useState(false);
+  const narrow = useNarrow();
   const shown = rows;
 
   // The page is not capped — a table's rows and rules run to the edge of the
@@ -542,13 +507,15 @@ function AppsList({
       >
         {/* Sideways rather than clipped, when the window is narrower than
             the columns' least widths: the table is as wide as those at the
-            least, and this scrolls it. */}
-        <div style={{ overflowX: 'auto' }}>
+            least, and this scrolls it. At phone width each row is a block
+            instead, and nothing scrolls. */}
+        <div style={narrow ? undefined : { overflowX: 'auto' }}>
         <Table
-          style={{ minWidth: 'min-content' }}
+          style={narrow ? undefined : { minWidth: 'min-content' }}
           loading={loading}
           onRowClick={onOpen}
           rowHref={hrefOf}
+          stacked={stackedRow}
           // A fresh install has no apps, and the list was a set of column
           // headers over nothing. R-002 is about the tenth app; the first one
           // is what makes the install anything at all.
@@ -563,7 +530,9 @@ function AppsList({
                   Add app
                 </Button>
               }
-            />
+            >
+              From a repository, an image or uploaded files.
+            </EmptyState>
             )
           }
           columns={[
@@ -575,20 +544,17 @@ function AppsList({
               header: 'Name',
               width: 'minmax(24ch,1fr)',
               filter: 'text',
+              // The search above the table narrows by name already.
+              phoneFilter: false,
               render: (row: App) => <NameCell row={row} />,
             },
             {
               key: 'state',
               header: 'Status',
-              width: '15ch',
+              width: '17ch',
               filter: 'values',
-              filterValue: (row: App) => statusLabel(row.state, row.stopped_for_idle, row.stopped_for_disk, row.stopped_for_orphan),
-              render: (row: App) => (
-                <StatusIndicator
-                  status={statusSymbol(row.state)}
-                  label={statusLabel(row.state, row.stopped_for_idle, row.stopped_for_disk, row.stopped_for_orphan)}
-                />
-              ),
+              filterValue: rowStatus,
+              render: (row: App) => <StatusCell row={row} />,
             },
             {
               key: 'security_score',
@@ -606,18 +572,7 @@ function AppsList({
               width: '21ch',
               filter: 'values',
               filterValue: (row: App) => accessLabel(row.access),
-              // A button, so the keyboard reaches the meaning as the pointer
-              // does, and a screen reader is told all of it (R-077). Its click
-              // stops there: asking what a label means is not opening the app.
-              render: (row: App) => (
-                <TipButton
-                  tip={accessMeaning(row.access)}
-                  label={`${accessLabel(row.access)}: ${accessMeaning(row.access)}`}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  {accessLabel(row.access)}
-                </TipButton>
-              ),
+              render: (row: App) => <AccessCell row={row} />,
             },
             { key: 'owner_name', header: 'Owner', width: 'minmax(12ch,18ch)', filter: 'values' },
             {
@@ -625,11 +580,7 @@ function AppsList({
               header: 'Updated',
               width: '12ch',
               muted: true,
-              render: (row: App) => (
-                <Tooltip content={row.updated_at}>
-                  <span>{relative(row.updated_at)}</span>
-                </Tooltip>
-              ),
+              render: (row: App) => <UpdatedCell row={row} />,
             },
           ]}
           rows={shown}

@@ -23,7 +23,6 @@ import { RouteLink, followInPlace } from '../ui/RouteLink';
 import { useOpenPanel } from './AppPanel';
 import {
   actorName,
-  byDay,
   deploymentOf,
   fieldOf,
   nearEnd,
@@ -86,7 +85,6 @@ export function AppEvents({ app }: { app: App }) {
             New subscription
           </Button>
         </div>
-        <p style={caption}>Send this app&rsquo;s events to a webhook, Slack, Teams, Discord, email or ntfy.</p>
         <Subscriptions
           apps={[app]}
           app={app}
@@ -164,7 +162,7 @@ function Feed({ app }: { app: App }) {
         <table className="pando-events" style={{ width: '100%', tableLayout: 'fixed', borderCollapse: 'collapse' }}>
           <thead>
             <tr>
-              <th style={{ ...headCell, width: '9ch' }}>Time</th>
+              <th style={{ ...headCell, width: '14ch' }}>Time</th>
               <th style={headCell}>Event</th>
               <th style={{ ...headCell, width: '18ch' }}>Actor</th>
             </tr>
@@ -178,21 +176,9 @@ function Feed({ app }: { app: App }) {
                   </td>
                 </tr>
               ))}
-            {byDay(rows).map((line) =>
-              line.kind === 'day' ? (
-                <tr key={line.key}>
-                  <th
-                    colSpan={3}
-                    scope="colgroup"
-                    style={{ ...cell, font: 'var(--type-label)', color: 'var(--ink-secondary)', paddingTop: 'var(--space-4)' }}
-                  >
-                    {line.label}
-                  </th>
-                </tr>
-              ) : (
-                <EventRow key={line.key} item={line.item} actor={actorName(line.item.actor, me, line.item.actor_name)} onOpen={open} />
-              ),
-            )}
+            {rows.map((item) => (
+              <EventRow key={item.id} item={item} actor={actorName(item.actor, me, item.actor_name)} onOpen={open} />
+            ))}
             {feed.isFetchingNextPage && (
               <tr>
                 <td colSpan={3} style={{ ...cell, color: 'var(--ink-secondary)' }}>

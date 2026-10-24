@@ -27,7 +27,16 @@ type subscriptionView struct {
 	Enabled             bool     `json:"enabled"`
 	DisabledReason      string   `json:"disabled_reason"`
 	ConsecutiveFailures int      `json:"consecutive_failures"`
+	LastDeliveryAt      string   `json:"last_delivery_at"`
 	SigningKey          string   `json:"signing_key"`
+}
+
+// lastDelivery is when Pando last tried to deliver to it, or "never".
+func (s subscriptionView) lastDelivery() string {
+	if s.LastDeliveryAt == "" {
+		return "never"
+	}
+	return s.LastDeliveryAt
 }
 
 func (s subscriptionView) where() string {
@@ -212,13 +221,13 @@ func subscriptionsCmd(client func() (*Client, error)) *cobra.Command {
 				fmt.Fprintln(cmd.OutOrStdout(), "No subscriptions. Make one with `pando subscriptions create`.")
 				return nil
 			}
-			t := table(cmd.OutOrStdout(), "ID", "ABOUT", "EVENTS", "SENT TO", "ON", "OWNER")
+			t := table(cmd.OutOrStdout(), "ID", "ABOUT", "EVENTS", "SENT TO", "ON", "LAST DELIVERY", "OWNER")
 			for _, s := range out.Subscriptions {
 				on := "yes"
 				if !s.Enabled {
 					on = "no"
 				}
-				fmt.Fprintf(t, "%s\t%s\t%s\t%s\t%s\t%s\n", s.ID, s.about(), strings.Join(s.Events, ","), s.where(), on, s.OwnerName)
+				fmt.Fprintf(t, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", s.ID, s.about(), strings.Join(s.Events, ","), s.where(), on, s.lastDelivery(), s.OwnerName)
 			}
 			return t.Flush()
 		},

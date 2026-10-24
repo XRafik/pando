@@ -779,7 +779,11 @@ var awaitingScanLimit = 4 * state.MaxPageSize
 // for the next page (empty after the last). A page may hold fewer than its
 // limit and still have a cursor, when the requests read were on apps p cannot
 // see.
-func (s *Service) Awaiting(ctx context.Context, p authz.Principal, page state.Page) ([]state.AwaitingApproval, string, error) {
+//
+// decidable keeps only the requests p may approve or reject (R-155): the
+// console's Approvals screen and its count, which list what is waiting on the
+// caller. A request waiting on somebody else is still on its app.
+func (s *Service) Awaiting(ctx context.Context, p authz.Principal, page state.Page, decidable bool) ([]state.AwaitingApproval, string, error) {
 	after, err := state.AwaitingKeyFrom(page.Cursor)
 	if err != nil {
 		return nil, "", err
@@ -802,24 +806,38 @@ func (s *Service) Awaiting(ctx context.Context, p authz.Principal, page state.Pa
 			}
 			scanned++
 			after = state.AwaitingKey{StartedAt: item.StartedAt, ID: item.ID}
-			ok, err := s.awaitingVisible(ctx, p, item, now, views)
+			listed, ok, err := s.awaitingListed(ctx, p, item, now, views, decidable)
 			if err != nil {
 				return nil, "", err
 			}
-			if !ok {
-				continue
+			if ok {
+				out = append(out, listed)
 			}
-			deps := []state.Deployment{item.Deployment}
-			if err := s.Describe(ctx, p, deps); err != nil {
-				return nil, "", err
-			}
-			item.Deployment = deps[0]
-			out = append(out, item)
 		}
 		if len(batch) < size {
 			return out, "", nil // read to the end
 		}
 	}
+}
+
+// awaitingListed returns a waiting request as p's list shows it, described
+// for p, and whether it is on the list at all: visible to p (awaitingVisible)
+// and, when decidable, one p may decide (R-155).
+func (s *Service) awaitingListed(ctx context.Context, p authz.Principal, item state.AwaitingApproval,
+	now time.Time, views map[string]bool, decidable bool) (state.AwaitingApproval, bool, error) {
+	ok, err := s.awaitingVisible(ctx, p, item, now, views)
+	if err != nil || !ok {
+		return item, false, err
+	}
+	deps := []state.Deployment{item.Deployment}
+	if err := s.Describe(ctx, p, deps); err != nil {
+		return item, false, err
+	}
+	item.Deployment = deps[0]
+	if decidable && !item.CanDecide {
+		return item, false, nil
+	}
+	return item, true, nil
 }
 
 // awaitingVisible reports whether a waiting request belongs on p's list: not

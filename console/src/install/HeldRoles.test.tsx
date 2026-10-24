@@ -9,9 +9,10 @@ vi.hoisted(() => {
 import { renderToString } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-import { InstallRole } from './Account';
-import { GroupHeldRoles, HeldRoles, heldRoleNames, heldThrough, refreshMembership } from './Accounts';
+import { RoleRow, accessLevel, eventTime, lastSignIn } from './Account';
+import { RoleTags, heldRoleNames, providerName, refreshMembership, roleNames } from './Accounts';
 import type { Account, HeldRole, Role } from './Accounts';
+import { initials } from './Avatar';
 
 const roles: Role[] = [
   { id: 'role_administrator', name: 'administrator', builtin: true, verbs: [] },
@@ -24,20 +25,6 @@ const okta: HeldRole = {
   via: { kind: 'group', group_id: 'grp_01', name: 'pando-administrator', source: 'idp_okta', source_name: 'Okta' },
 };
 const ops: HeldRole = { role_id: 'role_auditor', via: { kind: 'group', group_id: 'grp_02', name: 'Ops' } };
-
-// Issue #221: a role held through a group is a role the account holds.
-describe('heldThrough', () => {
-  it('names the group, and the provider of a synced one', () => {
-    expect(heldThrough(okta)).toBe('through pando-administrator (Okta)');
-    expect(heldThrough(ops)).toBe('through Ops');
-  });
-
-  it('falls back to the provider ID and the group ID', () => {
-    expect(heldThrough({ role_id: 'r', via: { kind: 'group', group_id: 'grp_03', source: 'idp_x' } })).toBe(
-      'through grp_03 (idp_x)',
-    );
-  });
-});
 
 describe('heldRoleNames', () => {
   it('is each role once, alphabetically, each a value of its own for the column filter', () => {
@@ -55,17 +42,36 @@ describe('heldRoleNames', () => {
   });
 });
 
+// The user's rule: a role held through a group stands alone, never "through <group>".
 describe('the Role column', () => {
-  it('shows every role, saying where a group-held one comes from', () => {
-    const html = renderToString(<HeldRoles held={[direct, okta]} roles={roles} />);
+  it('shows every role once, and never where a group-held one comes from', () => {
+    const html = renderToString(<RoleTags held={[direct, okta, ops]} roles={roles} />);
     expect(html).toContain('Audit readers');
     expect(html).toContain('Administrator');
-    expect(html).toContain('through pando-administrator (Okta)');
-    expect(html).not.toContain('None');
+    expect(html).not.toContain('through');
+    expect(html.match(/Audit readers/g)).toHaveLength(1);
   });
 
-  it('says None for an account holding nothing', () => {
-    expect(renderToString(<HeldRoles held={[]} roles={roles} />)).toContain('None');
+  it('says No role for an account holding nothing', () => {
+    expect(renderToString(<RoleTags held={[]} roles={roles} />)).toContain('No role');
+  });
+});
+
+describe('Signs in with', () => {
+  it('says Password for a local account, and the provider by name otherwise', () => {
+    expect(providerName({ adapter_id: 'idp_local', adapter_name: 'Local users' })).toBe('Password');
+    expect(providerName({ adapter_id: 'idp_okta', adapter_name: 'Okta' })).toBe('Okta');
+    expect(providerName({ adapter_id: 'idp_okta' })).toBe('idp_okta');
+  });
+});
+
+describe('initials', () => {
+  it('takes up to two words', () => {
+    expect(initials('Ana Ruiz')).toBe('AR');
+    expect(initials('ci-bot')).toBe('CB');
+    expect(initials('pando')).toBe('P');
+    expect(initials('Mary Ann Smith')).toBe('MA');
+    expect(initials('  ')).toBe('');
   });
 });
 
@@ -79,10 +85,10 @@ const account: Account = {
   install_roles: [okta],
 };
 
-function installRole(a: Account, manage: boolean, known?: Role[]) {
+function roleRow(a: Account, manage: boolean, known?: Role[]) {
   return renderToString(
     <QueryClientProvider client={new QueryClient()}>
-      <InstallRole account={a} roles={known} manage={manage} isSelf={false} />
+      <RoleRow account={a} roles={known} manage={manage} isSelf={false} />
     </QueryClientProvider>,
   );
 }
@@ -101,43 +107,49 @@ describe('refreshMembership', () => {
 });
 
 describe('the account page role', () => {
-  it('does not say None above a role held through a group', () => {
-    expect(installRole(account, false, roles)).toBe('');
+  it('names a group-held role as a role, without a picker or where it comes from', () => {
+    const html = roleRow(account, true, roles);
+    expect(html).toContain('Administrator');
+    expect(html).not.toContain('through');
+    expect(html).not.toContain('<select');
+    expect(html).not.toContain('No role');
+    expect(html).toContain('Change');
   });
 
-  it('says None when the account holds nothing, and names a direct role', () => {
-    expect(installRole({ ...account, install_roles: [] }, false, roles)).toContain('None');
-    expect(installRole({ ...account, install_role_id: 'role_auditor', install_roles: [direct] }, false, roles)).toContain(
-      'Audit readers',
-    );
+  it('says No role when the account holds nothing, and names every role held', () => {
+    expect(roleRow({ ...account, install_roles: [] }, false, roles)).toContain('No role');
+    expect(roleNames([direct, okta], roles)).toBe('Audit readers, Administrator');
   });
 
-  it('offers the picker to somebody who manages accounts', () => {
-    expect(installRole(account, true, roles)).toContain('<select');
+  it('offers Change only to somebody who manages accounts, once the roles arrive', () => {
+    expect(roleRow(account, false, roles)).not.toContain('Change');
+    expect(roleRow(account, true, undefined)).not.toContain('Change');
   });
 
-  it('names your own direct role without the roles list, which needs install.view', () => {
-    const own = { ...account, install_role_id: 'role_auditor', install_roles: [{ ...direct, role_name: 'audit readers' }] };
-    expect(installRole(own, false, undefined)).toContain('Audit readers');
-    expect(installRole({ ...account, install_roles: [] }, false, undefined)).toContain('None');
-  });
-
-  it('holds the place of the picker until the roles arrive', () => {
-    expect(installRole(account, true, undefined)).not.toContain('<select');
+  it('names your own role without the roles list, which needs install.view', () => {
+    const own = { ...account, install_roles: [{ ...direct, role_name: 'audit readers' }] };
+    expect(roleRow(own, false, undefined)).toContain('Audit readers');
   });
 });
 
-describe('the account page', () => {
-  it('lists the roles held through groups, and not the direct one', () => {
-    const html = renderToString(<GroupHeldRoles held={[direct, okta, ops]} roles={roles} />);
-    expect(html).toContain('Administrator<!-- --> <!-- -->through pando-administrator (Okta)');
-    expect(html).toContain('through Ops');
-    expect(html.match(/through/g)).toHaveLength(2);
+describe('the account page cards', () => {
+  it('says what the account may do on an app in a word or two', () => {
+    const base = { app_id: 'app_1', app_name: 'crewmate', owner: false, control: [], data: [] };
+    expect(accessLevel({ ...base, owner: true })).toBe('Owner');
+    expect(accessLevel({ ...base, control: [{ role_name: 'operator' }] })).toBe('Operator');
+    expect(accessLevel({ ...base, data: [{}] })).toBe('Can open');
+    expect(accessLevel(base)).toBe('—');
   });
 
-  it('names a group-held role from the account when the roles list cannot be read', () => {
-    const html = renderToString(<GroupHeldRoles held={[{ ...okta, role_name: 'administrator' }]} roles={[]} />);
-    expect(html).toContain('Administrator');
-    expect(html).not.toContain('role_administrator');
+  it('says when the account last signed in by any identity, or never', () => {
+    expect(lastSignIn([])).toBe('Never');
+    const at = new Date(Date.now() - 3 * 3600_000).toISOString();
+    const older = new Date(Date.now() - 30 * 86400_000).toISOString();
+    const id = { adapter_id: 'idp_local', adapter_name: 'Local users', adapter_kind: 'local', external_id: 'x', user_id: 'usr_1', origin: true, scim: false, created_by: '', created_at: '' };
+    expect(lastSignIn([{ ...id, last_sign_in_at: older }, { ...id, last_sign_in_at: at }, id])).toBe('3 hours ago');
+  });
+
+  it('dates each event in its own row', () => {
+    expect(eventTime('2026-10-24T14:32:00')).toBe('Oct 24 14:32');
   });
 });

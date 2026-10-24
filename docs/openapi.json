@@ -678,7 +678,7 @@
       "get": {
         "operationId": "listApprovals",
         "summary": "List pending approvals",
-        "description": "Deploys waiting for approval on every app you can see, oldest first: each deployment with `app_name`, `app_slug`, its `approval_reasons`, the `approvals` so far, and `can_decide` — whether you may approve or reject it. `limit` (default 100, at most 500) and `cursor` page; `next_cursor` continues, and a page can hold fewer than `limit` and still have one.",
+        "description": "Deploys waiting for approval on every app you can see, oldest first: each deployment with `app_name`, `app_slug`, its `approval_reasons`, the `approvals` so far, and `can_decide` — whether you may approve or reject it. `decidable=true` keeps only the ones you may. `limit` (default 100, at most 500) and `cursor` page; `next_cursor` continues, and a page can hold fewer than `limit` and still have one.",
         "tags": [
           "Deploys"
         ],
@@ -688,6 +688,13 @@
             "in": "query",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "decidable",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
             }
           },
           {
@@ -754,7 +761,7 @@
       "get": {
         "operationId": "listApps",
         "summary": "List apps",
-        "description": "The apps you can administer. Each carries `detection` — its status, and its stage while running — once it has been through detection. Newest first, a page at a time: `limit` (default 100, at most 500), `cursor` (the previous page's `next_cursor`, which is empty after the last page), `q` to match the name or slug, and `id`, repeatable, to read only those apps. `total` counts the matches exactly up to 10,000; past that it is 10,000 and `total_is_lower_bound` is true.",
+        "description": "The apps you can administer. Each carries `detection` — its status, and its stage while running — once it has been through detection, and `notice_count` — how many of its notices (GET /apps/{appID}/notices) you have not ignored, left out when none. Newest first, a page at a time: `limit` (default 100, at most 500), `cursor` (the previous page's `next_cursor`, which is empty after the last page), `q` to match the name or slug, and `id`, repeatable, to read only those apps. `total` counts the matches exactly up to 10,000; past that it is 10,000 and `total_is_lower_bound` is true.",
         "tags": [
           "Apps"
         ],
@@ -1030,6 +1037,10 @@
                     },
                     "access": {
                       "type": "string"
+                    },
+                    "notice_count": {
+                      "type": "integer",
+                      "format": "int64"
                     },
                     "detection": {
                       "$ref": "#/components/schemas/DetectionSummary"
@@ -5227,7 +5238,7 @@
       "get": {
         "operationId": "listAudit",
         "summary": "List audit events",
-        "description": "The audit log, newest first. Filters combine: `action` (a prefix), `principal_id` (who did it, including through a token), `principal_kind` (user, token, system or anonymous), `app_id`, `target_kind` and `target_id` (what it was done to), `involving` (an ID that is the actor or the target — everything to do with one account), and `since`/`until` (RFC 3339; since inclusive, until exclusive). Pages with `before`. Append-only: no endpoint edits or deletes an event, and the database refuses it too. Each event carries `outcome` (success, denied or failed), `source_ip`, `peer_ip`, `user_agent`, `actor_name`, `actor_email` and `schema_version`. Reading the log is itself audited, as `audit.read`.\n\nNeeds `install.audit.read`.",
+        "description": "The audit log, newest first. Filters combine: `action` (a prefix), `principal_id` (who did it, including through a token), `principal_kind` (user, token, system or anonymous), `app_id`, `target_kind` and `target_id` (what it was done to), `involving` (an ID that is the actor or the target — everything to do with one account), `outcome` (success, denied or failed), `q` (text found in the action, the actor's name, email or ID, the target's ID, or the app's ID or name), and `since`/`until` (RFC 3339; since inclusive, until exclusive). Pages with `before`. Append-only: no endpoint edits or deletes an event, and the database refuses it too. Each event carries `outcome` (success, denied or failed), `source_ip`, `peer_ip`, `user_agent`, `actor_name`, `actor_email` and `schema_version`, and `summary`, the event in plain words such as \"Deployed crewmate\" (the action itself when Pando has no wording for it), with `app_name` and `target_name`, the names the app and the target go by now. Reading the log is itself audited, as `audit.read`.\n\nNeeds `install.audit.read`.",
         "tags": [
           "Installation"
         ],
@@ -5271,6 +5282,13 @@
             }
           },
           {
+            "name": "outcome",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "principal_id",
             "in": "query",
             "schema": {
@@ -5279,6 +5297,13 @@
           },
           {
             "name": "principal_kind",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
             "in": "query",
             "schema": {
               "type": "string"
@@ -6897,7 +6922,7 @@
       "get": {
         "operationId": "getGroup",
         "summary": "Get a group",
-        "description": "One group with its `member_count` (direct members), its `linked_from` or `links_to`, and where it comes from. The members are GET /groups/{groupID}/members.\n\nNeeds `install.view`.",
+        "description": "One group with its `member_count` (direct members), its `linked_from` or `links_to`, its `install_role_id` (empty for none), and where it comes from. The members are GET /groups/{groupID}/members.\n\nNeeds `install.view`.",
         "tags": [
           "Identity"
         ],
@@ -6917,7 +6942,56 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Group"
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "source": {
+                      "type": "string"
+                    },
+                    "source_name": {
+                      "type": "string"
+                    },
+                    "members": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "member_count": {
+                      "type": "integer",
+                      "format": "int64"
+                    },
+                    "linked_from": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "links_to": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "created_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "install_role_id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "created_at",
+                    "install_role_id"
+                  ]
                 }
               }
             }
@@ -6927,6 +7001,57 @@
           }
         },
         "x-pando-verb": "install.view"
+      },
+      "patch": {
+        "operationId": "renameGroup",
+        "summary": "Rename a group",
+        "description": "Rename a group made in Pando (`name`). A group synced from an identity provider keeps the provider's name and is renamed there.\n\nNeeds `install.users.manage`.",
+        "tags": [
+          "Identity"
+        ],
+        "parameters": [
+          {
+            "name": "groupID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Group"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-pando-verb": "install.users.manage"
       }
     },
     "/api/v1/groups/{groupID}/app-limit": {
@@ -9319,6 +9444,169 @@
           }
         },
         "x-pando-verb": "install.users.manage"
+      },
+      "patch": {
+        "operationId": "updateRole",
+        "summary": "Edit a role",
+        "description": "Rename a custom role (`name`), replace its permissions (`verbs`), or both. Its scope stays, and the verbs must be of it. Built-in roles cannot be changed. An installation role is changed only by someone holding every installation permission it carries before and after; permissions added to an app role must be the caller's on every app it is granted on. Refused if it would leave nobody who can manage accounts.\n\nNeeds `install.users.manage`.",
+        "tags": [
+          "Identity"
+        ],
+        "parameters": [
+          {
+            "name": "roleID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "verbs": {
+                    "type": [
+                      "array",
+                      "null"
+                    ],
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoleRow"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-pando-verb": "install.users.manage"
+      }
+    },
+    "/api/v1/roles/{roleID}/holders": {
+      "get": {
+        "operationId": "roleHolders",
+        "summary": "List a role's holders",
+        "description": "Who holds a role, with the role itself (`role`): the groups granted it, then the accounts holding it, each once, by name. Each holder has `kind` (`user` or `group`), `id`, `name`, an account's `username`, a synced group's `source` and `source_name`, and `via`: `direct` for a grant to it, or `group` for an account holding it only through a group, with `group_id`, the first such group. An app role's holders are those holding it on any app. `groups` counts the groups. `limit` (default 100, at most 500) and `cursor` page; `next_cursor` continues; `total` counts every holder exactly up to 10,000; past that it is 10,000 and `total_is_lower_bound` is true.\n\nNeeds `install.view`.",
+        "tags": [
+          "Identity"
+        ],
+        "parameters": [
+          {
+            "name": "roleID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "query",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "role": {
+                      "$ref": "#/components/schemas/RoleRow"
+                    },
+                    "holders": {
+                      "type": [
+                        "array",
+                        "null"
+                      ],
+                      "items": {
+                        "$ref": "#/components/schemas/RoleHolder"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": "string"
+                    },
+                    "groups": {
+                      "type": "integer",
+                      "format": "int64"
+                    },
+                    "total": {
+                      "type": "integer",
+                      "format": "int64"
+                    },
+                    "total_is_lower_bound": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "role",
+                    "holders",
+                    "next_cursor",
+                    "groups",
+                    "total",
+                    "total_is_lower_bound"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-pando-verb": "install.view"
       }
     },
     "/api/v1/scim/v2/Groups": {
@@ -11412,7 +11700,7 @@
       "get": {
         "operationId": "listUsers",
         "summary": "List accounts",
-        "description": "The accounts on this installation, newest first. Each carries `install_roles`, every installation role it holds as `{role_id, via}` — `via.kind` is `direct`, or `group` with the group's `group_id`, `name` and, for a group synced from a provider, `source` and `source_name` — read as authorization reads them, through linked provider groups too; and `install_role_id`, the role granted to the account itself (empty for none). `limit` (default 100, at most 500) and `cursor` page; `next_cursor` continues; `q` matches the username, display name or email; `id`, repeatable, reads only those accounts; `total` counts the matches exactly up to 10,000; past that it is 10,000 and `total_is_lower_bound` is true.\n\nNeeds `install.view`.",
+        "description": "The accounts on this installation, newest first. Each carries `adapter_name`, the name of the identity provider it signs in with, and `install_roles`, every installation role it holds as `{role_id, via}` — `via.kind` is `direct`, or `group` with the group's `group_id`, `name` and, for a group synced from a provider, `source` and `source_name` — read as authorization reads them, through linked provider groups too; and `install_role_id`, the role granted to the account itself (empty for none). `limit` (default 100, at most 500) and `cursor` page; `next_cursor` continues; `q` matches the username, display name or email; `id`, repeatable, reads only those accounts; `total` counts the matches exactly up to 10,000; past that it is 10,000 and `total_is_lower_bound` is true.\n\nNeeds `install.view`.",
         "tags": [
           "Identity"
         ],
@@ -12329,6 +12617,9 @@
           "adapter_id": {
             "type": "string"
           },
+          "adapter_name": {
+            "type": "string"
+          },
           "external_id": {
             "type": "string"
           },
@@ -12370,6 +12661,7 @@
         "required": [
           "id",
           "adapter_id",
+          "adapter_name",
           "external_id",
           "email",
           "display_name",
@@ -12610,6 +12902,10 @@
           },
           "access": {
             "type": "string"
+          },
+          "notice_count": {
+            "type": "integer",
+            "format": "int64"
           },
           "detection": {
             "$ref": "#/components/schemas/DetectionSummary"
@@ -13879,6 +14175,10 @@
           "consecutive_failures": {
             "type": "integer",
             "format": "int64"
+          },
+          "last_delivery_at": {
+            "type": "string",
+            "format": "date-time"
           },
           "created_by": {
             "type": "string"
@@ -16523,6 +16823,15 @@
           "schema_version": {
             "type": "integer",
             "format": "int64"
+          },
+          "app_name": {
+            "type": "string"
+          },
+          "target_name": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
           }
         },
         "required": [
@@ -16530,7 +16839,8 @@
           "occurred_at",
           "principal_kind",
           "action",
-          "schema_version"
+          "schema_version",
+          "summary"
         ]
       },
       "ReferenceDocument": {
@@ -16884,6 +17194,41 @@
           "name",
           "scope",
           "verbs"
+        ]
+      },
+      "RoleHolder": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "source_name": {
+            "type": "string"
+          },
+          "via": {
+            "type": "string"
+          },
+          "group_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "id",
+          "name",
+          "via"
         ]
       },
       "RoleRow": {
@@ -17877,6 +18222,10 @@
           "consecutive_failures": {
             "type": "integer",
             "format": "int64"
+          },
+          "last_delivery_at": {
+            "type": "string",
+            "format": "date-time"
           },
           "created_by": {
             "type": "string"

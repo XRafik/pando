@@ -8,11 +8,10 @@
 
 import { useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Banner, Button, Card } from '@design';
+import { Banner, Button } from '@design';
 
 import { api } from '@api/client';
 import type { App, BackupAttempt } from '@api/types.gen';
-import { MEASURE } from '../ui/layout';
 import { deploymentsInterval } from '../ui/polling';
 import { Attention } from './Attention';
 import { Security } from './Security';
@@ -54,6 +53,7 @@ export function AppOverview({
   // Output and deployments both need app.logs.read; the opener is absent
   // without it, and so is every control that would use it.
   const openPanel = useOpenPanel('output');
+  const openDeployments = useOpenPanel('deployments');
   const security = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -99,12 +99,10 @@ export function AppOverview({
           running what it ran (R-154). Said here, with the request itself,
           because this is where the person who pressed Deploy is looking. */}
       {waiting && (
-        <div style={{ maxWidth: MEASURE }}>
-          <Card padding="md">
-            <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-3)' }}>A deploy is waiting for approval</h4>
-            <ApprovalRequest deployment={waiting} />
-          </Card>
-        </div>
+        <ApprovalRequest
+          deployment={waiting}
+          onReview={openDeployments && (() => openDeployments({ view: 'deployments', deployment: waiting.id }))}
+        />
       )}
 
       <Attention appID={app.id} onGo={onGo} onFindings={scrollToSecurity} />

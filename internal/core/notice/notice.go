@@ -23,6 +23,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/trypando/pando/internal/core/security"
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/core/state"
@@ -128,6 +130,43 @@ func (s *Service) List(ctx context.Context, userID string, app state.App) ([]Not
 		notices[i].Ignored = ok && fp == notices[i].Fingerprint
 	}
 	return notices, nil
+}
+
+// countWorkers bounds how many apps' notices Counts computes at once: a page
+// of the list is up to a few hundred apps, each a handful of queries.
+const countWorkers = 8
+
+// Counts is, for each app, how many of its notices the person asking has not
+// ignored — the number the apps list shows beside each app's status (R-412).
+// Each is List's own answer, so the list and the app's Overview cannot
+// disagree. userID is empty for a caller who is not a person, who has ignored
+// nothing.
+func (s *Service) Counts(ctx context.Context, userID string, apps []state.App) (map[string]int, error) {
+	counts := make([]int, len(apps))
+	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(countWorkers)
+	for i := range apps {
+		g.Go(func() error {
+			notices, err := s.List(ctx, userID, apps[i])
+			if err != nil {
+				return err
+			}
+			for _, n := range notices {
+				if !n.Ignored {
+					counts[i]++
+				}
+			}
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+	out := make(map[string]int, len(apps))
+	for i, a := range apps {
+		out[a.ID] = counts[i]
+	}
+	return out, nil
 }
 
 // Ignore hides a notice from one person until what it says changes. It is

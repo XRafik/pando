@@ -317,7 +317,8 @@ func (s *Server) decideDeploy(w http.ResponseWriter, r *http.Request,
 }
 
 // handleListApprovals lists the deploys waiting for approval on every app the
-// caller may view, each saying whether the caller may decide it. Signed in and
+// caller may view, each saying whether the caller may decide it; with
+// `decidable=true`, only those it may (R-155). Signed in and
 // nothing more: what comes back is already limited to apps the caller sees.
 func (s *Server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 	p := PrincipalFrom(r.Context())
@@ -330,7 +331,15 @@ func (s *Server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, err)
 		return
 	}
-	waiting, next, err := s.Approvals.Awaiting(r.Context(), p, page)
+	decidable := false
+	if v := r.URL.Query().Get("decidable"); v != "" {
+		if decidable, err = strconv.ParseBool(v); err != nil {
+			Error(w, r, errs.New(errs.ValidInvalid,
+				"The decidable parameter must be true or false. true lists only the deploys you may approve or reject."))
+			return
+		}
+	}
+	waiting, next, err := s.Approvals.Awaiting(r.Context(), p, page, decidable)
 	if err != nil {
 		Error(w, r, err)
 		return

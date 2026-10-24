@@ -185,9 +185,9 @@ func TestEachFlagIsOnTheSubcommandThatReadsIt(t *testing.T) {
 
 func TestAppList(t *testing.T) {
 	api := newAPI(t).reply("GET /apps", map[string]any{
-		"apps": []map[string]string{
+		"apps": []map[string]any{
 			{"id": "app_01HQ8", "name": "notes", "state": "running", "access": "passcode",
-				"owner_name": "Ada", "address": "https://notes.example.com"},
+				"owner_name": "Ada", "address": "https://notes.example.com", "notice_count": 2},
 			{"id": "app_01HQ9", "name": "wiki", "state": "failed", "access": "public"},
 			{"id": "app_01HQA", "name": "crm", "state": "running", "access": "private"},
 			{"id": "app_01HQB", "name": "docs", "state": "running", "access": "shared"},
@@ -204,8 +204,10 @@ func TestAppList(t *testing.T) {
 	// and where it is (discussion #262).
 	require.Contains(t, got.out, "public with passcode")
 	require.Contains(t, got.out, "private – shared")
-	require.Regexp(t, `wiki\s+failed\s+public\s`, got.out)
-	require.Regexp(t, `crm\s+running\s+private\s`, got.out)
+	require.Regexp(t, `wiki\s+failed\s+-\s+public\s`, got.out)
+	require.Regexp(t, `crm\s+running\s+-\s+private\s`, got.out)
+	// How many notices the caller has not ignored (R-412).
+	require.Regexp(t, `notes\s+running\s+2\s+public with passcode`, got.out)
 	require.Contains(t, got.out, "Ada")
 	require.Contains(t, got.out, "https://notes.example.com")
 	// "public" is never left to stand alone (R-077).

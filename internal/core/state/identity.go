@@ -753,6 +753,30 @@ func (u *Users) Delete(ctx context.Context, userID string) error {
 	return nil
 }
 
+// AdapterNames names the identity providers with these IDs, by ID (R-045):
+// what an account list shows as the provider each account signs in with,
+// read once for a page rather than once per account. An ID with no provider
+// is left out.
+func (u *Users) AdapterNames(ctx context.Context, adapterIDs []string) (map[string]string, error) {
+	out := map[string]string{}
+	if len(adapterIDs) == 0 {
+		return out, nil
+	}
+	rows, err := u.db.Query(ctx, `SELECT id, name FROM identity_adapters WHERE id = ANY($1)`, adapterIDs)
+	if err != nil {
+		return nil, errs.Wrap(errs.Internal, "Could not read the identity providers' names.", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return nil, errs.Wrap(errs.Internal, "Could not read the identity providers' names.", err)
+		}
+		out[id] = name
+	}
+	return out, rows.Err()
+}
+
 // EnsureLocalAdapter seeds the local identity adapter on a fresh install.
 func (u *Users) EnsureLocalAdapter(ctx context.Context) error {
 	_, err := u.db.Exec(ctx, `

@@ -252,3 +252,50 @@ func TestR412_IgnoringDoesNotUnblockADeploy(t *testing.T) {
 	require.Equal(t, http.StatusOK, report.Code, report.String())
 	require.Contains(t, report.String(), `"verdict":"insecure"`)
 }
+
+// listedNoticeCount is the app's notice_count in GET /apps for one caller.
+func (i *install) listedNoticeCount(s *session, appID string) int {
+	i.t.Helper()
+	got := i.do(s, http.MethodGet, "/apps", nil)
+	require.Equal(i.t, http.StatusOK, got.Code, got.String())
+	var body struct {
+		Apps []struct {
+			ID          string `json:"id"`
+			NoticeCount int    `json:"notice_count"`
+		} `json:"apps"`
+	}
+	got.JSON(i.t, &body)
+	for _, a := range body.Apps {
+		if a.ID == appID {
+			return a.NoticeCount
+		}
+	}
+	i.t.Fatalf("GET /apps does not list %s: %s", appID, got.String())
+	return 0
+}
+
+// TestR412_TheAppsListCountsTheNoticesYouHaveNotIgnored asserts R-412 and
+// R-261: GET /apps carries, on each app, how many of its notices the caller
+// has not ignored, so an ignore is the caller's alone there too.
+func TestR412_TheAppsListCountsTheNoticesYouHaveNotIgnored(t *testing.T) {
+	t.Parallel()
+	i := newInstall(t)
+	admin := i.admin()
+	appID := i.createApp(admin, "counted")
+	i.pinSpec(admin, appID, i.writeSpec(admin, appID, specWithEnv(emptyVar("A_KEY"))))
+
+	other := i.user("colleague")
+	granted := i.do(admin, http.MethodPost, "/apps/"+appID+"/grants", map[string]any{
+		"plane": "control", "principal_kind": "user", "principal_id": i.userID(other), "role_id": authz.RoleViewer,
+	})
+	require.Equal(t, http.StatusCreated, granted.Code, granted.String())
+
+	want := len(i.notices(admin, appID))
+	require.Positive(t, want)
+	require.Equal(t, want, i.listedNoticeCount(admin, appID))
+
+	ignored := i.do(admin, http.MethodPut, "/apps/"+appID+"/notices/"+notice.KeyUnsetVars+"/ignore", nil)
+	require.Equal(t, http.StatusOK, ignored.Code, ignored.String())
+	require.Equal(t, want-1, i.listedNoticeCount(admin, appID), "the ignored one is not counted")
+	require.Equal(t, want, i.listedNoticeCount(other, appID), "for anyone else it still is")
+}

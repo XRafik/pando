@@ -1,5 +1,4 @@
 // @vitest-environment jsdom
-import { act } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ChangePassword, Login } from '../auth/Login';
@@ -49,117 +48,6 @@ describe('groups and roles as they open', () => {
   });
 });
 
-describe('a group’s dialogs', () => {
-  const groups = (list: object[]) => {
-    vi.stubGlobal('fetch', answering({}));
-    return open(<Identity canEdit />, identity(list));
-  };
-  /** Opens a group's options and chooses one; the menu is portaled to the body. */
-  const choose = async (group: string, item: string) => {
-    const button = document.querySelector<HTMLButtonElement>(`button[aria-label="Options for ${group}"]`)!;
-    await act(async () => button.click());
-    const found = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((el) => el.textContent === item)!;
-    await act(async () => found.click());
-  };
-
-  it.each([
-    ['a synced group: its app limit only', 'eng', ['App limit']],
-    ['a Pando group, with provider groups to link', 'ops', ['Edit members', 'Provider groups', 'App limit', 'Delete']],
-  ])('offers %s', async (_, group, items) => {
-    groups([
-      { id: 'grp_a', name: 'eng', source: 'idp_okta', source_name: 'Okta', member_count: 4 },
-      { id: 'grp_1', name: 'ops', member_count: 1 },
-    ]);
-    await act(async () => document.querySelector<HTMLButtonElement>(`button[aria-label="Options for ${group}"]`)!.click());
-    expect([...document.querySelectorAll('[role="menuitem"]')].map((el) => el.textContent)).toEqual(items);
-  });
-
-  it('offers no provider groups to link when there are none', async () => {
-    groups([{ id: 'grp_1', name: 'ops', member_count: 1 }]);
-    await act(async () => document.querySelector<HTMLButtonElement>('button[aria-label="Options for ops"]')!.click());
-    expect(document.body.textContent).not.toContain('Provider groups');
-  });
-
-  it('opens a group’s apps in a dialog, and adding one takes the dialog over', async () => {
-    vi.stubGlobal('fetch', answering({}));
-    const s = open(<Identity canEdit />, [
-      ...identity([{ id: 'grp_1', name: 'ops', member_count: 1 }]),
-      [['me'], { verbs: ['install.apps.view', 'install.apps.grants.manage'] }],
-      [['groups', 'grp_1', 'apps', '', {}], page({ apps: [] })],
-      [['roles', 'app'], { roles: [] }],
-    ]);
-    const dialogs = () => [...document.querySelectorAll('[role="dialog"]')];
-    await s.press('Apps');
-    expect(dialogs()).toHaveLength(1);
-    expect(s.text()).toContain('Apps for ops');
-    await s.press('Add app');
-    expect(dialogs()).toHaveLength(1);
-    expect(dialogs()[0]?.querySelector('h3')?.textContent).toBe('Add app');
-    await s.press('Cancel');
-    expect(dialogs()).toHaveLength(1);
-    expect(s.text()).toContain('Apps for ops');
-  });
-
-  it('titles adding a group, and editing one’s members by its name', async () => {
-    const s = groups([{ id: 'grp_1', name: 'ops', member_count: 2 }]);
-    await s.press('Add group');
-    // The button, and the dialog's title.
-    expect(s.text().split('Add group')).toHaveLength(3);
-    await s.press('Cancel');
-    await choose('ops', 'Edit members');
-    expect(s.text()).toContain('Members of ops');
-  });
-
-  it.each([
-    [1, 'The one member keeps their account and'],
-    [3, 'The 3 members keep their accounts and'],
-  ])('counts %i member(s) kept on deleting a group', async (count, said) => {
-    const s = groups([{ id: 'grp_1', name: 'ops', member_count: count }]);
-    await choose('ops', 'Delete');
-    expect(s.text()).toContain(said);
-  });
-
-  it('describes each provider group by its source and size', async () => {
-    const s = groups([
-      { id: 'grp_a', name: 'eng', source: 'idp_okta', source_name: 'Okta', member_count: 4 },
-      { id: 'grp_b', name: 'sales', source: 'idp_okta', members: ['usr_1'] },
-      { id: 'grp_c', name: 'legal', source: 'idp_okta' },
-      { id: 'grp_1', name: 'ops', member_count: 0 },
-    ]);
-    await choose('ops', 'Provider groups');
-    expect(s.text()).toContain('Okta, 4 members');
-    expect(s.text()).toContain('idp_okta, 1 member');
-    expect(s.text()).toContain('idp_okta, 0 members');
-  });
-});
-
-describe('a role’s permissions', () => {
-  const roles = [
-    { id: 'role_ops', name: 'ops', scope: 'install', builtin: false, verbs: ['install.view', 'install.audit.read'] },
-    { id: 'role_viewer', name: 'viewer', scope: 'app', builtin: true, verbs: ['app.view'] },
-  ];
-
-  it('counts them on the row and lists them once the role is opened', async () => {
-    vi.stubGlobal('fetch', answering({}));
-    const s = open(<Identity canEdit />, [
-      [['groups', 'list', '', {}], page({ groups: [] })],
-      [['roles'], { roles: [] }],
-      [['roles', 'all'], { roles }],
-      [['ai-functions'], { functions: [] }],
-    ]);
-    expect(s.text()).not.toContain('install.audit.read');
-    // press matches a button's whole text, so this is the viewer row's.
-    await s.press('1 permission');
-    expect(s.text()).toContain('The viewer role');
-    await s.press('Close');
-    await s.press('2 permissions');
-    expect(s.text()).toContain('The ops role');
-    expect(s.text()).toContain('Installation role, made on this installation. 2 permissions.');
-    expect(s.text()).toContain('install.audit.read');
-    expect(s.text()).toContain('Read the audit log.');
-  });
-});
-
 describe('a new subscription', () => {
   it.each([
     [true, 1],
@@ -184,7 +72,7 @@ describe('a subscription to Slack, R-367', () => {
     ]);
     await s.press('New subscription');
     expect(s.text()).not.toContain('Slack channel');
-    await s.click('Notification channel');
+    await s.fill('Send to', 'notify:ntf_slack');
     expect(s.text()).toContain('Slack channel');
     expect(s.text()).toContain('#deploys');
     expect(s.text()).toContain('/invite @Pando');
@@ -194,9 +82,9 @@ describe('a subscription to Slack, R-367', () => {
 
 describe('a subscription’s request', () => {
   it.each([
-    ['{"text":"{{.Type}}"}', 'Custom body'],
-    ['', 'Default body'],
-  ])('says whether its body is its own', async (template, said) => {
+    ['{"text":"{{.Type}}"}', 'POST · JSON · Custom body'],
+    ['', 'POST · JSON'],
+  ])('says how it is sent, and whether its body is its own', async (template, said) => {
     vi.stubGlobal('fetch', answering({}));
     const sub = { id: 'sub_1', events: ['app.deployed'], destination: 'webhook', url: 'https://hooks.example.com', enabled: true, consecutive_failures: 0, created_at: '2026-10-01T00:00:00Z', payload_template: template };
     const s = open(<Events canManageAll={false} apps={[]} />, [
@@ -204,8 +92,9 @@ describe('a subscription’s request', () => {
       [['subscription', 'sub_1'], sub],
       [['deliveries', 'sub_1'], { deliveries: [] }],
     ]);
-    await s.click('https://hooks.example.com');
+    await s.click('hooks.example.com');
     expect(s.text()).toContain(said);
+    if (!template) expect(s.text()).not.toContain('Custom body');
   });
 });
 

@@ -1,0 +1,125 @@
+/* Groups and roles, and a group's and a role's own pages.
+ *
+ * Everything else is inline styles from tokens; these are the rules an inline
+ * style cannot hold: grids that change with the window, a hover, and the
+ * phone's larger targets. 48em is the breakpoint useNarrow() and narrow.css
+ * use.
+ */
+
+/* A page's cards: side by side while they fit, one under another after.
+ * Three on a group's page, two on a role's. */
+.pando-id-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
+  gap: var(--space-4);
+  align-items: start;
+}
+
+/* The Details card's facts: label over value, as many across as fit. */
+.pando-id-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: var(--space-3) var(--space-5);
+  margin: 0;
+}
+
+.pando-id-facts > div {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.pando-id-facts dt {
+  font: var(--type-caption);
+  color: var(--ink-secondary);
+}
+
+.pando-id-facts dd {
+  margin: 0;
+  font: var(--type-body-ui);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+/* One line in a card: what it is on the left, its controls on the right. */
+.pando-id-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-top: var(--border-width) solid var(--rule);
+  min-height: var(--control-console);
+}
+
+.pando-id-row a {
+  color: var(--ink);
+  text-decoration: none;
+  min-width: 0;
+}
+
+.pando-id-row a:hover {
+  color: var(--ink-secondary);
+}
+
+/* A row of the lists at phone width: the name across, then its role and its
+ * count. */
+.pando-id-list {
+  display: flex;
+  flex-direction: column;
+  border-top: var(--border-width) solid var(--rule-strong);
+}
+
+.pando-id-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2) var(--space-3);
+  align-items: center;
+  padding: var(--space-3) 0;
+  border-bottom: var(--border-width) solid var(--rule);
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.pando-id-item > :first-child {
+  grid-column: 1 / -1;
+}
+
+/* A square for a group or a role, a circle for an account. */
+.pando-id-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: var(--control-console);
+  height: var(--control-console);
+  border-radius: var(--radius-md);
+  background: var(--paper-sunken);
+  border: var(--border-width) solid var(--rule-strong);
+  box-sizing: border-box;
+  font: var(--type-caption);
+  color: var(--ink-secondary);
+}
+
+.pando-id-mark[data-round] {
+  border-radius: 50%;
+}
+
+.pando-id-mark[data-large] {
+  width: var(--space-7);
+  height: var(--space-7);
+}
+
+@media (max-width: 48em) {
+  /* Targets a thumb can hit: 44px. */
+  .pando-id-row,
+  .pando-id-item {
+    min-height: calc(var(--space-6) + var(--space-3));
+  }
+
+  .pando-id-page button,
+  .pando-id-page select {
+    min-height: calc(var(--space-6) + var(--space-3));
+  }
+}
