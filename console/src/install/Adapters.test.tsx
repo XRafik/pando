@@ -77,7 +77,7 @@ describe('an adapter’s card', () => {
 
   it('makes another the default, naming the one it replaces, keeping its settings', async () => {
     const posted: unknown[] = [];
-    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+    vi.stubGlobal('fetch', async (_url: string, init?: RequestInit) => {
       if (init?.method === 'POST') {
         posted.push(JSON.parse(String(init.body)));
         return reply({ id: 'rt_gpu' });
