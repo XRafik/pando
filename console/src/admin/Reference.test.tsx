@@ -12,7 +12,7 @@ vi.hoisted(() => {
 import { renderToString } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-import { Reference } from './Reference';
+import { Reference, tokenLine } from './Reference';
 
 function render() {
   return renderToString(
@@ -23,7 +23,8 @@ function render() {
 }
 
 // R-261: the reference is published from the code; the console links to it
-// rather than drawing a second copy, and keeps what only it can do — tokens.
+// rather than drawing a second copy, and keeps what only it can do — how to
+// connect to this installation, and tokens.
 describe('API and tools', () => {
   it('links to each published reference', () => {
     const html = render();
@@ -31,17 +32,28 @@ describe('API and tools', () => {
       expect(html).toContain(`href="https://trypando.ai/docs/${page}"`);
     }
     expect(html).toContain('API reference');
-    expect(html).toContain('CLI reference');
-    expect(html).toContain('MCP server');
   });
 
-  it('says where this installation is, which the docs cannot', () => {
-    expect(render()).toContain('https://pando.internal.test');
-  });
-
-  it('has no Connect tab and still offers tokens', () => {
+  // R-262: the CLI signs in to this installation; MCP runs from the CLI over
+  // stdio, so it is a command, not an address.
+  it('says how to connect to this installation', () => {
     const html = render();
-    expect(html).not.toContain('>Connect<');
-    expect(html).toContain('Your tokens');
+    expect(html).toContain('>Connect<');
+    expect(html).toContain('pando login https://pando.internal.test');
+    expect(html).toContain('>pando mcp<');
+    expect(html).toContain('https://pando.internal.test/api/v1');
+    expect(html).not.toContain('This installation is at');
+  });
+
+  it('offers tokens', () => {
+    expect(render()).toContain('Your tokens');
+  });
+});
+
+describe('tokenLine', () => {
+  it('says when a token expires and when it was last used', () => {
+    expect(tokenLine({ expires_at: undefined, last_used_at: undefined })).toBe('Never expires · never used');
+    const line = tokenLine({ expires_at: '2099-01-22T12:00:00Z', last_used_at: '2020-10-24T12:02:00Z' });
+    expect(line).toMatch(/^Expires Jan 2[123], 2099 · used Oct 2[345], 2020 \d\d:\d\d$/);
   });
 });

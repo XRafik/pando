@@ -184,7 +184,7 @@ describe('a subscription to Slack, R-367', () => {
     ]);
     await s.press('New subscription');
     expect(s.text()).not.toContain('Slack channel');
-    await s.click('Notification channel');
+    await s.fill('Send to', 'notify:ntf_slack');
     expect(s.text()).toContain('Slack channel');
     expect(s.text()).toContain('#deploys');
     expect(s.text()).toContain('/invite @Pando');
@@ -194,9 +194,9 @@ describe('a subscription to Slack, R-367', () => {
 
 describe('a subscription’s request', () => {
   it.each([
-    ['{"text":"{{.Type}}"}', 'Custom body'],
-    ['', 'Default body'],
-  ])('says whether its body is its own', async (template, said) => {
+    ['{"text":"{{.Type}}"}', 'POST · JSON · Custom body'],
+    ['', 'POST · JSON'],
+  ])('says how it is sent, and whether its body is its own', async (template, said) => {
     vi.stubGlobal('fetch', answering({}));
     const sub = { id: 'sub_1', events: ['app.deployed'], destination: 'webhook', url: 'https://hooks.example.com', enabled: true, consecutive_failures: 0, created_at: '2026-10-01T00:00:00Z', payload_template: template };
     const s = open(<Events canManageAll={false} apps={[]} />, [
@@ -204,8 +204,9 @@ describe('a subscription’s request', () => {
       [['subscription', 'sub_1'], sub],
       [['deliveries', 'sub_1'], { deliveries: [] }],
     ]);
-    await s.click('https://hooks.example.com');
+    await s.click('hooks.example.com');
     expect(s.text()).toContain(said);
+    if (!template) expect(s.text()).not.toContain('Custom body');
   });
 });
 

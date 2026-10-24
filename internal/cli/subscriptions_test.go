@@ -29,6 +29,23 @@ func TestR367_SubscriptionsCreateSendsTheFilterAndPrintsTheKeyOnce(t *testing.T)
 	require.ErrorContains(t, got.err, "exactly one of --url")
 }
 
+// R-369: the list says when each subscription last delivered.
+func TestR369_SubscriptionsListSaysWhenEachLastDelivered(t *testing.T) {
+	api := newAPI(t).reply("GET /subscriptions", map[string]any{
+		"subscriptions": []map[string]any{
+			{"id": "sub_01", "events": []string{"*"}, "destination": "webhook", "url": "https://example.com/hook",
+				"enabled": true, "last_delivery_at": "2026-10-24T14:32:00Z"},
+			{"id": "sub_02", "events": []string{"deploy.*"}, "destination": "webhook", "url": "https://example.com/other",
+				"enabled": false},
+		},
+	})
+	got := run(t, api, "", "subscriptions", "list")
+	require.NoError(t, got.err)
+	require.Contains(t, got.out, "LAST DELIVERY")
+	require.Contains(t, got.out, "2026-10-24T14:32:00Z")
+	require.Contains(t, got.out, "never")
+}
+
 func TestR369_DeliveriesAndRedeliverCallTheirEndpoints(t *testing.T) {
 	api := newAPI(t).reply("GET /subscriptions/sub_01/deliveries", map[string]any{
 		"deliveries": []map[string]any{{

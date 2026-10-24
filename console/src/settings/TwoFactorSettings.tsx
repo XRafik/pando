@@ -8,11 +8,13 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Banner, Button, Dialog } from '@design';
+import { Banner, Button, Card, Dialog, StatusIndicator } from '@design';
 
 import { api } from '@api/client';
 import type { TwoFactorStatus } from '../app/principal';
 import { withRemedy } from '../auth/Login';
+import { CardHead } from '../admin/settingsParts';
+import { card } from './parts';
 import {
   CurrentPassword,
   RecoveryCodes,
@@ -29,24 +31,32 @@ export function TwoFactorSettings({ status, username }: Readonly<{ status: TwoFa
   const close = () => setOpen(null);
 
   return (
-    <section>
-      <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-3)' }}>Two-factor authentication</h4>
-      <p style={{ font: 'var(--type-body-ui)', color: 'var(--ink-secondary)', margin: '0 0 var(--space-3)' }}>
-        {status.enabled
-          ? `On. Signing in asks for a code from your authenticator app. ${remaining(status.recovery_codes_remaining)}`
-          : 'Off. Signing in asks only for your password.'}
-      </p>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-3)' }}>
+    <Card padding="md" as="section" style={card}>
+      <CardHead
+        title="Two-factor"
+        action={
+          <StatusIndicator status={status.enabled ? 'running' : 'stopped'} label={status.enabled ? 'On' : 'Off'} />
+        }
+      />
+      {status.enabled && (
+        <span style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)' }}>
+          {remaining(status.recovery_codes_remaining)}
+        </span>
+      )}
+      {status.required && status.enabled && (
+        <span style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)' }}>Required on this installation.</span>
+      )}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-2)', marginTop: 'auto' }}>
         {status.enabled ? (
           <>
-            <Button variant="secondary" onClick={() => setOpen('enroll')}>
-              Replace authenticator
-            </Button>
             <Button variant="secondary" onClick={() => setOpen('codes')}>
               New recovery codes
             </Button>
+            <Button variant="ghost" onClick={() => setOpen('enroll')}>
+              Replace authenticator
+            </Button>
             {!status.required && (
-              <Button variant="secondary" onClick={() => setOpen('off')}>
+              <Button variant="destructive" onClick={() => setOpen('off')}>
                 Turn off
               </Button>
             )}
@@ -57,11 +67,6 @@ export function TwoFactorSettings({ status, username }: Readonly<{ status: TwoFa
           </Button>
         )}
       </div>
-      {status.required && status.enabled && (
-        <p style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)', margin: 'var(--space-2) 0 0' }}>
-          This installation requires two-factor authentication for local accounts, so it can’t be turned off.
-        </p>
-      )}
       {open === 'enroll' && (
         <EnrollDialog
           replacing={status.enabled}
@@ -74,16 +79,15 @@ export function TwoFactorSettings({ status, username }: Readonly<{ status: TwoFa
         <NewCodesDialog passwordRequired={status.password_required} username={username} onClose={close} />
       )}
       {open === 'off' && <TurnOffDialog passwordRequired={status.password_required} onClose={close} />}
-    </section>
+    </Card>
   );
 }
 
-/** How many recovery codes are left, and what to do when that is few. */
+/** How many recovery codes are left. */
 export function remaining(n: number): string {
-  if (n === 0) return 'No recovery codes left. Make new ones in case you lose your phone.';
-  if (n === 1) return '1 recovery code left. Make new ones in case you lose your phone.';
-  if (n <= 3) return `${n} recovery codes left. Make new ones in case you lose your phone.`;
-  return `${n} recovery codes left.`;
+  if (n === 0) return 'No recovery codes left';
+  if (n === 1) return '1 recovery code left';
+  return `${n} recovery codes left`;
 }
 
 /** Set up, or replace, the authenticator. */

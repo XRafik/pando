@@ -14,3 +14,26 @@ export function relative(iso: string): string {
   if (seconds < 172800) return 'Yesterday';
   return `${Math.round(seconds / 86400)} days ago`;
 }
+
+/**
+ * The date and time, as a list row shows it: "Oct 24 14:32", with the year
+ * when it is not this one. Lists carry the date in each row rather than under
+ * a "Today" or "Yesterday" divider.
+ */
+export function stamp(iso: string, now: Date = new Date()): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return iso;
+  const time = at.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  return `${day(iso, now)} ${time}`;
+}
+
+/** The date alone, as a token's expiry: "Jan 22", with the year when it is not this one. */
+export function day(iso: string, now: Date = new Date()): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return iso;
+  return at.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    ...(at.getFullYear() === now.getFullYear() ? {} : { year: 'numeric' }),
+  });
+}

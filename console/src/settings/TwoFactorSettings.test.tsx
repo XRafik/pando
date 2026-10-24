@@ -53,11 +53,10 @@ afterEach(() => {
 });
 
 describe('remaining', () => {
-  it('says to make more when few are left', () => {
-    expect(remaining(10)).toBe('10 recovery codes left.');
-    expect(remaining(3)).toContain('Make new ones');
-    expect(remaining(1)).toBe('1 recovery code left. Make new ones in case you lose your phone.');
-    expect(remaining(0)).toContain('No recovery codes left.');
+  it('says how many are left', () => {
+    expect(remaining(10)).toBe('10 recovery codes left');
+    expect(remaining(1)).toBe('1 recovery code left');
+    expect(remaining(0)).toBe('No recovery codes left');
   });
 });
 
@@ -70,7 +69,7 @@ describe('two-factor authentication in settings', () => {
       return unanswered();
     });
     screen = mount(<TwoFactorSettings status={off} username="ada" />);
-    expect(screen.text()).toContain('Off. Signing in asks only for your password.');
+    expect(screen.text()).toContain('Off');
 
     await screen.press('Set up');
     expect(screen.text()).toContain('Scan this code');
@@ -100,7 +99,7 @@ describe('two-factor authentication in settings', () => {
   it('makes new recovery codes', async () => {
     serve((_, path) => (path === '/me/two-factor/recovery-codes' ? reply({ recovery_codes: codes }) : unanswered()));
     screen = mount(<TwoFactorSettings status={on} />);
-    expect(screen.text()).toContain('On. Signing in asks for a code');
+    expect(screen.text()).toContain('10 recovery codes left');
     await screen.press('New recovery codes');
     expect(screen.text()).toContain('Your current recovery codes stop working.');
     await screen.press('Make new codes');
@@ -131,7 +130,7 @@ describe('two-factor authentication in settings', () => {
     serve(() => unanswered());
     screen = mount(<TwoFactorSettings status={{ ...on, required: true }} />);
     expect(button('Turn off')).toBeUndefined();
-    expect(screen.text()).toContain('so it can’t be turned off');
+    expect(screen.text()).toContain('Required on this installation.');
   });
 });
 
@@ -141,10 +140,10 @@ describe('the settings page', () => {
   it('has the section for a local account only', () => {
     serve(() => unanswered());
     screen = mount(<Settings onBack={() => {}} />, me(on));
-    expect(screen.text()).toContain('Two-factor authentication');
+    expect(screen.text()).toContain('Two-factor');
     screen.unmount();
     screen = mount(<Settings onBack={() => {}} />, me(undefined));
-    expect(screen.text()).not.toContain('Two-factor authentication');
+    expect(screen.text()).not.toContain('Two-factor');
   });
 });
 
