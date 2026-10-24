@@ -292,9 +292,15 @@ type Subscription struct {
 	DisabledReason      string     `json:"disabled_reason,omitempty"`
 	FailingSince        *time.Time `json:"failing_since,omitempty"`
 	ConsecutiveFailures int        `json:"consecutive_failures"`
-	CreatedBy           string     `json:"created_by"`
-	CreatedAt           time.Time  `json:"created_at"`
-	UpdatedAt           time.Time  `json:"updated_at"`
+
+	// LastDeliveryAt is when Pando last tried to deliver to it: the newest
+	// delivery's last attempt, or when that delivery was queued if it has not
+	// been tried yet. Absent before the first delivery.
+	LastDeliveryAt *time.Time `json:"last_delivery_at,omitempty"`
+
+	CreatedBy string    `json:"created_by"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // Subscriptions stores subscriptions.
@@ -307,7 +313,10 @@ const subscriptionColumns = `s.id, coalesce(s.owner_user_id, ''), coalesce(s.own
 	coalesce(s.app_id, ''), coalesce(a.name, ''), s.events, s.destination, coalesce(s.url, ''),
 	coalesce(s.adapter_id, ''), coalesce(s.channel, ''), s.method, s.content_type, s.payload_template, s.header_names,
 	s.description, s.enabled, s.disabled_reason, s.failing_since,
-	s.consecutive_failures, s.created_by, s.created_at, s.updated_at`
+	s.consecutive_failures,
+	(SELECT coalesce(d.last_attempt_at, d.created_at) FROM event_deliveries d
+	 WHERE d.subscription_id = s.id ORDER BY d.created_at DESC LIMIT 1),
+	s.created_by, s.created_at, s.updated_at`
 
 const subscriptionFrom = ` FROM subscriptions s
 	LEFT JOIN users u ON u.id = s.owner_user_id
@@ -319,7 +328,7 @@ func scanSubscription(row pgx.Row) (Subscription, error) {
 	err := row.Scan(&s.ID, &s.OwnerID, &s.OwnerTokenID, &s.OwnerName, &s.AppID, &s.AppName, &s.Events,
 		&s.Destination, &s.URL, &s.AdapterID, &s.Channel, &s.Method, &s.ContentType, &s.PayloadTemplate, &s.HeaderNames,
 		&s.Description, &s.Enabled, &s.DisabledReason, &s.FailingSince,
-		&s.ConsecutiveFailures, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt)
+		&s.ConsecutiveFailures, &s.LastDeliveryAt, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt)
 	if s.Events == nil {
 		s.Events = []string{}
 	}

@@ -13899,6 +13899,10 @@
             "type": "integer",
             "format": "int64"
           },
+          "last_delivery_at": {
+            "type": "string",
+            "format": "date-time"
+          },
           "created_by": {
             "type": "string"
           },
@@ -17896,6 +17900,10 @@
           "consecutive_failures": {
             "type": "integer",
             "format": "int64"
+          },
+          "last_delivery_at": {
+            "type": "string",
+            "format": "date-time"
           },
           "created_by": {
             "type": "string"
