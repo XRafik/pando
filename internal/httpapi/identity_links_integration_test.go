@@ -186,3 +186,39 @@ func TestR045_AProviderSomeoneSignedInThroughIsKept(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, i.do(admin, http.MethodDelete, "/identity-providers/"+unused.ID, nil).Code)
 	require.Equal(t, http.StatusBadRequest, i.do(admin, http.MethodDelete, "/identity-providers/idp_local", nil).Code)
 }
+
+// TestR045_AnAccountNamesTheProviderItSignsInWith asserts that the record of
+// an account's originating adapter (R-045) reaches the account list and the
+// account itself by name, so a client needs no second request to say it.
+func TestR045_AnAccountNamesTheProviderItSignsInWith(t *testing.T) {
+	t.Parallel()
+	i := newInstall(t)
+	admin := i.admin()
+	_, okta := scimProvider(t, i, admin, "Okta", nil)
+	var eve struct {
+		ID string `json:"id"`
+	}
+	okta.do(http.MethodPost, "/Users", map[string]any{"userName": "eve", "externalId": "00ueve", "active": true}).JSON(t, &eve)
+
+	type account struct {
+		ID          string `json:"id"`
+		AdapterID   string `json:"adapter_id"`
+		AdapterName string `json:"adapter_name"`
+	}
+	var list struct {
+		Users []account `json:"users"`
+	}
+	got := i.do(admin, http.MethodGet, "/users", nil)
+	require.Equal(t, http.StatusOK, got.Code, got.String())
+	got.JSON(t, &list)
+	names := map[string]string{}
+	for _, u := range list.Users {
+		names[u.ID] = u.AdapterName
+	}
+	require.Equal(t, "Okta", names[eve.ID])
+	require.Equal(t, "Local users", names[i.AdminID])
+
+	var one account
+	i.do(admin, http.MethodGet, "/users/"+eve.ID, nil).JSON(t, &one)
+	require.Equal(t, "Okta", one.AdapterName)
+}

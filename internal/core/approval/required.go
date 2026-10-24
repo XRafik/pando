@@ -29,13 +29,13 @@ const (
 func (r Reason) Message() string {
 	switch r {
 	case ReasonInstall:
-		return "This installation requires approval for every deploy."
+		return "This installation requires approval for every deployment."
 	case ReasonAppPolicy:
-		return "This installation requires approval for this app's deploys."
+		return "This installation requires approval for this app's deployments."
 	case ReasonAppSpec:
-		return "This app requires approval for its own deploys."
+		return "This app requires approval for its own deployments."
 	case ReasonEgressLoosening:
-		return "This deploy loosens the installation's egress rules, which needs approval."
+		return "This deployment loosens the installation's egress rules, which needs approval."
 	}
 	return string(r)
 }

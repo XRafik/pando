@@ -2390,7 +2390,16 @@
       "aliases": [],
       "hidden": false,
       "deprecated": "",
-      "flags": [],
+      "flags": [
+        {
+          "name": "decidable",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "Only the deploys you may approve or reject",
+          "required": false
+        }
+      ],
       "inherited_flags": [
         {
           "name": "config",

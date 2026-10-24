@@ -13,7 +13,7 @@ func TestR154_ApprovalsListShowsWhatIsWaiting(t *testing.T) {
 		"approvals": []map[string]any{{
 			"id": "dep_01", "app_id": "app_01HQ8", "app_name": "notes", "status": "awaiting_approval",
 			"approvals_required": 2, "approval_expires_at": "2026-10-08T00:00:00Z",
-			"approval_reasons": []map[string]string{{"reason": "install", "message": "This installation requires approval for every deploy."}},
+			"approval_reasons": []map[string]string{{"reason": "install", "message": "This installation requires approval for every deployment."}},
 			"approvals":        []map[string]string{{"decision": "approve"}},
 			"can_decide":       true,
 		}},
@@ -30,6 +30,20 @@ func TestR154_ApprovalsListShowsWhatIsWaiting(t *testing.T) {
 	got = run(t, api, "", "approvals", "list")
 	require.NoError(t, got.err)
 	require.Contains(t, got.out, "Nothing is waiting")
+}
+
+// TestR155_ApprovalsListCanHoldOnlyWhatYouMayDecide asserts that the
+// console's filter is a flag here too (R-261).
+func TestR155_ApprovalsListCanHoldOnlyWhatYouMayDecide(t *testing.T) {
+	api := newAPI(t).reply("GET /approvals", map[string]any{"approvals": []any{}})
+	got := run(t, api, "", "approvals", "list", "--decidable")
+	require.NoError(t, got.err)
+	require.Equal(t, "true", queryOf(t, api, 0).Get("decidable"))
+
+	api = newAPI(t).reply("GET /approvals", map[string]any{"approvals": []any{}})
+	got = run(t, api, "", "approvals", "list")
+	require.NoError(t, got.err)
+	require.Empty(t, queryOf(t, api, 0).Get("decidable"))
 }
 
 func TestR154_ApproveAndRejectCallTheirEndpoints(t *testing.T) {
@@ -60,12 +74,12 @@ func TestR154_ApproveAndRejectCallTheirEndpoints(t *testing.T) {
 func TestR154_ADeployThatNeedsApprovalSaysSo(t *testing.T) {
 	api := newAPI(t).reply("POST /apps/app_01HQ8/deployments", map[string]any{
 		"id": "dep_01", "status": "awaiting_approval", "approvals_required": 1,
-		"approval_reasons": []map[string]string{{"reason": "app_spec", "message": "This app requires approval for its own deploys."}},
+		"approval_reasons": []map[string]string{{"reason": "app_spec", "message": "This app requires approval for its own deployments."}},
 	})
 	got := run(t, api, "", "deploy", "app_01HQ8")
 	require.NoError(t, got.err)
 	require.Contains(t, got.out, "needs approval")
-	require.Contains(t, got.out, "This app requires approval for its own deploys.")
+	require.Contains(t, got.out, "This app requires approval for its own deployments.")
 	require.Contains(t, got.out, "pando approvals approve app_01HQ8 dep_01")
 	require.NotContains(t, got.out, "pando logs")
 }

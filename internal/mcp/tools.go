@@ -757,10 +757,22 @@ var toolList = []tool{
 			"why it needs approval, the approvals it has so far, and `can_decide`: whether you may approve or reject it. " +
 			"Oldest first, a page at a time: pass `next_cursor` back as `cursor` for the next page.",
 		Schema: schema(map[string]any{
-			"cursor": str("The next_cursor from a previous page."),
+			"cursor":    str("The next_cursor from a previous page."),
+			"decidable": map[string]any{"type": "boolean", "description": "true to list only the deploys you may approve or reject."},
 		}),
 		request: func(args map[string]any) (string, string, any, error) {
-			return pagedGet("/approvals", args, "cursor")
+			method, path, body, err := pagedGet("/approvals", args, "cursor")
+			if err != nil {
+				return "", "", nil, err
+			}
+			if decidable, _ := args["decidable"].(bool); decidable {
+				if strings.Contains(path, "?") {
+					path += "&decidable=true"
+				} else {
+					path += "?decidable=true"
+				}
+			}
+			return method, path, body, nil
 		},
 	},
 	{
@@ -1221,7 +1233,7 @@ var toolList = []tool{
 	{
 		Name: "pando_list_users",
 		Description: "The accounts on this installation, newest first, a page at a time: pass `next_cursor` " +
-			"back as `cursor` for the next page. Each carries install_roles — every installation role it holds, " +
+			"back as `cursor` for the next page. Each carries adapter_name — the identity provider it signs in with — and install_roles — every installation role it holds, " +
 			"and whether it holds it directly or through a group (with the group's name, and the identity " +
 			"provider for a synced group) — and install_role_id, the role granted to the account itself. " +
 			"Needs install.view.",

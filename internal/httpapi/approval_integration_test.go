@@ -190,7 +190,13 @@ func (a *approvals) deployment(s *session, appID, depID string) deployView {
 
 func (a *approvals) waiting(s *session) []deployView {
 	a.t.Helper()
-	got := a.do(s, http.MethodGet, "/approvals", nil)
+	return a.waitingWith(s, "")
+}
+
+// waitingWith is GET /approvals with a query string.
+func (a *approvals) waitingWith(s *session, query string) []deployView {
+	a.t.Helper()
+	got := a.do(s, http.MethodGet, "/approvals"+query, nil)
 	require.Equal(a.t, http.StatusOK, got.Code, got.String())
 	var out struct {
 		Approvals []deployView `json:"approvals"`
@@ -262,7 +268,7 @@ func TestR154_ADeployThatNeedsApprovalWaitsForIt(t *testing.T) {
 	require.Equal(t, "dev", dep.RequestedByName)
 	require.Len(t, dep.ApprovalReasons, 1)
 	require.Equal(t, "app_policy", dep.ApprovalReasons[0].Reason)
-	require.Equal(t, "This installation requires approval for this app's deploys.", dep.ApprovalReasons[0].Message)
+	require.Equal(t, "This installation requires approval for this app's deployments.", dep.ApprovalReasons[0].Message)
 	require.NotNil(t, dep.ApprovalExpiresAt, "policy's default expiry is seven days (R-156)")
 	require.WithinDuration(t, time.Now().Add(7*24*time.Hour), *dep.ApprovalExpiresAt, time.Minute)
 	require.False(t, dep.CanDecide, "an owner does not hold an approving verb (R-155)")
@@ -374,6 +380,36 @@ func TestR155_EitherVerbApprovesAndSelfApprovalIsAllowed(t *testing.T) {
 	got = a.decide(self, appID, mine.ID, "approve", nil)
 	require.Equal(t, http.StatusOK, got.Code, got.String())
 	require.Contains(t, a.starts.ids(), mine.ID)
+}
+
+// TestR155_TheApprovalsListCanHoldOnlyWhatYouMayDecide asserts the console's
+// Approvals screen: with decidable=true, a request the caller can see but not
+// answer is left out, and one it can answer is kept.
+func TestR155_TheApprovalsListCanHoldOnlyWhatYouMayDecide(t *testing.T) {
+	t.Parallel()
+	a := newApprovals(t)
+	admin := a.admin()
+	appID := a.appWithSpec(admin, "notes")
+	dev := a.owner(admin, appID, "dev")
+	a.policy(func(d *corepolicy.Document) { d.DeployApprovalRequired = true })
+	dep := a.deploy(dev, appID)
+
+	// The owner sees its own request, and cannot decide it.
+	all := a.waiting(dev)
+	require.Len(t, all, 1)
+	require.False(t, all[0].CanDecide)
+	require.Empty(t, a.waitingWith(dev, "?decidable=true"))
+
+	// The administrator can, so it is on their list either way.
+	mine := a.waitingWith(admin, "?decidable=true")
+	require.Len(t, mine, 1)
+	require.Equal(t, dep.ID, mine[0].ID)
+	require.True(t, mine[0].CanDecide)
+	require.Len(t, a.waitingWith(admin, "?decidable=false"), 1)
+
+	got := a.do(admin, http.MethodGet, "/approvals?decidable=maybe", nil)
+	require.Equal(t, http.StatusBadRequest, got.Code, got.String())
+	require.Contains(t, got.String(), "true or false")
 }
 
 // TestR155_AnOwnerCannotApproveByDefault asserts that no built-in app role

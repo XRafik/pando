@@ -66,6 +66,6 @@ describe('the overview of a running app', () => {
     const html = serverRender(<AppOverview app={{ ...app, state: 'running' } as App} onGo={() => {}} />, [
       [['apps', app.id, 'deployments'], { deployments: [{ id: 'dep_1', status: 'awaiting_approval', started_at: '2026-10-23T10:00:00Z' }] }],
     ]);
-    expect(html).toContain('A deploy is waiting for approval');
+    expect(html).toContain('Waiting for approval');
   });
 });

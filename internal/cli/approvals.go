@@ -15,7 +15,8 @@ import (
 func approvalsCmd(client func() (*Client, error)) *cobra.Command {
 	cmd := &cobra.Command{Use: "approvals", Short: "See and decide deploys waiting for approval"}
 
-	cmd.AddCommand(&cobra.Command{
+	var decidable bool
+	list := &cobra.Command{
 		Use:   "list",
 		Short: "Deploys waiting for approval on the apps you can see",
 		Args:  cobra.NoArgs,
@@ -27,7 +28,11 @@ func approvalsCmd(client func() (*Client, error)) *cobra.Command {
 			var out struct {
 				Approvals []waitingDeploy `json:"approvals"`
 			}
-			err = allPages(c, "/approvals", func(get func(any) error) (string, error) {
+			path := "/approvals"
+			if decidable {
+				path += "?decidable=true"
+			}
+			err = allPages(c, path, func(get func(any) error) (string, error) {
 				var page struct {
 					Approvals  []waitingDeploy `json:"approvals"`
 					NextCursor string          `json:"next_cursor"`
@@ -70,7 +75,9 @@ func approvalsCmd(client func() (*Client, error)) *cobra.Command {
 			}
 			return t.Flush()
 		},
-	})
+	}
+	list.Flags().BoolVar(&decidable, "decidable", false, "Only the deploys you may approve or reject")
+	cmd.AddCommand(list)
 
 	cmd.AddCommand(decideCmd(client, "approve",
 		"Approve a deploy waiting for approval; the last approval it needs starts it"))

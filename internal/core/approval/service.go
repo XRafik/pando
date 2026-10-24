@@ -779,7 +779,11 @@ var awaitingScanLimit = 4 * state.MaxPageSize
 // for the next page (empty after the last). A page may hold fewer than its
 // limit and still have a cursor, when the requests read were on apps p cannot
 // see.
-func (s *Service) Awaiting(ctx context.Context, p authz.Principal, page state.Page) ([]state.AwaitingApproval, string, error) {
+//
+// decidable keeps only the requests p may approve or reject (R-155): the
+// console's Approvals screen and its count, which list what is waiting on the
+// caller. A request waiting on somebody else is still on its app.
+func (s *Service) Awaiting(ctx context.Context, p authz.Principal, page state.Page, decidable bool) ([]state.AwaitingApproval, string, error) {
 	after, err := state.AwaitingKeyFrom(page.Cursor)
 	if err != nil {
 		return nil, "", err
@@ -814,6 +818,9 @@ func (s *Service) Awaiting(ctx context.Context, p authz.Principal, page state.Pa
 				return nil, "", err
 			}
 			item.Deployment = deps[0]
+			if decidable && !item.CanDecide {
+				continue
+			}
 			out = append(out, item)
 		}
 		if len(batch) < size {

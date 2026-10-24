@@ -130,8 +130,11 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 // one shape, so that a client reading one account does not need the list to
 // learn what role it holds.
 type accountJSON struct {
-	ID                 string    `json:"id"`
-	AdapterID          string    `json:"adapter_id"`
+	ID        string `json:"id"`
+	AdapterID string `json:"adapter_id"`
+	// AdapterName names the identity provider the account signs in with
+	// (R-045): "Local users" for a local account.
+	AdapterName        string    `json:"adapter_name"`
 	ExternalID         string    `json:"external_id"`
 	Email              string    `json:"email"`
 	DisplayName        string    `json:"display_name"`
@@ -171,10 +174,22 @@ func (s *Server) accountViews(ctx context.Context, users []state.User) ([]accoun
 	if err != nil {
 		return nil, err
 	}
+	adapters := map[string]bool{}
+	adapterIDs := []string{}
+	for _, u := range users {
+		if !adapters[u.AdapterID] {
+			adapters[u.AdapterID] = true
+			adapterIDs = append(adapterIDs, u.AdapterID)
+		}
+	}
+	names, err := s.Users.AdapterNames(ctx, adapterIDs)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]accountJSON, 0, len(users))
 	for _, u := range users {
 		v := accountJSON{
-			ID: u.ID, AdapterID: u.AdapterID, ExternalID: u.ExternalID, Email: u.Email,
+			ID: u.ID, AdapterID: u.AdapterID, AdapterName: names[u.AdapterID], ExternalID: u.ExternalID, Email: u.Email,
 			DisplayName: u.DisplayName, Status: u.Status, MustChangePassword: u.MustChangePassword,
 			TwoFactorEnabled: u.TwoFactorEnabled,
 			CreatedAt:        u.CreatedAt, AliasOf: u.AliasOf,

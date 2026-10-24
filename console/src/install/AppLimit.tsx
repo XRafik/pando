@@ -11,6 +11,7 @@ import { Banner, Button, Dialog, Input } from '@design';
 import { api } from '@api/client';
 import { LineSkeleton } from '../ui/Loading';
 import { refusal } from './Accounts';
+import { AccessRow } from './AccessRow';
 
 /** GET /users/{id}/app-limit. */
 export interface Limit {
@@ -51,29 +52,34 @@ function from(l: Limit): string {
   }
 }
 
-/** The limit in force on an account, with a change for someone who manages accounts. */
+/** The limit in force on an account, as a row of its Access card, with a
+ *  change for someone who manages accounts. */
 export function AccountAppLimit({ userID, manage }: Readonly<{ userID: string; manage: boolean }>) {
   const limit = useQuery({
     queryKey: ['users', userID, 'app-limit'],
     queryFn: () => api.get<Limit>(`/users/${userID}/app-limit`),
   });
   const [open, setOpen] = useState(false);
-
-  if (limit.isPending) return <LineSkeleton width="20ch" />;
-  if (limit.isError || !limit.data) return <>—</>;
   const l = limit.data;
 
+  let value: React.ReactNode = '—';
+  if (limit.isPending) value = <LineSkeleton width="20ch" />;
+  else if (l) value = describeLimit(l);
+
   return (
-    <span style={{ display: 'inline-flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 'var(--space-3)' }}>
-      <span>
-        {describeLimit(l)}
-      </span>
-      {manage && (
-        <Button variant="ghost" onClick={() => setOpen(true)}>
-          Change
-        </Button>
-      )}
-      {open && (
+    <AccessRow
+      label="App limit"
+      action={
+        manage &&
+        l && (
+          <Button variant="ghost" onClick={() => setOpen(true)}>
+            Change
+          </Button>
+        )
+      }
+    >
+      {value}
+      {open && l && (
         <MaxAppsDialog
           title="App limit"
           description="Overrides group limits. Leave empty to inherit."
@@ -83,7 +89,7 @@ export function AccountAppLimit({ userID, manage }: Readonly<{ userID: string; m
           onClose={() => setOpen(false)}
         />
       )}
-    </span>
+    </AccessRow>
   );
 }
 

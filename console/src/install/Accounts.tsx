@@ -5,8 +5,8 @@
 // run: the verbs existed, the role existed, and nothing could write a second
 // grant. An install had exactly one administrator forever.
 //
-// The list is read-only: who each account is, whether it can sign in, and its
-// installation role. A row opens the account's own page (Account.tsx), which
+// The list is read-only: who each account is, what it signs in with, its
+// installation roles and whether it can sign in. A row opens the account's own page (Account.tsx), which
 // holds the actions — two separate ones, because they are two separate powers.
 // Suspending an account stops it signing in (R-049); changing its role changes
 // what it may do. The API keeps them on different routes and different verbs,
@@ -18,6 +18,7 @@
 import { useContext, useState } from 'react';
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { Button, Dialog, Input, Select, StatusIndicator, Tabs, Tag } from '@design';
+import { Avatar } from './Avatar';
 
 import { api, RequestFailed } from '@api/client';
 import { InstallVerb, useInstallVerb } from '../app/principal';
@@ -27,12 +28,17 @@ import { Sheet } from '../ui/Sheet';
 import { SearchField } from '../ui/SearchField';
 import { ShowMore, usePaged, useSettled, type PageOf } from '../ui/paged';
 import { Table } from '../ui/Table';
+import { useNarrow } from '../ui/narrow';
+import { RouteLink } from '../ui/RouteLink';
 import { format } from '../app/route';
+import './accounts.css';
 import { FailedBanner } from '../ui/ErrorCode';
 
 export interface Account {
   id: string;
   adapter_id: string;
+  /** The identity provider's name: "Local users" for a local account (R-045). */
+  adapter_name?: string;
   external_id: string;
   email?: string;
   display_name?: string;
@@ -93,6 +99,7 @@ export function Accounts({ onOpen }: { onOpen: (account: Account) => void }) {
   });
 
   const rows = accounts.rows;
+  const narrow = useNarrow();
 
   return (
     <Screen
@@ -111,59 +118,63 @@ export function Accounts({ onOpen }: { onOpen: (account: Account) => void }) {
     >
       {accounts.query.isError && <Quiet>{messageOf(accounts.query.error)}</Quiet>}
 
-      <Table
-        loading={accounts.query.isPending}
-        onRowClick={onOpen}
-        rowHref={(a: Account) => format({ view: 'admin', section: 'accounts', userID: a.id })}
-        columns={[
-          { key: 'external_id', header: 'Username', width: 'minmax(0,22ch)', mono: true, filter: 'text' },
-          {
-            key: 'display_name',
-            header: 'Name',
-            width: 'minmax(0,22ch)',
-            filter: 'text',
-            render: (row: Account) => row.display_name || '—',
-          },
-          {
-            key: 'email',
-            header: 'Email',
-            width: 'minmax(0,28ch)',
-            muted: true,
-            filter: 'text',
-            render: (row: Account) => row.email || '—',
-          },
-          {
-            key: 'status',
-            header: 'Status',
-            width: '14ch',
-            filter: 'values',
-            filterValue: (row: Account) => (row.status === 'active' ? 'Active' : 'Suspended'),
-            render: (row: Account) => (
-              <StatusIndicator
-                // Suspended is a stopped account, not a failed one. Marker red
-                // is for failure and destruction, and an account somebody
-                // deliberately suspended is neither.
-                status={row.status === 'active' ? 'running' : 'stopped'}
-                label={row.status === 'active' ? 'Active' : 'Suspended'}
-              />
-            ),
-          },
-          {
-            key: 'install_role_id',
-            header: 'Role',
-            width: 'minmax(0,20ch)',
-            filter: 'values',
-            // Each role on its own, so the filter offers roles rather than
-            // combinations of them.
-            filterValue: (row: Account) => heldRoleNames(row.install_roles ?? [], roles.data?.roles ?? []),
-            // Read-only here; it changes on the account's page, or on the
-            // group a role comes through.
-            render: (row: Account) => <HeldRoles held={row.install_roles ?? []} roles={roles.data?.roles ?? []} />,
-          },
-        ]}
-        rows={rows}
-        empty={query.trim() !== '' ? <Quiet>No accounts match &ldquo;{query.trim()}&rdquo;.</Quiet> : undefined}
-      />
+      {narrow ? (
+        <AccountRows rows={rows} roles={roles.data?.roles ?? []} onOpen={onOpen} />
+      ) : (
+        <Table
+          loading={accounts.query.isPending}
+          onRowClick={onOpen}
+          rowHref={(a: Account) => format({ view: 'admin', section: 'accounts', userID: a.id })}
+          columns={[
+            {
+              key: 'display_name',
+              header: 'Name',
+              width: 'minmax(0,1.4fr)',
+              filter: 'text',
+              filterValue: (row: Account) => [row.display_name ?? '', row.external_id],
+              render: (row: Account) => <NameCell account={row} />,
+            },
+            {
+              key: 'email',
+              header: 'Email',
+              width: 'minmax(0,1fr)',
+              muted: true,
+              filter: 'text',
+              render: (row: Account) => row.email || '—',
+            },
+            {
+              key: 'adapter_name',
+              header: 'Signs in with',
+              width: 'minmax(0,16ch)',
+              filter: 'values',
+              filterValue: (row: Account) => providerName(row),
+              render: (row: Account) => providerName(row),
+            },
+            {
+              key: 'install_role_id',
+              header: 'Role',
+              width: 'minmax(0,1fr)',
+              filter: 'values',
+              // Each role on its own, so the filter offers roles rather than
+              // combinations of them.
+              filterValue: (row: Account) => heldRoleNames(row.install_roles ?? [], roles.data?.roles ?? []),
+              // Read-only here; it changes on the account's page, or on the
+              // group a role comes through.
+              render: (row: Account) => <RoleTags held={row.install_roles ?? []} roles={roles.data?.roles ?? []} />,
+            },
+            {
+              key: 'status',
+              header: 'Status',
+              width: '14ch',
+              filter: 'values',
+              filterValue: (row: Account) => statusLabel(row),
+              render: (row: Account) => <AccountStatus account={row} />,
+            },
+          ]}
+          rows={rows}
+          empty={query.trim() === '' ? undefined : <Quiet>No accounts match &ldquo;{query.trim()}&rdquo;.</Quiet>}
+        />
+      )}
       <ShowMore query={accounts.query} label="Show more accounts" />
 
       {adding && <AddAccount onClose={() => setAdding(false)} />}
@@ -204,53 +215,91 @@ export function refreshMembership(queries: QueryClient) {
   void queries.invalidateQueries({ queryKey: ['users'] });
 }
 
-/** One held role, named. */
-export function HeldRoleTag({ held, roles }: Readonly<{ held: HeldRole; roles: Role[] }>) {
-  return <Tag>{roleName(held, roles)}</Tag>;
+/** The installation roles an account holds, each once, as tags. Where one
+ *  comes from — the account, or a group — is the account page's to say. */
+export function RoleTags({ held, roles }: Readonly<{ held: HeldRole[]; roles: Role[] }>) {
+  const names = [...new Set(held.map((h) => roleName(h, roles)))];
+  if (names.length === 0) return <span style={caption}>No role</span>;
+  return (
+    <span style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-1) var(--space-2)', padding: 'var(--space-2) 0' }}>
+      {names.map((n) => (
+        <Tag key={n}>{n}</Tag>
+      ))}
+    </span>
+  );
 }
 
-/** "through pando-administrator (Okta)" — where a group-held role comes from. */
-export function heldThrough(h: HeldRole): string {
-  const group = h.via.name ?? h.via.group_id ?? '';
-  const provider = h.via.source_name || h.via.source;
-  return provider ? `through ${group} (${provider})` : `through ${group}`;
+/** The names of the roles an account holds, each once, joined: "App manager, Auditor". */
+export function roleNames(held: HeldRole[], roles: Role[]): string {
+  return [...new Set(held.map((h) => roleName(h, roles)))].join(', ');
 }
 
 const caption = { font: 'var(--type-caption)', color: 'var(--ink-secondary)' };
 
-/**
- * The installation roles an account holds, each with where it comes from:
- * a role through a group names the group, and its provider for a synced one.
- */
-export function HeldRoles({ held, roles }: Readonly<{ held: HeldRole[]; roles: Role[] }>) {
-  if (held.length === 0) return <RoleLabel roleID="" roles={roles} />;
+/** The identity provider an account signs in with, by name. A local
+ *  account signs in with a password. */
+export function providerName(a: Pick<Account, 'adapter_id' | 'adapter_name'>): string {
+  if (a.adapter_id === LOCAL_PROVIDER) return 'Password';
+  return a.adapter_name || a.adapter_id;
+}
+
+/** The local identity provider's ID. */
+export const LOCAL_PROVIDER = 'idp_local';
+
+function statusLabel(a: Account): string {
+  return a.status === 'active' ? 'Active' : 'Suspended';
+}
+
+/** Active or Suspended. Suspended is a stopped account, not a failed one:
+ *  marker red is for failure and destruction, and an account somebody
+ *  deliberately suspended is neither. */
+export function AccountStatus({ account }: Readonly<{ account: Account }>) {
+  return <StatusIndicator status={account.status === 'active' ? 'running' : 'stopped'} label={statusLabel(account)} />;
+}
+
+/** The account's name, with its username under it. */
+function NameCell({ account }: Readonly<{ account: Account }>) {
+  const name = account.display_name || account.external_id;
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)', padding: 'var(--space-2) 0' }}>
-      {held.map((h) => (
-        <span
-          key={h.role_id + (h.via.group_id ?? '')}
-          style={{ display: 'flex', alignItems: 'baseline', gap: 'var(--space-2)', minWidth: 0 }}
-        >
-          <HeldRoleTag held={h} roles={roles} />
-          {h.via.kind === 'group' && <span style={caption}>{heldThrough(h)}</span>}
+    <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', minWidth: 0, padding: 'var(--space-2) 0' }}>
+      <Avatar name={name} />
+      <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+        <span style={{ font: 'var(--type-label)', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</span>
+        <span style={{ font: 'var(--type-code-sm)', color: 'var(--ink-secondary)', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {account.external_id}
         </span>
-      ))}
-    </div>
+      </span>
+    </span>
   );
 }
 
-/**
- * The roles an account holds through its groups, said rather than offered:
- * each is changed on the group, not on the account.
- */
-export function GroupHeldRoles({ held, roles }: Readonly<{ held: HeldRole[]; roles: Role[] }>) {
-  return held
-    .filter((h) => h.via.kind === 'group')
-    .map((h) => (
-      <span key={h.role_id + h.via.group_id} style={caption}>
-        {roleName(h, roles)} {heldThrough(h)}
-      </span>
-    ));
+/** The list at phone width: the name across, then the roles and the status. */
+function AccountRows({
+  rows,
+  roles,
+  onOpen,
+}: Readonly<{ rows: Account[]; roles: Role[]; onOpen: (a: Account) => void }>) {
+  return (
+    <ul className="pando-account-rows">
+      {rows.map((a) => (
+        <li key={a.id}>
+          <RouteLink
+            href={format({ view: 'admin', section: 'accounts', userID: a.id })}
+            onFollow={() => onOpen(a)}
+            className="pando-account-row"
+          >
+            <span className="pando-account-row-name">
+              <NameCell account={a} />
+            </span>
+            <RoleTags held={a.install_roles ?? []} roles={roles} />
+            <span className="pando-account-row-status">
+              <AccountStatus account={a} />
+            </span>
+          </RouteLink>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 export function RolePicker({
