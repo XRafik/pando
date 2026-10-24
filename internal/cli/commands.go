@@ -49,6 +49,7 @@ func Commands() []*cobra.Command {
 		withServer(userCmd(client)),
 		withServer(twoFactorCmd(client)),
 		withServer(groupCmd(client)),
+		withServer(roleCmd(client)),
 		withServer(adapterCmd(client)),
 		withServer(sourceCmd(client)),
 		withServer(notifyCmd(client)),
@@ -1510,6 +1511,14 @@ func groupCmd(client func() (*Client, error)) *cobra.Command {
 				return err
 			}
 			return printAllPages(cmd, c, "/groups", "groups")
+		},
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "rename <group-id> <name>",
+		Short: "Rename a group made in Pando",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return do("PATCH", "/groups/"+url.PathEscape(args[0]), map[string]any{"name": args[1]}, "Renamed.")(cmd, args)
 		},
 	})
 	cmd.AddCommand(&cobra.Command{

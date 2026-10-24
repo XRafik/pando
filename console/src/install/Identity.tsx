@@ -1,668 +1,438 @@
-// Groups and roles — R-078 and R-082, which had a full API and no screen.
+// Groups and roles — R-078 and R-082.
 //
-// The two are deliberately not one screen with two tabs pretending to be the
-// same idea. A group is *who*: a set of accounts, named once and granted access
-// as a unit. A role is *what*: a named set of verbs. Conflating them is how an
-// authorization model becomes a list of people with special powers, which is
-// the thing R-078 exists to avoid.
+// One page, two tabs: a group is *who*, a set of accounts granted access as a
+// unit; a role is *what*, a named set of verbs. Each tab is a plain table, and
+// a row opens its group's or role's own page, where it is changed. Nothing is
+// changed from the table itself.
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Badge, Banner, Button, Checkbox, Dialog, Input, Select } from '@design';
+import { Banner, Button, Checkbox, Dialog, Icon, Input, Select, Tabs, Tag } from '@design';
 
 import { api } from '@api/client';
-import { Quiet, RoleLabel, Screen, messageOf, refusal, refreshMembership, sentence } from './Accounts';
+import { format, type Route } from '../app/route';
+import { messageOf, refusal, refreshMembership, sentence } from './Accounts';
 import { VERB_NOTES } from './verbNotes';
-import { AppsDialog } from './AccountApps';
-import { GroupAppLimit } from './AppLimit';
 import { NoMatches, SearchField } from '../ui/SearchField';
 import { matches } from '../ui/search';
-import { ShowMore, usePaged, useSettled, withParams, type PageOf } from '../ui/paged';
+import { ShowMore, usePaged, useSettled, type PageOf } from '../ui/paged';
 import { Table } from '../ui/Table';
-import { Menu, MenuDivider, MenuItem } from '../ui/Menu';
+import { Sheet } from '../ui/Sheet';
+import { useNarrow } from '../ui/narrow';
+import { RouteLink } from '../ui/RouteLink';
 import { LineSkeleton, Loading } from '../ui/Loading';
 import { AIButton } from '../ui/AskAI';
 import { AccessAI } from './AccessAI';
 import { useAIFunctionOn } from './AIFunctions';
-
-interface Group {
-  id: string;
-  name: string;
-  /** The identity provider that owns the membership, and its name. */
-  source?: string;
-  source_name?: string;
-  /** On GET /groups/{id} only; the list carries member_count instead. */
-  members?: string[];
-  /** How many people are in the group directly; on the list. */
-  member_count?: number;
-  /** On a Pando group: the provider groups whose members count as its own. */
-  linked_from?: string[] | null;
-  /** The installation role everyone in the group holds; '' for none. */
-  install_role_id?: string;
-}
-
-interface Role {
-  id: string;
-  name: string;
-  scope?: string;
-  builtin: boolean;
-  verbs: string[];
-}
+import {
+  Mark,
+  permissionCount,
+  roleName,
+  scopeLabel,
+  sourceLabel,
+  useAllRoles,
+  type Group,
+  type Role,
+} from './identityParts';
 
 interface VerbRow {
   verb: string;
   scope: string;
 }
 
-interface Account {
-  id: string;
-  display_name?: string;
-  email?: string;
-  external_id: string;
-}
+export type IdentityTab = 'groups' | 'roles';
 
-export function Identity({ canEdit }: { canEdit: boolean }) {
-  // One search for both lists: they are one screen, and someone looking for
-  // "engineering" should not have to know first whether it is a group or a role.
+const groupRoute = (id: string): Route => ({ view: 'admin', section: 'identity', groupID: id });
+const roleRoute = (id: string): Route => ({ view: 'admin', section: 'identity', roleID: id });
+
+export function Identity({
+  canEdit,
+  tab = 'groups',
+  onTab = () => {},
+  go = () => {},
+}: Readonly<{
+  canEdit: boolean;
+  tab?: IdentityTab;
+  onTab?: (tab: IdentityTab) => void;
+  /** Opens a group's or a role's page. */
+  go?: (route: Route) => void;
+}>) {
   const [query, setQuery] = useState('');
-  // Drafting with AI (R-343), behind one button: shown to whoever can create
-  // groups and roles, and only when access drafting is assigned to an adapter.
+  const [adding, setAdding] = useState(false);
+  // Drafting with AI (R-343): shown to whoever can create groups and roles,
+  // and only when access drafting is assigned to an adapter.
   const draftOn = useAIFunctionOn('draft_access');
   const [drafting, setDrafting] = useState(false);
+  const narrow = useNarrow();
+
+  const groups = usePaged<{ groups: Group[] | null } & PageOf, Group>({
+    key: ['groups', 'list'],
+    path: '/groups',
+    rows: (p) => p.groups,
+    search: useSettled(tab === 'groups' ? query.trim() : ''),
+  });
+  const roles = useAllRoles();
+  const allRoles = roles.data?.roles ?? [];
+
+  const onGroups = tab === 'groups';
+  const add = canEdit && (
+    <Button variant="primary" icon={<Icon name="plus" />} onClick={() => setAdding(true)}>
+      {onGroups ? 'Add group' : 'Add role'}
+    </Button>
+  );
+  const search = (
+    <SearchField
+      value={query}
+      onChange={setQuery}
+      placeholder={onGroups ? 'Search groups' : 'Search roles'}
+      width={narrow ? '100%' : undefined}
+    />
+  );
+  const count = (n: number | string | undefined) =>
+    n === undefined ? undefined : <span style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)' }}>{n}</span>;
+
   return (
-    <Screen
-      heading="Groups and roles"
-      action={
-        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 'var(--space-3)' }}>
-          {canEdit && draftOn && <AIButton onClick={() => setDrafting(true)} />}
-          <SearchField value={query} onChange={setQuery} placeholder="Search groups and roles" />
-        </div>
-      }
-    >
-      {drafting && <AccessAI onClose={() => setDrafting(false)} />}
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 'var(--space-7)',
-        }}
+    <div className="pando-id-page">
+      <Sheet
+        heading="Groups and roles"
+        action={
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 'var(--space-3)', flex: narrow ? '1 1 100%' : undefined }}>
+            {canEdit && draftOn && <AIButton onClick={() => setDrafting(true)} />}
+            {!narrow && add}
+            {!narrow && search}
+          </div>
+        }
+        tabs={
+          <Tabs
+            value={tab}
+            onChange={(v) => {
+              setQuery('');
+              onTab(v as IdentityTab);
+            }}
+            items={[
+              { value: 'groups', label: 'Groups', trailing: count(groups.query.isSuccess ? groups.totalLabel : undefined) },
+              { value: 'roles', label: 'Roles', trailing: count(roles.data ? allRoles.length : undefined) },
+            ]}
+          />
+        }
       >
-        <Groups canEdit={canEdit} query={query} />
-        <Roles canEdit={canEdit} query={query} />
-      </div>
-    </Screen>
+        {drafting && <AccessAI onClose={() => setDrafting(false)} />}
+        {narrow && (
+          <div style={{ display: 'flex', gap: 'var(--space-2)', marginBottom: 'var(--space-4)' }}>
+            <div style={{ flex: '1 1 auto', minWidth: 0 }}>{search}</div>
+            {add}
+          </div>
+        )}
+        {onGroups ? (
+          <GroupsTable groups={groups} roles={allRoles} query={query} go={go} />
+        ) : (
+          <RolesTable roles={roles} query={query} go={go} />
+        )}
+      </Sheet>
+      {adding && onGroups && <AddGroup onClose={() => setAdding(false)} onAdded={(id) => go(groupRoute(id))} />}
+      {adding && !onGroups && <AddRole onClose={() => setAdding(false)} onAdded={(id) => go(roleRoute(id))} />}
+    </div>
   );
 }
 
 // --- groups ----------------------------------------------------------------
 
-function Groups({ canEdit, query }: { canEdit: boolean; query: string }) {
-  const [editing, setEditing] = useState<Group | 'new' | null>(null);
-  const [deleting, setDeleting] = useState<Group | null>(null);
-  const [showing, setShowing] = useState<string | null>(null);
-  const [linking, setLinking] = useState<Group | null>(null);
-  const [limiting, setLimiting] = useState<Group | null>(null);
+function RoleTag({ roleID, roles }: Readonly<{ roleID?: string; roles: Role[] }>) {
+  if (!roleID) return <span style={{ color: 'var(--ink-secondary)' }}>No role</span>;
+  const role = roles.find((r) => r.id === roleID);
+  return <Tag>{role ? roleName(role) : roleID}</Tag>;
+}
 
-  // A page at a time, searched by name on the server (issue #72). Each row
-  // counts its people rather than listing them; the editor reads the group.
-  const groups = usePaged<{ groups: Group[] | null } & PageOf, Group>({
-    key: ['groups', 'list'],
-    path: '/groups',
-    rows: (p) => p.groups,
-    search: useSettled(query.trim()),
-  });
-  // Installation roles only: a group's role here applies across the
-  // installation (R-080). What it can do on one app is set in its apps.
-  const roles = useQuery({
-    queryKey: ['roles'],
-    queryFn: () => api.get<{ roles: Role[] }>('/roles'),
-  });
-  const installRoles = roles.data?.roles ?? [];
-
+function GroupsTable({
+  groups,
+  roles,
+  query,
+  go,
+}: Readonly<{
+  groups: ReturnType<typeof usePaged<{ groups: Group[] | null } & PageOf, Group>>;
+  roles: Role[];
+  query: string;
+  go: (route: Route) => void;
+}>) {
+  const narrow = useNarrow();
   const all = groups.rows;
-  const rows = all;
-  // Looked up rather than kept, so the panel follows a rename or a delete.
-  const shown = all.find((g) => g.id === showing);
+  const empty = query.trim() ? <NoMatches what="groups" query={query} /> : <Quiet>No groups yet</Quiet>;
+  const roleOf = (g: Group) => {
+    const role = roles.find((r) => r.id === g.install_role_id);
+    if (!g.install_role_id) return 'No role';
+    return role ? roleName(role) : g.install_role_id;
+  };
 
   return (
-    <section>
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'baseline',
-          justifyContent: 'space-between',
-        }}
-      >
-        <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-2)' }}>Groups</h4>
-        {canEdit && (
-          <Button variant="secondary" onClick={() => setEditing('new')}>
-            Add group
-          </Button>
-        )}
-      </div>
-
-      {/* R-078: an identity provider says who is in a group; Pando decides what
-          that group can do. Saying so here is what stops someone looking for
-          permissions on this screen. */}
-      <Quiet>
-        Named sets of people. Members hold the group&rsquo;s role and its access to apps.
-      </Quiet>
-
+    <>
       {groups.query.isError && <Banner tone="failed">{messageOf(groups.query.error)}</Banner>}
-
-      <div style={{ marginTop: 'var(--space-4)' }}>
+      {narrow ? (
+        <ItemList
+          loading={groups.query.isPending}
+          empty={empty}
+          items={all.map((g) => ({
+            id: g.id,
+            href: format(groupRoute(g.id)),
+            follow: () => go(groupRoute(g.id)),
+            icon: 'users' as const,
+            name: g.name,
+            line: sourceLabel(g, all),
+            start: <RoleTag roleID={g.install_role_id} roles={roles} />,
+            end: members(g.member_count ?? 0),
+          }))}
+        />
+      ) : (
         <Table
           loading={groups.query.isPending}
           skeletonRows={3}
+          onRowClick={(row: Group) => go(groupRoute(row.id))}
+          rowHref={(row: Group) => format(groupRoute(row.id))}
           columns={[
             {
               key: 'name',
               header: 'Name',
-              width: 'minmax(16ch,1fr)',
-              // Cut short only when the window is: the full name on hover.
-              render: (row: Group) => <span title={row.name}>{row.name}</span>,
-            },
-            {
-              key: 'members',
-              header: 'Members',
-              width: '10ch',
-              render: (row: Group) => <Badge count={row.member_count ?? row.members?.length ?? 0} />,
-            },
-            {
-              key: 'source',
-              header: 'Source',
-              width: 'minmax(0,20ch)',
-              muted: true,
-              // A group synced from an identity provider is not Pando's to
-              // edit: the provider is the source of truth for membership
-              // (R-078), and an edit here would be overwritten at the next
-              // sign-in without saying so.
-              render: (row: Group) =>
-                row.source
-                  ? (row.source_name ?? row.source)
-                  : row.linked_from && row.linked_from.length > 0
-                    ? `Pando, and ${row.linked_from.length} provider group${row.linked_from.length === 1 ? '' : 's'}`
-                    : 'Pando',
+              width: 'minmax(16ch,2fr)',
+              render: (row: Group) => <Named icon="users" name={row.name} />,
             },
             {
               key: 'role',
               header: 'Role',
-              width: 'minmax(0,24ch)',
-              // Allowed on a synced group too: the provider says who is in it,
-              // Pando says what it can do (R-078).
-              render: (row: Group) =>
-                canEdit ? (
-                  <div style={{ padding: 'var(--space-2) 0' }}>
-                    <GroupRole group={row} roles={installRoles} />
-                  </div>
-                ) : (
-                  <RoleLabel roleID={row.install_role_id ?? ''} roles={installRoles} />
-                ),
+              width: 'minmax(0,1fr)',
+              filter: 'values',
+              filterValue: roleOf,
+              render: (row: Group) => <RoleTag roleID={row.install_role_id} roles={roles} />,
             },
             {
-              key: 'edit',
-              header: '',
-              width: canEdit ? '14ch' : '8ch',
-              align: 'right',
-              render: (row: Group) => (
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-1)' }}>
-                  <Button variant="secondary" onClick={() => setShowing(row.id)}>
-                    Apps
-                  </Button>
-                  {canEdit && (
-                    <Menu label={`Options for ${row.name}`}>
-                      {(close) => {
-                        const choose = (act: () => void) => () => {
-                          close();
-                          act();
-                        };
-                        return (
-                          <>
-                            {/* Members and provider groups are not for a synced
-                                group: the identity provider would put them back
-                                at the next sign-in (R-078). */}
-                            {!row.source && <MenuItem onSelect={choose(() => setEditing(row))}>Edit members</MenuItem>}
-                            {!row.source && all.some((g) => g.source) && (
-                              <MenuItem onSelect={choose(() => setLinking(row))}>Provider groups</MenuItem>
-                            )}
-                            {/* On a synced group too, like its role: the provider
-                                says who is in it, Pando says what it may do
-                                (R-078, R-244). */}
-                            <MenuItem onSelect={choose(() => setLimiting(row))}>App limit</MenuItem>
-                            {!row.source && (
-                              <>
-                                <MenuDivider />
-                                <MenuItem onSelect={choose(() => setDeleting(row))}>Delete</MenuItem>
-                              </>
-                            )}
-                          </>
-                        );
-                      }}
-                    </Menu>
-                  )}
-                </span>
-              ),
+              key: 'members',
+              header: 'Members',
+              width: '12ch',
+              render: (row: Group) => (row.member_count ?? 0).toLocaleString('en-US'),
+            },
+            {
+              key: 'source',
+              header: 'Source',
+              width: 'minmax(0,1fr)',
+              muted: true,
+              filter: 'values',
+              filterValue: (row: Group) => (row.source ? row.source_name || row.source : 'Pando'),
+              render: (row: Group) => sourceLabel(row, all),
             },
           ]}
-          rows={rows}
-          empty={
-            query.trim() ? (
-              <NoMatches what="groups" query={query} />
-            ) : (
-              <Quiet>No groups yet.</Quiet>
-            )
-          }
+          rows={all}
+          empty={empty}
         />
-        <div style={{ marginTop: 'var(--space-3)' }}>
-          <ShowMore query={groups.query} label="Show more groups" />
-        </div>
+      )}
+      <div style={{ marginTop: 'var(--space-3)' }}>
+        <ShowMore query={groups.query} label="Show more groups" />
       </div>
-
-      {shown && (
-        <AppsDialog
-          key={shown.id}
-          principal={{ kind: 'group', id: shown.id, name: shown.name }}
-          onClose={() => setShowing(null)}
-        />
-      )}
-
-      {editing && <EditGroup group={editing} onClose={() => setEditing(null)} />}
-      {limiting && <GroupAppLimit groupID={limiting.id} name={limiting.name} onClose={() => setLimiting(null)} />}
-      {linking && (
-        <LinkGroups group={all.find((g) => g.id === linking.id) ?? linking} synced={all.filter((g) => g.source)} onClose={() => setLinking(null)} />
-      )}
-      {deleting && <DeleteGroup group={deleting} onClose={() => setDeleting(null)} />}
-    </section>
+    </>
   );
 }
 
 /** A count of members, as said: 1 member, 3 members. */
-const members = (n: number) => `${n} ${n === 1 ? 'member' : 'members'}`;
+const members = (n: number) => `${n.toLocaleString('en-US')} ${n === 1 ? 'member' : 'members'}`;
 
-/** Members listed by name in the group editor; a search finds the rest. */
-const MEMBERS_NAMED = 100;
-/** Accounts a search in the group editor offers. */
-const PEOPLE_FOUND = 20;
+function Quiet({ children }: Readonly<{ children: React.ReactNode }>) {
+  return <p style={{ font: 'var(--type-body-ui)', color: 'var(--ink-secondary)', margin: 'var(--space-3) 0' }}>{children}</p>;
+}
 
-function EditGroup({ group, onClose }: { group: Group | 'new'; onClose: () => void }) {
+/** A table's first cell: the mark and the name. */
+function Named({ icon, name }: Readonly<{ icon: 'users' | 'key-round'; name: string }>) {
+  return (
+    <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', minWidth: 0 }}>
+      <Mark icon={icon} />
+      <span title={name} style={{ font: 'var(--type-label)', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {name}
+      </span>
+    </span>
+  );
+}
+
+interface Item {
+  id: string;
+  href: string;
+  follow: () => void;
+  icon: 'users' | 'key-round';
+  name: string;
+  line: string;
+  start: React.ReactNode;
+  end: string;
+}
+
+/** The phone's list: one stacked row each, the whole row a link. */
+function ItemList({ items, loading, empty }: Readonly<{ items: Item[]; loading: boolean; empty: React.ReactNode }>) {
+  if (loading && items.length === 0) {
+    return (
+      <Loading>
+        {[0, 1, 2].map((n) => (
+          <LineSkeleton key={n} width={`${24 - n * 4}ch`} />
+        ))}
+      </Loading>
+    );
+  }
+  if (items.length === 0) return <>{empty}</>;
+  return (
+    <div className="pando-id-list">
+      {items.map((it) => (
+        <RouteLink key={it.id} href={it.href} onFollow={it.follow} className="pando-id-item">
+          <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', minWidth: 0 }}>
+            <Mark icon={it.icon} />
+            <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+              <span style={{ font: 'var(--type-label)' }}>{it.name}</span>
+              <span style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)' }}>{it.line}</span>
+            </span>
+          </span>
+          <span style={{ paddingLeft: 'calc(var(--control-console) + var(--space-3))' }}>{it.start}</span>
+          <span style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)', justifySelf: 'end' }}>{it.end}</span>
+        </RouteLink>
+      ))}
+    </div>
+  );
+}
+
+/** Adds a Pando group by name, then opens it, where its members are added. */
+function AddGroup({ onClose, onAdded }: Readonly<{ onClose: () => void; onAdded: (id: string) => void }>) {
   const queries = useQueryClient();
-  const creating = group === 'new';
-  const [name, setName] = useState(creating ? '' : group.name);
-  // The group counts its members and pages them (issue #72): a group can
-  // hold the whole organization, so neither the group nor this dialog reads
-  // all of them. What changes is held as who was added and who was taken out,
-  // and saved one person at a time.
-  const detail = useQuery({
-    queryKey: ['groups', creating ? 'new' : group.id],
-    queryFn: () => api.get<Group>(`/groups/${creating ? '' : group.id}`),
-    enabled: !creating,
-  });
-  const [added, setAdded] = useState<string[]>([]);
-  const [removed, setRemoved] = useState<string[]>([]);
-
-  // The people offered: the first members, and whoever a search finds, with
-  // which of those are members already. Not every account in the install,
-  // which can be a hundred thousand.
-  const [search, setSearch] = useState('');
-  const settled = useSettled(search.trim());
-  const accounts = useQuery({
-    queryKey: ['users', 'pick', creating ? 'new' : group.id, settled],
-    queryFn: async () => {
-      type Accounts = { users?: Account[] | null; members?: Account[] | null };
-      const membersOf = (params: Record<string, string | string[] | number | undefined>) =>
-        creating
-          ? Promise.resolve<Accounts>({ members: [] })
-          : api.get<Accounts>(withParams(`/groups/${group.id}/members`, params));
-      const [first, found] = await Promise.all([
-        membersOf({ limit: MEMBERS_NAMED }),
-        api.get<Accounts>(withParams('/users', { q: settled, limit: PEOPLE_FOUND })),
-      ]);
-      const named = first.members ?? [];
-      const others = (found.users ?? []).filter((a) => !named.some((m) => m.id === a.id));
-      const alsoIn = others.length > 0 ? await membersOf({ id: others.map((a) => a.id), limit: others.length }) : {};
-      const inGroup = new Set([...named, ...(alsoIn.members ?? [])].map((a) => a.id));
-      return { people: [...named, ...others], inGroup };
-    },
-    enabled: creating || detail.isSuccess,
-    placeholderData: (previous) => previous,
-  });
-  const isMember = (id: string) =>
-    added.includes(id) || (!removed.includes(id) && Boolean(accounts.data?.inGroup.has(id)));
-
+  const [name, setName] = useState('');
   const save = useMutation({
-    mutationFn: async () => {
-      if (creating) return api.post('/groups', { name, members: added });
-      // In order: a failure part way leaves what succeeded in place, and the
-      // list, refreshed either way, shows how far it got.
-      for (const id of added) await api.put(`/groups/${group.id}/members/${id}`);
-      for (const id of removed) await api.del(`/groups/${group.id}/members/${id}`);
+    mutationFn: () => api.post<{ id: string }>('/groups', { name: name.trim() }),
+    onSuccess: (group) => {
+      void refreshMembership(queries);
+      onClose();
+      onAdded(group.id);
     },
-    onSuccess: () => onClose(),
-    onSettled: () => refreshMembership(queries),
   });
-
-  const toggle = (id: string) => {
-    const wasMember = Boolean(accounts.data?.inGroup.has(id));
-    const on = !isMember(id);
-    setAdded((a) => (on && !wasMember ? [...a, id] : a.filter((m) => m !== id)));
-    setRemoved((r) => (!on && wasMember ? [...r, id] : r.filter((m) => m !== id)));
-  };
-  const count = detail.data?.member_count ?? 0;
-
   return (
     <Dialog
       open
       onClose={onClose}
-      title={creating ? 'Add group' : `Members of ${name}`}
-      description="Changes take effect immediately."
+      title="Add group"
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" disabled={save.isPending || (creating && !name) || (!creating && !detail.isSuccess)} onClick={() => save.mutate()}>
-            {save.isPending ? 'Saving' : 'Save'}
+          <Button variant="primary" disabled={save.isPending || !name.trim()} onClick={() => save.mutate()}>
+            {save.isPending ? 'Adding' : 'Add group'}
           </Button>
         </>
       }
     >
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 'var(--space-5)',
-        }}
-      >
-        {creating && (
-          <Input
-            label="Name"
-            value={name}
-            helper="For example, platform."
-            onChange={(e) => setName(e.target.value)}
-          />
-        )}
-
-        <div
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 'var(--space-3)',
-          }}
-        >
-          <SearchField value={search} onChange={setSearch} placeholder="Search accounts to add" width="100%" />
-          {count > MEMBERS_NAMED && (
-            <Quiet>
-              Showing {MEMBERS_NAMED} of {count.toLocaleString('en-US')} members. Search to find the others.
-            </Quiet>
-          )}
-          {/* A checkbox's line each, until the accounts arrive. */}
-          {accounts.isPending && (
-            <Loading>
-              {[0, 1, 2].map((n) => (
-                <LineSkeleton key={n} width={`${24 - n * 4}ch`} />
-              ))}
-            </Loading>
-          )}
-          {(accounts.data?.people ?? []).map((a) => (
-            <Checkbox
-              key={a.id}
-              checked={isMember(a.id)}
-              label={a.display_name || a.email || a.external_id}
-              onChange={() => toggle(a.id)}
-            />
-          ))}
-        </div>
-
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+        <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} />
         {save.isError && <Banner tone="failed">{messageOf(save.error)}</Banner>}
       </div>
     </Dialog>
   );
 }
 
-/** The group's installation role. Everyone in the group holds it, so a new
- *  member of a team gets what the team has without being given it one by one. */
-function GroupRole({ group, roles }: { group: Group; roles: Role[] }) {
-  const queries = useQueryClient();
-  const [error, setError] = useState<string>();
-
-  const change = useMutation({
-    mutationFn: (roleID: string) =>
-      roleID === ''
-        ? api.del<void>(`/groups/${group.id}/role`)
-        : api.put<unknown>(`/groups/${group.id}/role`, { role_id: roleID }),
-    onSuccess: () => {
-      setError(undefined);
-      void queries.invalidateQueries({ queryKey: ['groups'] });
-      // Every member's verbs just changed, possibly your own.
-      void queries.invalidateQueries({ queryKey: ['users'] });
-      void queries.invalidateQueries({ queryKey: ['me'] });
-    },
-    // Taking the role away from the only group that lets anyone manage
-    // accounts is refused (R-088); the remedy says what to do instead.
-    onError: (e) => setError(refusal(e)),
-  });
-
-  return (
-    <Select
-      aria-label={`Role for ${group.name}`}
-      value={group.install_role_id ?? ''}
-      disabled={change.isPending}
-      onChange={(e) => change.mutate(e.target.value)}
-      options={[{ value: '', label: 'None' }, ...roles.map((r) => ({ value: r.id, label: sentence(r.name) }))]}
-      helper={error}
-    />
-  );
-}
-
 // --- roles -----------------------------------------------------------------
 
-function Roles({ canEdit, query }: { canEdit: boolean; query: string }) {
-  const [adding, setAdding] = useState(false);
-  const [deleting, setDeleting] = useState<Role | null>(null);
-  const [viewing, setViewing] = useState<Role | null>(null);
-
-  const roles = useQuery({
-    // Both scopes. Without it this listed only the installation roles, and the
-    // app roles — three of Pando's five, and any made here — were not on the
-    // screen that says what every role is.
-    queryKey: ['roles', 'all'],
-    queryFn: () => api.get<{ roles: Role[] | null }>('/roles?scope=all'),
-  });
-
-  // By name, by what it applies to, and by any permission it holds — so
+function RolesTable({
+  roles,
+  query,
+  go,
+}: Readonly<{ roles: ReturnType<typeof useAllRoles>; query: string; go: (route: Route) => void }>) {
+  const narrow = useNarrow();
+  // By name, by scope, by source, and by any permission it holds — so
   // "secrets" finds every role that can touch them.
   const rows = (roles.data?.roles ?? []).filter((r) =>
-    matches(
-      query,
-      r.name,
-      r.scope === 'install' ? 'Installation' : 'App',
-      r.builtin ? 'Pando' : 'This installation',
-      ...r.verbs,
-    ),
+    matches(query, r.name, scopeLabel(r), r.builtin ? 'Built in' : 'Custom', ...r.verbs),
   );
+  const empty = query.trim() ? <NoMatches what="roles" query={query} /> : undefined;
+  const source = (r: Role) => (r.builtin ? 'Built in' : 'Custom');
 
   return (
-    <section>
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'baseline',
-          justifyContent: 'space-between',
-        }}
-      >
-        <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-2)' }}>Roles</h4>
-        {canEdit && (
-          <Button variant="secondary" onClick={() => setAdding(true)}>
-            Add role
-          </Button>
-        )}
-      </div>
-
-      {/* R-081, said where someone would otherwise look for an edit button. */}
-      <Quiet>
-        Named sets of permissions. Built-in roles can&rsquo;t be edited or deleted.
-      </Quiet>
-
+    <>
       {roles.isError && <Banner tone="failed">{messageOf(roles.error)}</Banner>}
-
-      <div style={{ marginTop: 'var(--space-4)' }}>
+      {narrow ? (
+        <ItemList
+          loading={roles.isPending}
+          empty={empty}
+          items={rows.map((r) => ({
+            id: r.id,
+            href: format(roleRoute(r.id)),
+            follow: () => go(roleRoute(r.id)),
+            icon: 'key-round' as const,
+            name: roleName(r),
+            line: `${scopeLabel(r)} · ${source(r)}`,
+            start: null,
+            end: permissionCount(r.verbs.length),
+          }))}
+        />
+      ) : (
         <Table
           loading={roles.isPending}
           skeletonRows={5}
+          onRowClick={(row: Role) => go(roleRoute(row.id))}
+          rowHref={(row: Role) => format(roleRoute(row.id))}
           columns={[
             {
               key: 'name',
               header: 'Name',
-              width: 'minmax(16ch,1fr)',
-              render: (row: Role) => <span title={row.name}>{row.name}</span>,
+              width: 'minmax(16ch,2fr)',
+              render: (row: Role) => <Named icon="key-round" name={roleName(row)} />,
             },
             {
               key: 'scope',
               header: 'Scope',
-              width: '14ch',
-              // R-080: the two scopes are never conflated. An install role and
-              // an app role are different things and this column is where a
-              // reader learns that.
-              render: (row: Role) => (row.scope === 'install' ? 'Installation' : 'App'),
-            },
-            {
-              key: 'builtin',
-              header: 'Source',
-              width: '18ch',
-              muted: true,
-              render: (row: Role) => (row.builtin ? 'Pando' : 'This installation'),
+              width: 'minmax(0,1fr)',
+              filter: 'values',
+              filterValue: scopeLabel,
+              // R-080: the two scopes are never conflated.
+              render: scopeLabel,
             },
             {
               key: 'verbs',
               header: 'Permissions',
-              width: '18ch',
-              // A count, not the list: a role can hold twenty verbs, and every
-              // one of them on the row made the table mostly tags. The list
-              // opens from here, each verb with what it lets somebody do.
-              render: (row: Role) => (
-                <Button
-                  variant="ghost"
-                  // Two roles with the same count would otherwise be announced
-                  // alike; the visible text leads so voice control still finds it.
-                  aria-label={`${permissionCount(row.verbs.length)} in the ${row.name} role`}
-                  onClick={() => setViewing(row)}
-                >
-                  {permissionCount(row.verbs.length)}
-                </Button>
-              ),
+              width: '14ch',
+              render: (row: Role) => row.verbs.length,
             },
             {
-              key: 'delete',
-              header: '',
-              width: '10ch',
-              align: 'right',
-              // R-081: built-ins are not deletable, so they are not offered.
-              render: (row: Role) =>
-                canEdit && !row.builtin ? (
-                  <Button variant="secondary" onClick={() => setDeleting(row)}>
-                    Delete
-                  </Button>
-                ) : null,
+              key: 'builtin',
+              header: 'Source',
+              width: 'minmax(0,1fr)',
+              muted: true,
+              filter: 'values',
+              filterValue: source,
+              render: source,
             },
           ]}
           rows={rows}
-          empty={query.trim() ? <NoMatches what="roles" query={query} /> : undefined}
+          empty={empty}
         />
-      </div>
-
-      {adding && <AddRole onClose={() => setAdding(false)} />}
-      {deleting && <DeleteRole role={deleting} onClose={() => setDeleting(null)} />}
-      {viewing && <RolePermissions role={viewing} onClose={() => setViewing(null)} />}
-    </section>
+      )}
+    </>
   );
 }
 
-function permissionCount(n: number): string {
-  return n === 1 ? '1 permission' : `${n} permissions`;
-}
-
-/** One role's verbs, each with the sentence the role editor shows under it. */
-function RolePermissions({ role, onClose }: Readonly<{ role: Role; onClose: () => void }>) {
-  const scope = role.scope === 'install' ? 'Installation' : 'App';
-  const source = role.builtin ? 'built into Pando' : 'made on this installation';
-  return (
-    <Dialog
-      open
-      onClose={onClose}
-      title={`The ${role.name} role`}
-      description={`${scope} role, ${source}. ${permissionCount(role.verbs.length)}.`}
-      footer={
-        <Button variant="secondary" onClick={onClose}>
-          Close
-        </Button>
-      }
-    >
-      <ul
-        style={{
-          listStyle: 'none',
-          margin: 0,
-          padding: 0,
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 'var(--space-3)',
-        }}
-      >
-        {role.verbs.map((v) => (
-          <li key={v} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
-            <span style={{ font: 'var(--type-code-sm)' }}>{v}</span>
-            {VERB_NOTES[v] && (
-              <span style={{ font: 'var(--type-body-ui)', color: 'var(--ink-secondary)' }}>{VERB_NOTES[v]}</span>
-            )}
-          </li>
-        ))}
-      </ul>
-    </Dialog>
-  );
-}
-
-function AddRole({ onClose }: { onClose: () => void }) {
+/** Composes a custom role from the verb list (R-082), then opens it. */
+function AddRole({ onClose, onAdded }: Readonly<{ onClose: () => void; onAdded: (id: string) => void }>) {
   const queries = useQueryClient();
   const [name, setName] = useState('');
   const [scope, setScope] = useState('app');
   const [verbs, setVerbs] = useState<string[]>([]);
 
-  const catalog = useQuery({
-    queryKey: ['verbs'],
-    queryFn: () => api.get<{ verbs: VerbRow[] | null }>('/verbs'),
-  });
-
-  // Every role, the shipped ones included, so a name already taken is said
-  // while it is typed. The server refuses it too, ignoring case and spaces:
-  // the built-ins are stored lowercase and shown capitalized, and
-  // "Administrator" beside the real one would be indistinguishable in a
-  // picker.
-  const existing = useQuery({
-    queryKey: ['roles', 'all'],
-    queryFn: () => api.get<{ roles: Role[] }>('/roles?scope=all'),
-  });
+  const catalog = useVerbs();
+  const existing = useAllRoles();
+  // A name already taken is said while it is typed. The server refuses it
+  // too, ignoring case and spaces, built-ins included (R-082).
   const clash = (existing.data?.roles ?? []).find((r) => r.name.trim().toLowerCase() === name.trim().toLowerCase());
-  const taken =
-    name.trim() && clash
-      ? clash.builtin
-        ? `Pando already has a built-in role called ${sentence(clash.name)}. Choose a different name.`
-        : `There is already a role called ${clash.name}. Choose a different name.`
-      : undefined;
+  let taken: string | undefined;
+  if (name.trim() && clash) {
+    taken = clash.builtin
+      ? `Pando already has a built-in role called ${sentence(clash.name)}. Choose a different name.`
+      : `There is already a role called ${clash.name}. Choose a different name.`;
+  }
 
   const save = useMutation({
-    mutationFn: () => api.post('/roles', { name: name.trim(), scope, verbs }),
-    onSuccess: () => {
+    mutationFn: () => api.post<{ id: string }>('/roles', { name: name.trim(), scope, verbs }),
+    onSuccess: (role) => {
       void queries.invalidateQueries({ queryKey: ['roles'] });
       onClose();
+      onAdded(role.id);
     },
   });
-
-  // Only the verbs of the chosen scope. A role mixing the two is refused by the
-  // server (R-080), and offering the choice that will be refused is worse than
-  // not offering it: the scopes are different questions, not a filter.
-  const available = (catalog.data?.verbs ?? []).filter((v) => v.scope === scope);
-
-  const toggle = (verb: string) =>
-    setVerbs((current) => (current.includes(verb) ? current.filter((v) => v !== verb) : [...current, verb]));
 
   return (
     <Dialog
@@ -684,21 +454,8 @@ function AddRole({ onClose }: { onClose: () => void }) {
         </>
       }
     >
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 'var(--space-5)',
-        }}
-      >
-        <Input
-          label="Name"
-          value={name}
-          helper="For example, support or release manager."
-          error={taken}
-          onChange={(e) => setName(e.target.value)}
-        />
-
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
+        <Input label="Name" value={name} error={taken} onChange={(e) => setName(e.target.value)} />
         <Select
           label="Scope"
           value={scope}
@@ -711,148 +468,153 @@ function AddRole({ onClose }: { onClose: () => void }) {
             setVerbs([]);
           }}
         />
-
-        <div
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 'var(--space-3)',
-          }}
-        >
-          {catalog.isPending && (
-            <Loading>
-              {[0, 1, 2, 3].map((n) => (
-                <LineSkeleton key={n} width={`${22 - (n % 2) * 6}ch`} />
-              ))}
-            </Loading>
-          )}
-          {available.map((v) => (
-            <Checkbox
-              key={v.verb}
-              checked={verbs.includes(v.verb)}
-              label={v.verb}
-              description={VERB_NOTES[v.verb]}
-              onChange={() => toggle(v.verb)}
-            />
-          ))}
-        </div>
-
+        {/* Only the verbs of the chosen scope: a role mixing the two is
+            refused (R-080). */}
+        <VerbChecklist scope={scope} catalog={catalog} chosen={verbs} onChange={setVerbs} />
         {save.isError && <Banner tone="failed">{messageOf(save.error)}</Banner>}
       </div>
     </Dialog>
   );
 }
 
+/** The verb catalog, for composing or editing a role. */
+export function useVerbs() {
+  return useQuery({
+    queryKey: ['verbs'],
+    queryFn: () => api.get<{ verbs: VerbRow[] | null }>('/verbs'),
+  });
+}
+
+/** Every verb of a scope, each a checkbox with what it lets somebody do. */
+export function VerbChecklist({
+  scope,
+  catalog,
+  chosen,
+  onChange,
+}: Readonly<{
+  scope: string;
+  catalog: ReturnType<typeof useVerbs>;
+  chosen: string[];
+  onChange: (verbs: string[]) => void;
+}>) {
+  const available = (catalog.data?.verbs ?? []).filter((v) => v.scope === scope);
+  const toggle = (verb: string) =>
+    onChange(chosen.includes(verb) ? chosen.filter((v) => v !== verb) : [...chosen, verb]);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+      {catalog.isPending && (
+        <Loading>
+          {[0, 1, 2, 3].map((n) => (
+            <LineSkeleton key={n} width={`${22 - (n % 2) * 6}ch`} />
+          ))}
+        </Loading>
+      )}
+      {available.map((v) => (
+        <Checkbox
+          key={v.verb}
+          checked={chosen.includes(v.verb)}
+          label={VERB_NOTES[v.verb] ?? v.verb}
+          description={v.verb}
+          onChange={() => toggle(v.verb)}
+        />
+      ))}
+    </div>
+  );
+}
+
 // --- deleting ----------------------------------------------------------------
 //
-// Both are allowed, and both take access away from people who may not know it
-// is happening, so each says whose access goes and whose stays before anything
-// is deleted. The server refuses the one case that would lock the installation
-// (R-088) and says why; that message is shown as-is.
+// Both take access away from people who may not know it is happening, so each
+// says whose access goes and whose stays. The server refuses the one case that
+// would lock the installation (R-088) and says why; that message is shown
+// as-is.
 
-function DeleteGroup({ group, onClose }: { group: Group; onClose: () => void }) {
+function DeleteDialog({
+  title,
+  description,
+  path,
+  kept,
+  label,
+  onClose,
+  onDeleted,
+}: Readonly<{
+  title: string;
+  description: string;
+  path: string;
+  kept: string;
+  label: string;
+  onClose: () => void;
+  onDeleted: () => void;
+}>) {
   const queries = useQueryClient();
   const remove = useMutation({
-    mutationFn: () => api.del<void>(`/groups/${group.id}`),
+    mutationFn: () => api.del<void>(path),
     onSuccess: () => {
       void queries.invalidateQueries();
       onClose();
+      onDeleted();
     },
   });
-  const people = group.member_count ?? group.members?.length ?? 0;
-
   return (
     <Dialog
       open
       onClose={onClose}
-      title={`Delete the ${group.name} group`}
-      description="Everyone in it loses the access the group gave them."
+      title={title}
+      description={description}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
           <Button variant="destructive" disabled={remove.isPending} onClick={() => remove.mutate()}>
-            {remove.isPending ? 'Deleting' : 'Delete group'}
+            {remove.isPending ? 'Deleting' : label}
           </Button>
         </>
       }
     >
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 'var(--space-3)',
-        }}
-      >
-        <p style={{ font: 'var(--type-body-ui)', margin: 0 }}>
-          {people === 1 ? 'The one member keeps their account' : `The ${people} members keep their accounts`} and any
-          access given to them directly or through another group.
-        </p>
-        <p
-          style={{
-            font: 'var(--type-body-ui)',
-            color: 'var(--ink-secondary)',
-            margin: 0,
-          }}
-        >
-          This can&rsquo;t be undone.
-        </p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+        <p style={{ font: 'var(--type-body-ui)', margin: 0 }}>{kept}</p>
+        <p style={{ font: 'var(--type-body-ui)', color: 'var(--ink-secondary)', margin: 0 }}>This can&rsquo;t be undone.</p>
         {remove.isError && <Banner tone="failed">{refusal(remove.error)}</Banner>}
       </div>
     </Dialog>
   );
 }
 
-function DeleteRole({ role, onClose }: { role: Role; onClose: () => void }) {
-  const queries = useQueryClient();
-  const remove = useMutation({
-    mutationFn: () => api.del<void>(`/roles/${role.id}`),
-    onSuccess: () => {
-      void queries.invalidateQueries();
-      onClose();
-    },
-  });
-
+export function DeleteGroup({
+  group,
+  onClose,
+  onDeleted,
+}: Readonly<{ group: Group; onClose: () => void; onDeleted: () => void }>) {
+  const people = group.member_count ?? 0;
   return (
-    <Dialog
-      open
+    <DeleteDialog
+      title={`Delete the ${group.name} group`}
+      description="Everyone in it loses the access the group gave them."
+      path={`/groups/${group.id}`}
+      kept={`${people === 1 ? 'The one member keeps their account' : `The ${people} members keep their accounts`} and any access given to them directly or through another group.`}
+      label="Delete group"
       onClose={onClose}
+      onDeleted={onDeleted}
+    />
+  );
+}
+
+export function DeleteRole({
+  role,
+  onClose,
+  onDeleted,
+}: Readonly<{ role: Role; onClose: () => void; onDeleted: () => void }>) {
+  return (
+    <DeleteDialog
       title={`Delete the ${role.name} role`}
       description="Anyone given this role loses what it allowed."
-      footer={
-        <>
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button variant="destructive" disabled={remove.isPending} onClick={() => remove.mutate()}>
-            {remove.isPending ? 'Deleting' : 'Delete role'}
-          </Button>
-        </>
-      }
-    >
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 'var(--space-3)',
-        }}
-      >
-        <p style={{ font: 'var(--type-body-ui)', margin: 0 }}>
-          They keep any access they hold another way.
-        </p>
-        <p
-          style={{
-            font: 'var(--type-body-ui)',
-            color: 'var(--ink-secondary)',
-            margin: 0,
-          }}
-        >
-          This can&rsquo;t be undone.
-        </p>
-        {remove.isError && <Banner tone="failed">{refusal(remove.error)}</Banner>}
-      </div>
-    </Dialog>
+      path={`/roles/${role.id}`}
+      kept="They keep any access they hold another way."
+      label="Delete role"
+      onClose={onClose}
+      onDeleted={onDeleted}
+    />
   );
 }
 
@@ -861,7 +623,7 @@ function DeleteRole({ role, onClose }: { role: Role; onClose: () => void }) {
  * Everyone in a linked provider group holds what this group holds, for as long
  * as the provider keeps them in it (R-079).
  */
-function LinkGroups({ group, synced, onClose }: { group: Group; synced: Group[]; onClose: () => void }) {
+export function LinkGroups({ group, synced, onClose }: Readonly<{ group: Group; synced: Group[]; onClose: () => void }>) {
   const queries = useQueryClient();
   const linked = new Set(group.linked_from ?? []);
   const toggle = useMutation({
@@ -873,7 +635,7 @@ function LinkGroups({ group, synced, onClose }: { group: Group; synced: Group[];
     <Dialog
       open
       title={`Provider groups in ${group.name}`}
-      description="Members of a chosen group count as members of this one. Removals at the provider apply within two minutes."
+      description="Members of a chosen group count as members of this one."
       onClose={onClose}
       footer={
         <Button variant="primary" onClick={onClose}>
@@ -886,7 +648,7 @@ function LinkGroups({ group, synced, onClose }: { group: Group; synced: Group[];
           <Checkbox
             key={g.id}
             label={g.name}
-            description={`${g.source_name ?? g.source}, ${members(g.member_count ?? g.members?.length ?? 0)}`}
+            description={`${g.source_name ?? g.source}, ${members(g.member_count ?? 0)}`}
             checked={linked.has(g.id)}
             disabled={toggle.isPending}
             onChange={(e) => toggle.mutate({ id: g.id, on: e.target.checked })}

@@ -47,7 +47,7 @@ describe('the screens’ copy', () => {
       { id: 'role_admin', name: 'admin', scope: 'install', builtin: true, verbs: [] },
       { id: 'role_viewer', name: 'viewer', scope: 'app', builtin: true, verbs: [] },
     ];
-    const html = render(<Identity canEdit={false} />, [[['roles', 'all'], { roles }]]);
+    const html = render(<Identity canEdit={false} tab="roles" />, [[['roles', 'all'], { roles }]]);
     expect(html).toContain('>Installation<');
     expect(html).toContain('>App<');
   });

@@ -673,6 +673,7 @@ func (s *Server) Routes() http.Handler {
 			r.Put("/{groupID}/links/{syncedGroupID}", s.handleLinkGroup)
 			r.Delete("/{groupID}/links/{syncedGroupID}", s.handleUnlinkGroup)
 			r.Get("/{groupID}", s.handleGetGroup)
+			r.Patch("/{groupID}", s.handleRenameGroup)
 			r.Delete("/{groupID}", s.handleDeleteGroup)
 		})
 
@@ -690,6 +691,8 @@ func (s *Server) Routes() http.Handler {
 		r.Route("/roles", func(r chi.Router) {
 			r.Get("/", s.handleListRoles)
 			r.Post("/", s.handleCreateRole)
+			r.Patch("/{roleID}", s.handleUpdateRole)
+			r.Get("/{roleID}/holders", s.handleRoleHolders)
 			r.Delete("/{roleID}", s.handleDeleteRole)
 		})
 

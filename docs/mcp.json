@@ -636,6 +636,33 @@
       }
     },
     {
+      "name": "pando_edit_role",
+      "description": "Rename a custom role, replace its permissions, or both. The verbs must be of the role's scope; built-in roles cannot be changed. Changing an installation role needs every installation permission it carries before and after; permissions added to an app role must be yours on every app it is granted on. Needs install.users.manage.",
+      "input_schema": {
+        "properties": {
+          "name": {
+            "description": "The new name. Leave out to keep it.",
+            "type": "string"
+          },
+          "role_id": {
+            "description": "The role's ID.",
+            "type": "string"
+          },
+          "verbs": {
+            "description": "Every permission the role carries, from the verb catalog. Leave out to keep them.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "role_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
       "name": "pando_favorite_app",
       "description": "Pin an app to the top of your own launcher. It grants nothing and only you see it; you must be able to open the app.",
       "input_schema": {
@@ -1219,6 +1246,26 @@
       }
     },
     {
+      "name": "pando_list_role_holders",
+      "description": "Who holds a role: the groups granted it, then the accounts holding it, each with via — direct, or group for an account holding it only through a group. An app role's holders are those holding it on any app. A page at a time: pass `next_cursor` back as `cursor`. Needs install.view.",
+      "input_schema": {
+        "properties": {
+          "cursor": {
+            "description": "The next_cursor from a previous page.",
+            "type": "string"
+          },
+          "role_id": {
+            "description": "The role's ID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
       "name": "pando_list_secrets",
       "description": "List which secrets an app has, and where each came from. Never their values.",
       "input_schema": {
@@ -1576,6 +1623,27 @@
         },
         "required": [
           "app_id",
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_rename_group",
+      "description": "Rename a group made in Pando. A group synced from an identity provider is renamed there. Needs install.users.manage.",
+      "input_schema": {
+        "properties": {
+          "group_id": {
+            "description": "The group's ID.",
+            "type": "string"
+          },
+          "name": {
+            "description": "The new name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "group_id",
           "name"
         ],
         "type": "object"

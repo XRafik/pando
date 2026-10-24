@@ -1344,6 +1344,74 @@ var toolList = []tool{
 		},
 	},
 	{
+		Name: "pando_rename_group",
+		Description: "Rename a group made in Pando. A group synced from an identity provider is renamed there. " +
+			"Needs install.users.manage.",
+		Schema: schema(map[string]any{
+			"group_id": str("The group's ID."),
+			"name":     str("The new name."),
+		}, "group_id", "name"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, name, err := twoArgs(args, "group_id", "name")
+			if err != nil {
+				return "", "", nil, err
+			}
+			return "PATCH", "/groups/" + url.PathEscape(id), map[string]any{"name": name}, nil
+		},
+	},
+	{
+		Name: "pando_edit_role",
+		Description: "Rename a custom role, replace its permissions, or both. The verbs must be of the role's " +
+			"scope; built-in roles cannot be changed. Changing an installation role needs every installation " +
+			"permission it carries before and after; permissions added to an app role must be yours on every app " +
+			"it is granted on. Needs install.users.manage.",
+		Schema: schema(map[string]any{
+			"role_id": str("The role's ID."),
+			"name":    str("The new name. Leave out to keep it."),
+			"verbs":   strList("Every permission the role carries, from the verb catalog. Leave out to keep them."),
+		}, "role_id"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, err := stringArg(args, "role_id", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			body := map[string]any{}
+			if name, err := stringArg(args, "name", false); err != nil {
+				return "", "", nil, err
+			} else if name != "" {
+				body["name"] = name
+			}
+			if _, ok := args["verbs"]; ok {
+				verbs, err := stringListArg(args, "verbs")
+				if err != nil {
+					return "", "", nil, err
+				}
+				body["verbs"] = verbs
+			}
+			if len(body) == 0 {
+				return "", "", nil, fmt.Errorf("give name, verbs, or both")
+			}
+			return "PATCH", "/roles/" + url.PathEscape(id), body, nil
+		},
+	},
+	{
+		Name: "pando_list_role_holders",
+		Description: "Who holds a role: the groups granted it, then the accounts holding it, each with via — " +
+			"direct, or group for an account holding it only through a group. An app role's holders are those " +
+			"holding it on any app. A page at a time: pass `next_cursor` back as `cursor`. Needs install.view.",
+		Schema: schema(map[string]any{
+			"role_id": str("The role's ID."),
+			"cursor":  str("The next_cursor from a previous page."),
+		}, "role_id"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, err := stringArg(args, "role_id", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			return pagedGet("/roles/"+url.PathEscape(id)+"/holders", args, "cursor")
+		},
+	},
+	{
 		Name:        "pando_rename_section",
 		Description: "Rename one of your launcher sections.",
 		Schema: schema(map[string]any{

@@ -35,6 +35,8 @@ import { AccountPage } from '../install/Account';
 import { Accounts, messageOf } from '../install/Accounts';
 import { filtersFrom, linkQuery } from '../install/audit';
 import { Identity } from '../install/Identity';
+import { GroupPage } from '../install/GroupPage';
+import { RolePage } from '../install/RolePage';
 import { SignIn } from '../install/SignIn';
 import { Backups } from '../install/Backups';
 import { Events } from '../install/Events';
@@ -365,7 +367,16 @@ export function AdminConsole({
           ) : (
             <Accounts onOpen={(a) => go({ view: 'admin', section: 'accounts', userID: a.id })} />
           ))}
-        {section === 'identity' && <Identity canEdit={canManageUsers} />}
+        {section === 'identity' && route.groupID && <GroupPage groupID={route.groupID} canEdit={canManageUsers} go={go} />}
+        {section === 'identity' && route.roleID && <RolePage roleID={route.roleID} canEdit={canManageUsers} go={go} />}
+        {section === 'identity' && !route.groupID && !route.roleID && (
+          <Identity
+            canEdit={canManageUsers}
+            tab={route.tab === 'roles' ? 'roles' : 'groups'}
+            onTab={(tab) => go({ view: 'admin', section: 'identity', ...(tab === 'roles' ? { tab } : {}) }, true)}
+            go={go}
+          />
+        )}
         {section === 'sign-in' && (
           <SignIn
             canEdit={canManageAdapters}
