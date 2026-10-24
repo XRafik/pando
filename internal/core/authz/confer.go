@@ -196,27 +196,41 @@ func (a *Authorizer) CheckConfersOnApp(ctx context.Context, p Principal, appID, 
 	if err != nil {
 		return err
 	}
+	name := role.Name
+	if name == "" {
+		name = roleID
+	}
+	return a.CheckConfersVerbsOnApp(ctx, p, appID, role.Verbs, strings.Replace(act, "%s", name, 1))
+}
+
+// CheckConfersVerbsOnApp is CheckConfersOnApp for a list of verbs rather than
+// a role: what editing a custom app role adds to everyone holding it on that
+// app (R-080a, R-155). Install verbs in the list are ignored.
+func (a *Authorizer) CheckConfersVerbsOnApp(ctx context.Context, p Principal, appID string, verbs []Verb, act string) error {
+	if len(verbs) == 0 {
+		return nil
+	}
+	want := map[Verb]bool{}
+	for _, v := range verbs {
+		want[v] = true
+	}
 	held, err := a.AppVerbsHeld(ctx, p, appID)
 	if err != nil {
 		return err
 	}
 	var missing []Verb
 	for _, v := range Verbs {
-		if !InstallScoped(v) && role.Has(v) && !held[v] {
+		if !InstallScoped(v) && want[v] && !held[v] {
 			missing = append(missing, v)
 		}
 	}
 	if len(missing) == 0 {
 		return nil
 	}
-	name := role.Name
-	if name == "" {
-		name = roleID
-	}
 	return a.deny(ctx, p, appID, missing[0], errs.Newf(errs.PermVerbRequired,
 		"Pando refused to %s, because that would hand on permissions you do not hold on this app yourself: %s. "+
 			"A permission on an app can be given only by someone who holds it there.",
-		strings.Replace(act, "%s", name, 1), joinVerbs(missing)).
+		act, joinVerbs(missing)).
 		WithRemedy("Choose a role with only permissions you hold on this app, or ask someone who holds the rest to make this change.").
 		WithDetail("missing_verbs", missing))
 }

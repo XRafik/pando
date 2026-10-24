@@ -68,7 +68,16 @@ func (s *Server) handleGetGroup(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, errs.New(errs.NotFound, "There is no group with that ID."))
 		return
 	}
-	JSON(w, http.StatusOK, group)
+	// Its installation role, as the list carries it (R-078).
+	roleID, _, err := s.Grants.InstallRoleOf(r.Context(), "group", group.ID)
+	if err != nil {
+		Error(w, r, err)
+		return
+	}
+	JSON(w, http.StatusOK, struct {
+		state.Group
+		InstallRoleID string `json:"install_role_id"`
+	}{group, roleID})
 }
 
 // handleListGroupMembers is one page of the people directly in a group.

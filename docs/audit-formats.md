@@ -184,6 +184,7 @@ is encoded as 6003 API Activity, 99 Other.
 | `policy.update` | 6003 API Activity | 3 Update | 600303 |
 | `role.create` | 6003 API Activity | 1 Create | 600301 |
 | `role.delete` | 6003 API Activity | 4 Delete | 600304 |
+| `role.update` | 6003 API Activity | 3 Update | 600303 |
 | `routing.change` | 6003 API Activity | 3 Update | 600303 |
 | `secret.delete` | 6003 API Activity | 4 Delete | 600304 |
 | `secret.write` | 6003 API Activity | 1 Create | 600301 |

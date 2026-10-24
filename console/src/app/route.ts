@@ -95,6 +95,9 @@ export interface Route {
   deployment?: string;
   /** An account's own page, under Accounts. */
   userID?: string;
+  /** A group's or a role's own page, under Groups and roles. */
+  groupID?: string;
+  roleID?: string;
   /** The Audit log's filters, as a query string without `?` — how an
    *  account's page links to the whole log already narrowed to it. On the
    *  Sign-in screen, the provider and test sign-in to show. */
@@ -129,6 +132,10 @@ export function parse(pathname: string, search = ''): Route {
     return { view: 'admin', section: 'accounts', userID: parts[2] };
   }
 
+  // /admin/identity/groups/{id}, /admin/identity/roles/{id}, and the Roles
+  // tab at /admin/identity/roles.
+  if (parts[1] === 'identity') return identityRoute(parts[2], parts[3]);
+
   // /admin/audit?… — filters carried in from a link. /admin/sign-in?… — the
   // provider a test sign-in came back from, and its report (issue #51).
   const query = search.replace(/^\?/, '');
@@ -156,6 +163,15 @@ export function parse(pathname: string, search = ''): Route {
 
   const section = SECTIONS.find((s) => s === parts[1]);
   return { view: 'admin', section: section ?? 'apps' };
+}
+
+/** Groups and roles: a group's page, a role's, or the list on either tab. */
+function identityRoute(kind: string | undefined, id: string | undefined): Route {
+  const route: Route = { view: 'admin', section: 'identity' };
+  if (kind === 'groups' && id) route.groupID = id;
+  else if (kind === 'roles' && id) route.roleID = id;
+  else if (kind === 'roles') route.tab = 'roles';
+  return route;
 }
 
 /** An app's screen: its tab, and the side panel when one is open. */
@@ -202,6 +218,11 @@ export function format(route: Route): string {
     return `/admin/apps/${route.appID}${route.tab ? `/${route.tab}` : ''}${page}${panelQuery(route)}`;
   }
   if (route.section === 'accounts' && route.userID) return `/admin/accounts/${route.userID}`;
+  if (route.section === 'identity') {
+    if (route.groupID) return `/admin/identity/groups/${route.groupID}`;
+    if (route.roleID) return `/admin/identity/roles/${route.roleID}`;
+    if (route.tab === 'roles') return '/admin/identity/roles';
+  }
   if (route.section === 'system' && route.tab) {
     return `/admin/system/${route.tab}${route.query ? `?${route.query}` : ''}`;
   }

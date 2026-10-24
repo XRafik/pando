@@ -630,34 +630,15 @@ func (r *Roles) CreateCustom(ctx context.Context, name, scope string, verbs []au
 	case !errors.Is(err, pgx.ErrNoRows):
 		return authz.Role{}, errs.Wrap(errs.Internal, "Could not create the role.", err)
 	}
-	if len(verbs) == 0 {
-		return authz.Role{}, errs.New(errs.ValidInvalid, "A role needs at least one permission.").
-			WithRemedy("Choose from the list at GET /verbs.")
-	}
-
 	switch scope {
 	case "app", "install":
 	default:
 		return authz.Role{}, errs.New(errs.ValidInvalid,
 			"A role applies either to one app or across the installation.")
 	}
-
-	names := make([]string, 0, len(verbs))
-	for _, v := range verbs {
-		if !authz.IsVerb(v) {
-			return authz.Role{}, errs.Newf(errs.ValidInvalid,
-				"%q is not a permission Pando has.", v).
-				WithRemedy("Choose from the list at GET /verbs.")
-		}
-		// A role must not mix scopes. The two are checked by different
-		// functions against different grants, so a role holding both would be
-		// half-usable wherever it was granted (design 06 §2.1).
-		if authz.InstallScoped(v) != (scope == "install") {
-			return authz.Role{}, errs.Newf(errs.ValidInvalid,
-				"%q does not apply %s, so it cannot be part of a role that does.", v, scopeWord(scope)).
-				WithRemedy("Make two roles, or choose the other scope.")
-		}
-		names = append(names, string(v))
+	names, err := checkVerbs(verbs, scope, "Make two roles, or choose the other scope.")
+	if err != nil {
+		return authz.Role{}, err
 	}
 
 	role := authz.Role{ID: id.New(id.Role), Name: name, Builtin: false, Verbs: verbs}

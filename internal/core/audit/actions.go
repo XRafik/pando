@@ -127,6 +127,7 @@ var Actions = []string{
 	"policy.update",
 	"role.create",
 	"role.delete",
+	"role.update",
 	"routing.change",
 	"secret.delete",
 	"secret.write",

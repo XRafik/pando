@@ -1,9 +1,9 @@
-// What each verb lets somebody do, for the role editor.
+// What each verb lets somebody do, for a role's permissions.
 //
-// The verb itself stays the label — it is what the API, the CLI and the audit
-// log call it, and machine text is shown verbatim — and this is the sentence
-// under it. A verb with no sentence here is shown with none; the test beside
-// this file keeps every verb the console knows about covered.
+// The sentence leads and the verb sits under it in mono — it is what the API,
+// the CLI and the audit log call it, and machine text is shown verbatim. A
+// verb with no sentence here is shown by its name alone; the test beside this
+// file keeps every verb the console knows about covered.
 
 export const VERB_NOTES: Record<string, string> = {
   'install.view': 'See the installation: accounts, adapters, policy and capacity.',

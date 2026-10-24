@@ -46,6 +46,7 @@
         "pando plan",
         "pando policy",
         "pando restart",
+        "pando role",
         "pando rollback",
         "pando secret",
         "pando section",
@@ -3464,6 +3465,7 @@
         "pando group apps",
         "pando group list",
         "pando group remove-member",
+        "pando group rename",
         "pando group role"
       ]
     },
@@ -3600,6 +3602,36 @@
       "path": "pando group remove-member",
       "use": "remove-member <group-id> <user-id>",
       "short": "Remove an account from a group",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando group rename",
+      "use": "rename <group-id> <name>",
+      "short": "Rename a group made in Pando",
       "long": "",
       "example": "",
       "aliases": [],
@@ -4844,6 +4876,117 @@
           "type": "string",
           "default": "",
           "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando role",
+      "use": "role",
+      "short": "Work with roles and who holds them",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        "pando role edit",
+        "pando role holders"
+      ]
+    },
+    {
+      "path": "pando role edit",
+      "use": "edit <role-id>",
+      "short": "Rename a custom role, or replace its permissions",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "name",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "the role's new name",
+          "required": false
+        },
+        {
+          "name": "verbs",
+          "shorthand": "",
+          "type": "stringSlice",
+          "default": "[]",
+          "usage": "every permission the role carries, comma-separated",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando role holders",
+      "use": "holders <role-id>",
+      "short": "Show the groups and accounts holding a role, directly or through a group",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
           "required": false
         }
       ],

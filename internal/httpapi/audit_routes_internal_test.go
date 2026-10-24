@@ -86,10 +86,12 @@ var auditedRoutes = map[string][]string{
 	"PUT /api/v1/groups/{groupID}/links/{syncedGroupID}":    {"group.link"},
 	"DELETE /api/v1/groups/{groupID}/links/{syncedGroupID}": {"group.unlink"},
 	"DELETE /api/v1/groups/{groupID}":                       {"group.delete"},
+	"PATCH /api/v1/groups/{groupID}":                        {"group.rename"},
 
 	// Roles and tokens.
 	"POST /api/v1/roles":              {"role.create"},
 	"DELETE /api/v1/roles/{roleID}":   {"role.delete"},
+	"PATCH /api/v1/roles/{roleID}":    {"role.update"},
 	"POST /api/v1/tokens":             {"token.create"},
 	"POST /api/v1/tokens/service":     {"token.create"},
 	"DELETE /api/v1/tokens/{tokenID}": {"token.revoke"},
