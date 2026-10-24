@@ -16,10 +16,11 @@ export function Segmented<T extends string>({
   onChange: (value: T) => void;
 }>) {
   return (
-    <div
-      role="group"
+    <fieldset
       aria-label={label}
       style={{
+        margin: 0,
+        padding: 0,
         display: 'inline-flex',
         alignSelf: 'flex-start',
         border: 'var(--border-width) solid var(--field-border)',
@@ -50,6 +51,6 @@ export function Segmented<T extends string>({
           </button>
         );
       })}
-    </div>
+    </fieldset>
   );
 }

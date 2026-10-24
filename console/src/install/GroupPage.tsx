@@ -85,9 +85,9 @@ export function GroupPage({
     return (
       <Page>
         <PageHeader back={back} icon="users" name="" />
-        <div role="status" aria-label="Loading">
+        <output aria-label="Loading" style={{ display: 'block' }}>
           <LineSkeleton width="24ch" />
-        </div>
+        </output>
       </Page>
     );
   }
@@ -158,6 +158,12 @@ function limitText(max: number | null | undefined): string {
   return max === 1 ? '1 app' : `${max} apps`;
 }
 
+/** The group's installation role by name, its ID while roles are loading, or none. */
+function roleText(id: string | undefined, role: Role | undefined): string {
+  if (!id) return 'No role';
+  return role ? roleName(role) : id;
+}
+
 /** What the group holds: its installation role, its app limit, and on a Pando
  *  group the provider groups counted as its members. */
 function Access({ group, canEdit }: Readonly<{ group: Group; canEdit: boolean }>) {
@@ -197,7 +203,7 @@ function Access({ group, canEdit }: Readonly<{ group: Group; canEdit: boolean }>
 
   return (
     <IdCard title="Access">
-      <AccessRow label="Role" value={group.install_role_id ? (role ? roleName(role) : group.install_role_id) : 'No role'} action={change('role')} />
+      <AccessRow label="Role" value={roleText(group.install_role_id, role)} action={change('role')} />
       <AccessRow label="App limit" value={limit.isPending ? <LineSkeleton width="8ch" /> : limitText(limit.data?.max_apps)} action={change('limit')} />
       {!group.source && syncedGroups.length > 0 && (
         <AccessRow
@@ -317,7 +323,8 @@ export async function setLevel(groupID: string, row: AppAccess, level: string): 
 
 /** Takes away every grant the group has on the app. */
 export async function removeApp(row: AppAccess): Promise<void> {
-  for (const g of [...row.control, ...row.data]) await api.del<unknown>(`/apps/${row.app_id}/grants/${g.grant_id}`);
+  // Each grant is removed on its own; none depends on another going first.
+  await Promise.all([...row.control, ...row.data].map((g) => api.del<unknown>(`/apps/${row.app_id}/grants/${g.grant_id}`)));
 }
 
 /** The apps the group reaches, each with its level and a remove, where the

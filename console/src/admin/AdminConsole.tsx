@@ -79,6 +79,9 @@ import { RouteLink } from '../ui/RouteLink';
 import { FieldSkeleton, HeadingSkeleton, LineSkeleton, Loading } from '../ui/Loading';
 import { WithCode } from '../ui/ErrorCode';
 
+/** An app's row at phone width, in place of the columns. */
+const stackedRow = (row: App) => <StackedAppRow row={row} />;
+
 export function AdminConsole({
   route,
   go,
@@ -512,7 +515,7 @@ function AppsList({
           loading={loading}
           onRowClick={onOpen}
           rowHref={hrefOf}
-          stacked={(row: App) => <StackedAppRow row={row} />}
+          stacked={stackedRow}
           // A fresh install has no apps, and the list was a set of column
           // headers over nothing. R-002 is about the tenth app; the first one
           // is what makes the install anything at all.

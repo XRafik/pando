@@ -297,7 +297,7 @@ function AddGroup({ onClose, onAdded }: Readonly<{ onClose: () => void; onAdded:
   const save = useMutation({
     mutationFn: () => api.post<{ id: string }>('/groups', { name: name.trim() }),
     onSuccess: (group) => {
-      void refreshMembership(queries);
+      refreshMembership(queries);
       onClose();
       onAdded(group.id);
     },
@@ -581,6 +581,11 @@ function DeleteDialog({
   );
 }
 
+/** Who keeps their account when a group of this many is deleted. */
+function keepers(people: number): string {
+  return people === 1 ? 'The one member keeps their account' : `The ${people} members keep their accounts`;
+}
+
 export function DeleteGroup({
   group,
   onClose,
@@ -592,7 +597,7 @@ export function DeleteGroup({
       title={`Delete the ${group.name} group`}
       description="Everyone in it loses the access the group gave them."
       path={`/groups/${group.id}`}
-      kept={`${people === 1 ? 'The one member keeps their account' : `The ${people} members keep their accounts`} and any access given to them directly or through another group.`}
+      kept={`${keepers(people)} and any access given to them directly or through another group.`}
       label="Delete group"
       onClose={onClose}
       onDeleted={onDeleted}

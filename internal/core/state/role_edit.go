@@ -37,6 +37,13 @@ type RoleChange struct {
 	SetVerbs bool
 }
 
+// The messages more than one failure here shares.
+const (
+	msgRoleNotChanged = "Could not change the role."
+	msgHoldersNotRead = "Could not read who holds the role."
+	remedyOtherName   = "Choose a different name."
+)
+
 // errRoleNotFound is the answer for a role ID that names nothing.
 var errRoleNotFound = errs.New(errs.NotFound, "There is no role with that ID.")
 
@@ -59,7 +66,7 @@ var ErrBuiltinRole = errs.New(errs.ValidInvalid, "Pando's built-in roles cannot 
 func (r *Roles) UpdateCustom(ctx context.Context, roleID string, change RoleChange) (RoleRow, RoleRow, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
-		return RoleRow{}, RoleRow{}, errs.Wrap(errs.Internal, "Could not change the role.", err)
+		return RoleRow{}, RoleRow{}, errs.Wrap(errs.Internal, msgRoleNotChanged, err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
@@ -76,40 +83,25 @@ func (r *Roles) UpdateCustom(ctx context.Context, roleID string, change RoleChan
 		return RoleRow{}, RoleRow{}, ErrBuiltinRole
 	}
 
-	after := before
-	if change.Name != nil {
-		name := strings.TrimSpace(*change.Name)
-		if name == "" {
-			return RoleRow{}, RoleRow{}, errs.New(errs.ValidInvalid, "A role needs a name.")
-		}
-		if err := nameFree(ctx, tx, roleID, name); err != nil {
-			return RoleRow{}, RoleRow{}, err
-		}
-		after.Name = name
-	}
-	if change.SetVerbs {
-		names, err := checkVerbs(change.Verbs, before.Scope,
-			"Choose permissions of the role's own scope, or make another role.")
-		if err != nil {
-			return RoleRow{}, RoleRow{}, err
-		}
-		after.Verbs = names
+	after, err := applyRoleChange(ctx, tx, before, change)
+	if err != nil {
+		return RoleRow{}, RoleRow{}, err
 	}
 
 	before88, err := peopleWhoManage(ctx, tx)
 	if err != nil {
-		return RoleRow{}, RoleRow{}, errs.Wrap(errs.Internal, "Could not change the role.", err)
+		return RoleRow{}, RoleRow{}, errs.Wrap(errs.Internal, msgRoleNotChanged, err)
 	}
 	if _, err := tx.Exec(ctx, `UPDATE roles SET name = $2, verbs = $3 WHERE id = $1`,
 		roleID, after.Name, after.Verbs); err != nil {
 		if isUniqueViolation(err) {
 			return RoleRow{}, RoleRow{}, errs.Newf(errs.ValidInvalid, "There is already a role called %q.", after.Name)
 		}
-		return RoleRow{}, RoleRow{}, errs.Wrap(errs.Internal, "Could not change the role.", err)
+		return RoleRow{}, RoleRow{}, errs.Wrap(errs.Internal, msgRoleNotChanged, err)
 	}
 	after88, err := peopleWhoManage(ctx, tx)
 	if err != nil {
-		return RoleRow{}, RoleRow{}, errs.Wrap(errs.Internal, "Could not change the role.", err)
+		return RoleRow{}, RoleRow{}, errs.Wrap(errs.Internal, msgRoleNotChanged, err)
 	}
 	if before88 > 0 && after88 == 0 {
 		return RoleRow{}, RoleRow{}, errs.New(errs.ValidInvalid,
@@ -117,9 +109,34 @@ func (r *Roles) UpdateCustom(ctx context.Context, roleID string, change RoleChan
 			WithRemedy("Give someone the built-in administrator role first, then change this one.")
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return RoleRow{}, RoleRow{}, errs.Wrap(errs.Internal, "Could not change the role.", err)
+		return RoleRow{}, RoleRow{}, errs.Wrap(errs.Internal, msgRoleNotChanged, err)
 	}
 	return before, after, nil
+}
+
+// applyRoleChange returns the role as the change would leave it, refusing an
+// empty or taken name and permissions outside the role's scope.
+func applyRoleChange(ctx context.Context, tx pgx.Tx, before RoleRow, change RoleChange) (RoleRow, error) {
+	after := before
+	if change.Name != nil {
+		name := strings.TrimSpace(*change.Name)
+		if name == "" {
+			return RoleRow{}, errs.New(errs.ValidInvalid, "A role needs a name.")
+		}
+		if err := nameFree(ctx, tx, before.ID, name); err != nil {
+			return RoleRow{}, err
+		}
+		after.Name = name
+	}
+	if change.SetVerbs {
+		names, err := checkVerbs(change.Verbs, before.Scope,
+			"Choose permissions of the role's own scope, or make another role.")
+		if err != nil {
+			return RoleRow{}, err
+		}
+		after.Verbs = names
+	}
+	return after, nil
 }
 
 // nameFree refuses a role name another role already has, ignoring case and
@@ -134,13 +151,13 @@ func nameFree(ctx context.Context, tx pgx.Tx, roleID, name string) error {
 	case errors.Is(err, pgx.ErrNoRows):
 		return nil
 	case err != nil:
-		return errs.Wrap(errs.Internal, "Could not change the role.", err)
+		return errs.Wrap(errs.Internal, msgRoleNotChanged, err)
 	case builtin:
 		return errs.Newf(errs.ValidInvalid, "Pando already has a built-in role called %q.", taken).
-			WithRemedy("Choose a different name.")
+			WithRemedy(remedyOtherName)
 	}
 	return errs.Newf(errs.ValidInvalid, "There is already a role called %q.", taken).
-		WithRemedy("Choose a different name.")
+		WithRemedy(remedyOtherName)
 }
 
 // checkVerbs validates a role's permissions against the catalog and its
@@ -268,7 +285,7 @@ func (r *Roles) Holders(ctx context.Context, roleID string, page Page) ([]RoleHo
 		ORDER BY rank, lower(name), id
 		LIMIT $2`, args...)
 	if err != nil {
-		return nil, "", 0, 0, errs.Wrap(errs.Internal, "Could not read who holds the role.", err)
+		return nil, "", 0, 0, errs.Wrap(errs.Internal, msgHoldersNotRead, err)
 	}
 	defer rows.Close()
 
@@ -282,12 +299,12 @@ func (r *Roles) Holders(ctx context.Context, roleID string, page Page) ([]RoleHo
 		var h keyed
 		if err := rows.Scan(&h.rank, &h.sort, &h.Kind, &h.ID, &h.Name, &h.Username, &h.Source, &h.SourceName,
 			&h.Via, &h.GroupID); err != nil {
-			return nil, "", 0, 0, errs.Wrap(errs.Internal, "Could not read who holds the role.", err)
+			return nil, "", 0, 0, errs.Wrap(errs.Internal, msgHoldersNotRead, err)
 		}
 		got = append(got, h)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, "", 0, 0, errs.Wrap(errs.Internal, "Could not read who holds the role.", err)
+		return nil, "", 0, 0, errs.Wrap(errs.Internal, msgHoldersNotRead, err)
 	}
 	var next string
 	if len(got) > page.Size() {
@@ -305,7 +322,7 @@ func (r *Roles) Holders(ctx context.Context, roleID string, page Page) ([]RoleHo
 		SELECT count(*), count(*) FILTER (WHERE kind = 'group')
 		FROM (SELECT kind FROM holders LIMIT `+strconv.Itoa(TotalCap+1)+`) capped`, roleID).Scan(&total, &groups)
 	if err != nil {
-		return nil, "", 0, 0, errs.Wrap(errs.Internal, "Could not read who holds the role.", err)
+		return nil, "", 0, 0, errs.Wrap(errs.Internal, msgHoldersNotRead, err)
 	}
 	return out, next, total, groups, nil
 }
@@ -335,7 +352,7 @@ func (g *Groups) Rename(ctx context.Context, groupID, name string) (string, erro
 	if _, err := g.db.Exec(ctx, `UPDATE groups SET name = $2 WHERE id = $1`, groupID, name); err != nil {
 		if isUniqueViolation(err) {
 			return "", errs.Newf(errs.ValidInvalid, "There is already a group called %q.", name).
-				WithRemedy("Choose a different name.")
+				WithRemedy(remedyOtherName)
 		}
 		return "", errs.Wrap(errs.Internal, "Could not rename the group.", err)
 	}

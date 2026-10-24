@@ -1314,6 +1314,9 @@ func grantCmd(client func() (*Client, error)) *cobra.Command {
 // usersPath is where accounts are, under the API.
 const usersPath = "/users/"
 
+// groupsPath is where groups are, under the API.
+const groupsPath = "/groups/"
+
 // generatedPassword asks the server for a password, so the CLI's are the
 // same strength and alphabet as the console's (R-046).
 func generatedPassword(c *Client) (string, error) {
@@ -1518,7 +1521,7 @@ func groupCmd(client func() (*Client, error)) *cobra.Command {
 		Short: "Rename a group made in Pando",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return do("PATCH", "/groups/"+url.PathEscape(args[0]), map[string]any{"name": args[1]}, "Renamed.")(cmd, args)
+			return do("PATCH", groupsPath+url.PathEscape(args[0]), map[string]any{"name": args[1]}, "Renamed.")(cmd, args)
 		},
 	})
 	cmd.AddCommand(&cobra.Command{
@@ -1526,7 +1529,7 @@ func groupCmd(client func() (*Client, error)) *cobra.Command {
 		Short: "Add an account to a group; it then holds what the group holds",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return do("PUT", "/groups/"+args[0]+"/members/"+args[1], nil, "Added.")(cmd, args)
+			return do("PUT", groupsPath+args[0]+"/members/"+args[1], nil, "Added.")(cmd, args)
 		},
 	})
 	cmd.AddCommand(&cobra.Command{
@@ -1534,7 +1537,7 @@ func groupCmd(client func() (*Client, error)) *cobra.Command {
 		Short: "Remove an account from a group",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return do("DELETE", "/groups/"+args[0]+"/members/"+args[1], nil, "Removed.")(cmd, args)
+			return do("DELETE", groupsPath+args[0]+"/members/"+args[1], nil, "Removed.")(cmd, args)
 		},
 	})
 	var clear bool
@@ -1544,12 +1547,12 @@ func groupCmd(client func() (*Client, error)) *cobra.Command {
 		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if clear {
-				return do("DELETE", "/groups/"+args[0]+"/role", nil, "Role removed.")(cmd, args)
+				return do("DELETE", groupsPath+args[0]+"/role", nil, "Role removed.")(cmd, args)
 			}
 			if len(args) < 2 {
 				return fmt.Errorf("say which role, or pass --clear to take the group's role away")
 			}
-			return do("PUT", "/groups/"+args[0]+"/role", map[string]any{"role_id": args[1]}, "Role set.")(cmd, args)
+			return do("PUT", groupsPath+args[0]+"/role", map[string]any{"role_id": args[1]}, "Role set.")(cmd, args)
 		},
 	}
 	role.Flags().BoolVar(&clear, "clear", false, "take the group's installation role away")
@@ -1564,7 +1567,7 @@ func groupCmd(client func() (*Client, error)) *cobra.Command {
 				return err
 			}
 			var out map[string]any
-			if err := c.Do("GET", "/groups/"+args[0]+"/apps", nil, &out); err != nil {
+			if err := c.Do("GET", groupsPath+args[0]+"/apps", nil, &out); err != nil {
 				return err
 			}
 			return printJSON(cmd.OutOrStdout(), out)

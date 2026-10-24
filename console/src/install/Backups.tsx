@@ -123,7 +123,7 @@ export function Backups() {
       <SystemCard
         heading={
           <span style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 'var(--space-1) var(--space-3)' }}>
-            Whole installation
+            Whole installation{' '}
             <span style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)' }}>Every app, account and secret</span>
           </span>
         }

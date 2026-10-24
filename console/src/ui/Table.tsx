@@ -91,7 +91,7 @@ export function Table({
   skeletonRows = 4,
   stacked,
   ...props
-}: TableProps) {
+}: Readonly<TableProps>) {
   const [filters, setFilters] = useState<Record<string, ColumnFilter>>({});
   const narrow = useNarrow();
 
@@ -129,15 +129,22 @@ export function Table({
   const phoneFilters = narrow ? filtered.filter((c) => c.phoneFilter !== false) : [];
   const bar =
     phoneFilters.length > 0 ? (
-      <div
-        role="group"
+      <fieldset
         aria-label="Filters"
-        style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-1)', paddingBottom: 'var(--space-2)' }}
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: 'var(--space-1)',
+          minWidth: 0,
+          margin: 0,
+          border: 0,
+          padding: '0 0 var(--space-2)',
+        }}
       >
         {phoneFilters.map((c) => (
           <FilterButton key={c.key} labeled {...filterOf(c)} />
         ))}
-      </div>
+      </fieldset>
     ) : null;
 
   const asBlocks = narrow && stacked !== undefined;
@@ -221,7 +228,7 @@ function FilterButton({
   values,
   onChange,
   labeled = false,
-}: {
+}: Readonly<{
   labeled?: boolean;
   label: string;
   kind: 'text' | 'values';
@@ -229,7 +236,7 @@ function FilterButton({
   filter: ColumnFilter;
   values: Array<{ value: string; count: number }>;
   onChange: (next: ColumnFilter) => void;
-}) {
+}>) {
   const [open, setOpen] = useState(false);
   const button = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLDivElement>(null);

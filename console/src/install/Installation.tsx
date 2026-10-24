@@ -82,6 +82,20 @@ interface State {
   title?: string;
 }
 
+/** A source connection's state: whether it holds what it needs (R-091). */
+function connectionState(c: SourceConnection): State {
+  if (c.problem) return { status: 'failed', label: 'Cannot be used', title: c.problem };
+  if (!c.capabilities.authorized) return { status: 'info', label: 'Not authorized' };
+  return { status: 'running', label: 'Ready', title: covers(c) };
+}
+
+/** A notification adapter's state: whether it is connected. */
+function notifyState(n: NotifyAdapter): State {
+  if (n.problem) return { status: 'failed', label: 'Cannot be used', title: n.problem };
+  if (connectable(n) && !n.capabilities.authorized) return { status: 'info', label: 'Not connected' };
+  return { status: 'running', label: 'Ready' };
+}
+
 /**
  * An adapter's state, as a symbol and a word. Live, not stored: one that was
  * reachable at startup and is not now is exactly what this is for. A source
@@ -93,18 +107,8 @@ export function stateOf(row: Pick<Row, 'status' | 'pending_restart' | 'healthy' 
   // broken either.
   if (row.status === 'overridden') return { status: 'stopped', label: 'Replaced by config file' };
   if (row.pending_restart) return { status: 'info', label: 'Restart to apply' };
-  const c = row.connection;
-  if (c) {
-    if (c.problem) return { status: 'failed', label: 'Cannot be used', title: c.problem };
-    if (!c.capabilities.authorized) return { status: 'info', label: 'Not authorized' };
-    return { status: 'running', label: 'Ready', title: covers(c) };
-  }
-  const n = row.notify;
-  if (n) {
-    if (n.problem) return { status: 'failed', label: 'Cannot be used', title: n.problem };
-    if (connectable(n) && !n.capabilities.authorized) return { status: 'info', label: 'Not connected' };
-    return { status: 'running', label: 'Ready' };
-  }
+  if (row.connection) return connectionState(row.connection);
+  if (row.notify) return notifyState(row.notify);
   // Reachable is not the same as working: a Traefik that could not start
   // leaves every app behind it unreachable.
   if (row.healthy !== false && row.edge && !row.edge.running) {
@@ -120,6 +124,14 @@ export function worstOf(states: State[]): State | undefined {
   return states.reduce<State | undefined>((w, s) => (!w || RANK[s.status] > RANK[w.status] ? s : w), undefined);
 }
 
+/** A setting's value as read: On or Off for a switch, a list or an object as
+ *  its JSON, anything else as written. */
+function settingText(v: unknown): string {
+  if (typeof v === 'boolean') return v ? 'On' : 'Off';
+  if (typeof v === 'object') return JSON.stringify(v);
+  return String(v as string | number | bigint);
+}
+
 /** The settings worth reading at a glance: its ID, and every setting of its
  *  kind that is not a secret and has a value. Credentials are never in
  *  `config` (R-190), and a field marked as one is left out whatever it holds. */
@@ -129,7 +141,7 @@ export function settingsOf(row: Pick<Row, 'id' | 'config' | 'fields'>): Array<[s
     if (f.credential) continue;
     const v = row.config?.[f.key];
     if (v === undefined || v === null || v === '') continue;
-    out.push([f.label, typeof v === 'boolean' ? (v ? 'On' : 'Off') : String(v)]);
+    out.push([f.label, settingText(v)]);
   }
   return out;
 }
@@ -139,6 +151,57 @@ function addLabel(category: string, any: boolean): string {
   if (any) return 'Add another';
   const label = categoryLabel(category);
   return `Add ${label === 'AI' ? label : label.toLowerCase()}`;
+}
+
+/** A source connection (R-091), an image registry (issue #153) and a
+ *  notification adapter are used the moment they are saved; every other
+ *  category waits on a restart. */
+function usedOnSave(category: string | undefined): boolean {
+  return category === 'source' || category === 'image_registry' || category === 'notify';
+}
+
+/** What came back from a browser authorization, what was just done, and what
+ *  the last save warned of. */
+function Notices({
+  returnedError,
+  returnedOK,
+  notice,
+  warnings,
+  onWarnings,
+}: Readonly<{
+  returnedError: string | null;
+  returnedOK: string | null;
+  notice: string | null;
+  warnings: string[];
+  onWarnings: (warnings: string[]) => void;
+}>) {
+  return (
+    <>
+      {returnedError && <Banner tone="failed">{returnedError}</Banner>}
+      {(notice || (returnedOK && !returnedError)) && (
+        <Banner tone="info">{notice ?? `${returnedOK} is authorized and ready.`}</Banner>
+      )}
+      {warnings.map((w) => (
+        <InlineWarning key={w} onDismiss={() => onWarnings(warnings.filter((x) => x !== w))}>
+          {w}
+        </InlineWarning>
+      ))}
+    </>
+  );
+}
+
+/** Saved changes waiting on a restart, named when there is one. */
+function RestartNotice({
+  saved,
+  canManage,
+  onRestarted,
+}: Readonly<{ saved: string | null; canManage: boolean; onRestarted: () => void }>) {
+  return (
+    <Banner tone="info" action={canManage ? <RestartButton onRestarted={onRestarted} /> : undefined}>
+      {saved ? `${saved} is saved.` : 'Adapter changes are saved.'} Restart Pando to apply {saved ? 'it' : 'them'}.
+      {canManage ? null : <> Someone who can manage adapters can restart it.</>}
+    </Banner>
+  );
 }
 
 export function Installation({
@@ -268,7 +331,7 @@ export function Installation({
       }),
     onSuccess: (_, row) => {
       setDefaulting(null);
-      if (row.category === 'source' || row.category === 'image_registry' || row.category === 'notify') {
+      if (usedOnSave(row.category)) {
         setNotice(`${row.name || row.kindName} is the default. No restart is needed.`);
       } else {
         setSaved(row.name || row.kindName);
@@ -289,28 +352,23 @@ export function Installation({
       action={canManage && <RestartButton onRestarted={() => setSaved(null)} />}
     >
       {adapters.isError && <Quiet>{messageOf(adapters.error)}</Quiet>}
-      {returnedError && <Banner tone="failed">{returnedError}</Banner>}
-      {(notice || (returnedOK && !returnedError)) && (
-        <Banner tone="info">{notice ?? `${returnedOK} is authorized and ready.`}</Banner>
-      )}
-      {warnings.map((w) => (
-        <InlineWarning key={w} onDismiss={() => setWarnings(warnings.filter((x) => x !== w))}>
-          {w}
-        </InlineWarning>
-      ))}
+      <Notices
+        returnedError={returnedError}
+        returnedOK={returnedOK}
+        notice={notice}
+        warnings={warnings}
+        onWarnings={setWarnings}
+      />
       {(restartNeeded || saved) && (
-        <Banner tone="info" action={canManage ? <RestartButton onRestarted={() => setSaved(null)} /> : undefined}>
-          {saved ? `${saved} is saved.` : 'Adapter changes are saved.'} Restart Pando to apply {saved ? 'it' : 'them'}.
-          {canManage ? null : <> Someone who can manage adapters can restart it.</>}
-        </Banner>
+        <RestartNotice saved={saved} canManage={canManage} onRestarted={() => setSaved(null)} />
       )}
 
       {adapters.isPending ? (
-        <div role="status" aria-label="Loading" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+        <output aria-label="Loading" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
           {[0, 1, 2, 3].map((n) => (
             <LineSkeleton key={n} width="20ch" />
           ))}
-        </div>
+        </output>
       ) : (
         <div className={narrow ? undefined : 'pando-adapters'}>
           {showList && (
@@ -351,7 +409,7 @@ export function Installation({
           onSaved={(name, category, saveWarnings, id) => {
             setEditing(null);
             setWarnings(saveWarnings ?? []);
-            if (category === 'source' || category === 'image_registry' || category === 'notify') {
+            if (usedOnSave(category)) {
               setNotice(`${name} is saved and in use. No restart is needed.`);
               if (category === 'source') {
                 void queries.invalidateQueries({ queryKey: ['sources'] }).then(() => setToAuthorize(id ?? null));
@@ -384,32 +442,14 @@ export function Installation({
       )}
 
       {defaulting && (
-        <Dialog
-          open
-          title={`Make ${defaulting.row.name || defaulting.row.kindName} the default?`}
-          description={
-            defaulting.previous
-              ? defaultHandover(
-                  defaulting.row.name || defaulting.row.kindName,
-                  defaulting.previous.name || defaulting.previous.id,
-                  defaulting.row.category,
-                )
-              : undefined
-          }
+        <MakeDefaultDialog
+          row={defaulting.row}
+          previous={defaulting.previous}
+          pending={makeDefault.isPending}
+          error={makeDefault.error}
+          onConfirm={() => makeDefault.mutate(defaulting.row)}
           onClose={() => setDefaulting(null)}
-          footer={
-            <>
-              <Button variant="ghost" onClick={() => setDefaulting(null)}>
-                Cancel
-              </Button>
-              <Button variant="primary" disabled={makeDefault.isPending} onClick={() => makeDefault.mutate(defaulting.row)}>
-                {makeDefault.isPending ? 'Saving' : 'Make default'}
-              </Button>
-            </>
-          }
-        >
-          {makeDefault.isError && <Banner tone="failed">{refusal(makeDefault.error)}</Banner>}
-        </Dialog>
+        />
       )}
 
       {authorizing && (
@@ -446,26 +486,85 @@ export function Installation({
       )}
 
       {disconnecting && (
-        <Dialog
-          open
-          title={`Disconnect ${disconnecting.name}`}
-          description="Its stored credential is deleted. Apps that use it keep running. Their next deployment fails until another connection covers their repository."
+        <DisconnectDialog
+          source={disconnecting}
+          pending={disconnect.isPending}
+          error={disconnect.error}
+          onConfirm={() => disconnect.mutate(disconnecting.id)}
           onClose={() => setDisconnecting(null)}
-          footer={
-            <>
-              <Button variant="ghost" onClick={() => setDisconnecting(null)}>
-                Cancel
-              </Button>
-              <Button variant="destructive" disabled={disconnect.isPending} onClick={() => disconnect.mutate(disconnecting.id)}>
-                {disconnect.isPending ? 'Disconnecting' : 'Disconnect'}
-              </Button>
-            </>
-          }
-        >
-          {disconnect.isError && <Banner tone="failed">{messageOf(disconnect.error)}</Banner>}
-        </Dialog>
+        />
       )}
     </SystemPage>
+  );
+}
+
+/** Asks before deleting a source connection's stored credential. */
+function DisconnectDialog({
+  source,
+  pending,
+  error,
+  onConfirm,
+  onClose,
+}: Readonly<{ source: SourceConnection; pending: boolean; error: unknown; onConfirm: () => void; onClose: () => void }>) {
+  return (
+    <Dialog
+      open
+      title={`Disconnect ${source.name}`}
+      description="Its stored credential is deleted. Apps that use it keep running. Their next deployment fails until another connection covers their repository."
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="destructive" disabled={pending} onClick={onConfirm}>
+            {pending ? 'Disconnecting' : 'Disconnect'}
+          </Button>
+        </>
+      }
+    >
+      {error ? <Banner tone="failed">{messageOf(error)}</Banner> : null}
+    </Dialog>
+  );
+}
+
+/** Asks before making an adapter its category's default, saying which one it
+ *  takes over from. */
+function MakeDefaultDialog({
+  row,
+  previous,
+  pending,
+  error,
+  onConfirm,
+  onClose,
+}: Readonly<{
+  row: Row;
+  previous?: Row;
+  pending: boolean;
+  error: unknown;
+  onConfirm: () => void;
+  onClose: () => void;
+}>) {
+  const name = row.name || row.kindName;
+  return (
+    <Dialog
+      open
+      title={`Make ${name} the default?`}
+      description={previous ? defaultHandover(name, previous.name || previous.id, row.category) : undefined}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="primary" disabled={pending} onClick={onConfirm}>
+            {pending ? 'Saving' : 'Make default'}
+          </Button>
+        </>
+      }
+    >
+      {error ? <Banner tone="failed">{refusal(error)}</Banner> : null}
+    </Dialog>
   );
 }
 

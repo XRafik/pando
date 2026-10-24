@@ -112,7 +112,7 @@ export function Capacity({ names }: { names: Record<string, string> }) {
 
 /** One runtime's readings: a block of its own, named, since there can be
  *  several on one installation. */
-function Runtime({ rt, name, last }: { rt: RuntimeCapacity; name?: string; last: boolean }) {
+function Runtime({ rt, name, last }: Readonly<{ rt: RuntimeCapacity; name?: string; last: boolean }>) {
   const reportsUse = rt.in_use_cpu_millis !== undefined;
   const reportsNothing =
     rt.status === 'ok' && !rt.total_cpu_millis && !rt.total_memory_bytes && !rt.total_disk_bytes && !reportsUse;

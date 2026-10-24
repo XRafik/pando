@@ -105,7 +105,7 @@ function StartupSettings() {
     <SystemCard
       heading={
         <span style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
-          Startup settings
+          Startup settings{' '}
           <span style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)' }}>
             {set === 0
               ? 'Read once when Pando starts. Every setting is at its default.'
@@ -233,8 +233,11 @@ function SetBy({ source, env }: Readonly<{ source: Source; env: string }>) {
       </TipButton>
     );
   }
-  const exact =
-    source.kind === 'env' ? (source.name ?? env) : `${source.name ?? 'the config file'}${source.key ? `, at ${source.key}` : ''}`;
+  let exact = source.name ?? env;
+  if (source.kind !== 'env') {
+    const at = source.key ? `, at ${source.key}` : '';
+    exact = `${source.name ?? 'the config file'}${at}`;
+  }
   return (
     <TipButton tip={exact} label={`${source.kind === 'env' ? 'Environment' : 'Config file'}: ${exact}`}>
       <Tag tone="contour">{source.kind === 'env' ? 'Environment' : 'Config file'}</Tag>

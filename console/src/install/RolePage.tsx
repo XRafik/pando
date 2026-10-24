@@ -91,9 +91,9 @@ export function RolePage({
     return (
       <Page>
         <PageHeader back={back} icon="key-round" name="" />
-        <div role="status" aria-label="Loading">
+        <output aria-label="Loading" style={{ display: 'block' }}>
           <LineSkeleton width="24ch" />
-        </div>
+        </output>
       </Page>
     );
   }

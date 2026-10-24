@@ -72,7 +72,7 @@ function delivering(s: AuditSink): boolean {
  * destination sending as it should, by name and where it sends (R-385), with
  * how far each has got on hover (R-383), and a link to where they are set up.
  */
-export function AuditSinkLine({ onAdapters, href }: { onAdapters?: () => void; href?: string }) {
+export function AuditSinkLine({ onAdapters, href }: Readonly<{ onAdapters?: () => void; href?: string }>) {
   const sinks = useAuditSinks();
   const on = (sinks.data?.audit_sinks ?? []).filter(delivering);
   if (on.length === 0) return null;

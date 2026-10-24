@@ -820,20 +820,20 @@ function InPlaceSetup() {
  * (O-10): a saved policy applies at each app's next deployment, and Check
  * impact says which apps that refuses before it is saved.
  */
+/** What saving the draft does, or what checking its impact found. */
+function previewLine(preview: readonly unknown[] | null): string {
+  if (preview === null) return 'Applies at each app’s next deployment.';
+  if (preview.length === 0) return 'No apps break these rules.';
+  if (preview.length === 1) return 'One app keeps running and is refused at its next deployment.';
+  return `${preview.length} apps keep running and are refused at their next deployment.`;
+}
+
 export function SaveBar() {
   const { changed, current, discard, save, check, preview, canEdit } = usePolicy();
   if (!canEdit || changed.length === 0) return null;
-  let line: React.ReactNode = 'Applies at each app’s next deployment.';
-  if (preview !== null) {
-    line =
-      preview.length === 0
-        ? 'No apps break these rules.'
-        : preview.length === 1
-          ? 'One app keeps running and is refused at its next deployment.'
-          : `${preview.length} apps keep running and are refused at their next deployment.`;
-  }
+  const line = previewLine(preview);
   return (
-    <div className="pando-savebar" role="region" aria-label="Unsaved policy">
+    <section className="pando-savebar" aria-label="Unsaved policy">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)', minWidth: 0 }}>
         <span style={{ font: 'var(--type-label)', color: 'var(--ink)' }}>{changesLabel(changed.length)}</span>
         <span style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)' }}>{line}</span>
@@ -872,7 +872,7 @@ export function SaveBar() {
           />
         </div>
       )}
-    </div>
+    </section>
   );
 }
 

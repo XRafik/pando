@@ -42,7 +42,7 @@ describe('the table at phone width', () => {
   it('puts a button per filtered column above the rows, leaving out the ones the search covers', () => {
     atWidth(true);
     const screen = mount(<Table columns={columns} rows={rows} />);
-    const group = document.querySelector('[role="group"][aria-label="Filters"]');
+    const group = document.querySelector('fieldset[aria-label="Filters"]');
     expect(group).not.toBeNull();
     expect([...group!.querySelectorAll('button')].map((b) => b.textContent?.trim())).toEqual(['Status']);
     // No filter icon in the headers.
@@ -82,7 +82,7 @@ describe('the table at phone width', () => {
   it('keeps the columns and their header filters on a wide window', () => {
     atWidth(false);
     const screen = mount(<Table columns={columns} rows={rows} stacked={() => <span data-block />} />);
-    expect(document.querySelector('[role="group"][aria-label="Filters"]')).toBeNull();
+    expect(document.querySelector('fieldset[aria-label="Filters"]')).toBeNull();
     expect(document.querySelector('button[aria-label="Filter Status"]')).not.toBeNull();
     expect(document.querySelector('[data-block]')).toBeNull();
     screen.unmount();

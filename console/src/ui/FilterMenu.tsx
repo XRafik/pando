@@ -10,7 +10,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { Button, Checkbox, Icon } from '@design';
 
-import { useCloseOnOutside } from './combobox';
+import { useCloseOnOutside, useEscapeInside } from './combobox';
 
 export interface FilterOption {
   value: string;
@@ -34,6 +34,7 @@ export function FilterMenu({
   const root = useRef<HTMLDivElement>(null);
   const roots = useMemo(() => [root], []);
   useCloseOnOutside(roots, open, () => setOpen(false));
+  useEscapeInside(root, open, () => setOpen(false));
 
   const active = !single && chosen.length > 0;
   let shown = label;
@@ -41,16 +42,7 @@ export function FilterMenu({
   else if (active) shown = `${label} · ${chosen.length}`;
 
   return (
-    <div
-      ref={root}
-      style={{ position: 'relative' }}
-      onKeyDown={(e) => {
-        if (e.key === 'Escape' && open) {
-          e.stopPropagation();
-          setOpen(false);
-        }
-      }}
-    >
+    <div ref={root} style={{ position: 'relative' }}>
       <Button
         variant={active || single ? 'secondary' : 'ghost'}
         aria-haspopup="true"
@@ -62,10 +54,10 @@ export function FilterMenu({
         <Icon name="chevron-down" size={12} />
       </Button>
       {open && (
-        <div
-          role="group"
+        <fieldset
           aria-label={label}
           style={{
+            margin: 0,
             position: 'absolute',
             top: 'calc(100% + var(--space-1))',
             left: 0,
@@ -99,7 +91,7 @@ export function FilterMenu({
               }}
             />
           ))}
-        </div>
+        </fieldset>
       )}
     </div>
   );

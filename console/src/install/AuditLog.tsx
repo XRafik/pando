@@ -21,7 +21,7 @@ import { Quiet, Screen, messageOf } from './Accounts';
 import { NO_FILTERS, WHEN, auditQuery, filtersFromSearch } from './audit';
 import type { AuditFilters } from './audit';
 import { AIButton } from '../ui/AskAI';
-import { useCloseOnOutside } from '../ui/combobox';
+import { useCloseOnOutside, useEscapeInside } from '../ui/combobox';
 import { copyOrSelect } from '../ui/CopyField';
 import { useNarrow } from '../ui/narrow';
 import { useSettled } from '../ui/paged';
@@ -342,8 +342,10 @@ function FilterButton({
 }: Readonly<{ label: string; count?: number; active?: boolean; children: React.ReactNode }>) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
+  const popover = useRef<HTMLDivElement>(null);
   const id = useId();
   useCloseOnOutside(root, open, () => setOpen(false));
+  useEscapeInside(popover, open, () => setOpen(false));
   return (
     <div ref={root} style={{ position: 'relative' }}>
       <Button
@@ -359,12 +361,10 @@ function FilterButton({
       </Button>
       {open && (
         <div
+          ref={popover}
           id={id}
           role="dialog"
           aria-label={label}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape') setOpen(false);
-          }}
           style={{
             position: 'absolute',
             top: 'calc(100% + var(--space-1))',
@@ -394,6 +394,13 @@ function Outcome({ outcome }: Readonly<{ outcome?: string }>) {
   if (outcome === 'denied') return <StatusIndicator status="stopped" label="Denied" />;
   if (outcome === 'failed') return <StatusIndicator status="failed" label="Failed" />;
   return null;
+}
+
+/** How an event ended, in a word. */
+function outcomeWord(outcome?: string): string {
+  if (outcome === 'failed') return 'Failed';
+  if (outcome === 'denied') return 'Denied';
+  return 'Succeeded';
 }
 
 /** The sentence, how it ended when it did not succeed, and the action. */
@@ -510,7 +517,7 @@ function AuditPanel({
 
   const actor = actorText(e, people);
   const facts: Array<[string, string, boolean?]> = [
-    ['Outcome', e.outcome === 'failed' ? 'Failed' : e.outcome === 'denied' ? 'Denied' : 'Succeeded'],
+    ['Outcome', outcomeWord(e.outcome)],
     ['Action', e.action, true],
     ['Actor', [actor, e.actor_email].filter(Boolean).join(' · ')],
   ];

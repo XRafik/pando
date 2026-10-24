@@ -466,13 +466,13 @@ function SubscriptionPanel({
   destinations,
   onClose,
   onKey,
-}: {
+}: Readonly<{
   id: string;
   catalog: EventDef[];
   destinations: Destination[];
   onClose: () => void;
   onKey: (s: Subscription) => void;
-}) {
+}>) {
   const queries = useQueryClient();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -859,7 +859,7 @@ function SubscriptionForm({
   destinations,
   onClose,
   onSaved,
-}: {
+}: Readonly<{
   editing?: Subscription;
   apps: App[];
   /** Made from an app's own Events tab: about that app, without asking. */
@@ -869,24 +869,15 @@ function SubscriptionForm({
   destinations: Destination[];
   onClose: () => void;
   onSaved: (s: Subscription) => void;
-}) {
+}>) {
   const queries = useQueryClient();
   const [description, setDescription] = useState(editing?.description ?? '');
-  const [appID, setAppID] = useState(editing?.app_id ?? fixedApp?.id ?? (canManageAll ? '' : (apps[0]?.id ?? '')));
+  const [appID, setAppID] = useState(() => appOf(editing, fixedApp, canManageAll, apps));
   const [chosen, setChosen] = useState<string[]>(editing?.events ?? ['*']);
   const [target, setTarget] = useState(editing ? sendTo(editing) : WEBHOOK);
   const [url, setURL] = useState(editing?.url ?? '');
   const [channel, setChannel] = useState(editing?.channel ?? '');
-  const [request, setRequest] = useState<RequestOptions>(
-    editing
-      ? {
-          method: editing.method || 'POST',
-          contentType: editing.content_type || 'application/json',
-          headers: '',
-          template: editing.payload_template ?? '',
-        }
-      : DEFAULT_REQUEST,
-  );
+  const [request, setRequest] = useState<RequestOptions>(() => requestOf(editing));
   const [removeHeaders, setRemoveHeaders] = useState(false);
 
   const webhook = target === WEBHOOK;
@@ -929,12 +920,7 @@ function SubscriptionForm({
     ...(canManageAll ? [{ value: '', label: 'Installation' }] : []),
     ...apps.map((a) => ({ value: a.id, label: a.name })),
   ];
-  const sendOptions = [
-    ...(!editing || editing.destination === 'webhook' ? [{ value: WEBHOOK, label: 'Webhook' }] : []),
-    ...(!editing || editing.destination === 'notify'
-      ? destinations.map((d) => ({ value: `notify:${d.id}`, label: destinationLabel(d, destinations) }))
-      : []),
-  ];
+  const sendOptions = sendOptionsOf(editing, destinations);
 
   const ready =
     chosen.length > 0 &&
@@ -1024,6 +1010,37 @@ function SubscriptionForm({
       </div>
     </Dialog>
   );
+}
+
+/** The app a subscription's form starts with: its own, the app it is made
+ *  from, the installation for someone who can subscribe to it, or else the
+ *  first app. */
+function appOf(editing: Subscription | undefined, fixedApp: App | undefined, canManageAll: boolean, apps: App[]): string {
+  if (editing?.app_id !== undefined) return editing.app_id;
+  if (fixedApp) return fixedApp.id;
+  return canManageAll ? '' : (apps[0]?.id ?? '');
+}
+
+/** The request options a subscription's form starts with: its own, or the defaults for a new one. */
+function requestOf(editing?: Subscription): RequestOptions {
+  if (!editing) return DEFAULT_REQUEST;
+  return {
+    method: editing.method || 'POST',
+    contentType: editing.content_type || 'application/json',
+    headers: '',
+    template: editing.payload_template ?? '',
+  };
+}
+
+/** Where a subscription can send: a webhook or a notification adapter, and
+ *  once made, only the kind it already is. */
+function sendOptionsOf(editing: Subscription | undefined, destinations: Destination[]) {
+  return [
+    ...(!editing || editing.destination === 'webhook' ? [{ value: WEBHOOK, label: 'Webhook' }] : []),
+    ...(!editing || editing.destination === 'notify'
+      ? destinations.map((d) => ({ value: `notify:${d.id}`, label: destinationLabel(d, destinations) }))
+      : []),
+  ];
 }
 
 /** Each group of events, and its events under it while the group is not chosen whole. */

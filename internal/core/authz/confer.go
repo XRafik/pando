@@ -152,33 +152,39 @@ func (a *Authorizer) AppVerbsHeld(ctx context.Context, p Principal, appID string
 	if err != nil {
 		return nil, err
 	}
-	for _, g := range grants {
-		role, err := a.roleOf(ctx, nil, g)
-		if err != nil {
-			return nil, err
-		}
-		for _, v := range role.Verbs {
-			if !InstallScoped(v) {
-				held[v] = true
-			}
-		}
+	// On the app itself: the app verbs its roles carry.
+	if err := a.addHeld(ctx, held, grants, func(v Verb) (Verb, bool) { return v, !InstallScoped(v) }); err != nil {
+		return nil, err
 	}
 	install, err := a.store.InstallGrantsFor(ctx, p)
 	if err != nil {
 		return nil, err
 	}
-	for _, g := range install {
+	// Installation-wide: the app verb each install.apps.* verb stands for.
+	if err := a.addHeld(ctx, held, install, func(v Verb) (Verb, bool) {
+		app, ok := everyApp[v]
+		return app, ok
+	}); err != nil {
+		return nil, err
+	}
+	return held, nil
+}
+
+// addHeld marks in held the app verb that as maps each verb of each grant's
+// role to, skipping the verbs as refuses. Part of AppVerbsHeld.
+func (a *Authorizer) addHeld(ctx context.Context, held map[Verb]bool, grants []Grant, as func(Verb) (Verb, bool)) error {
+	for _, g := range grants {
 		role, err := a.roleOf(ctx, nil, g)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		for _, v := range role.Verbs {
-			if app, ok := everyApp[v]; ok {
+			if app, ok := as(v); ok {
 				held[app] = true
 			}
 		}
 	}
-	return held, nil
+	return nil
 }
 
 // CheckConfersOnApp refuses p granting a role on an app, or giving a grant on

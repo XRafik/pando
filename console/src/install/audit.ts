@@ -50,6 +50,17 @@ export const WHEN: { value: string; label: string; hours?: number }[] = [
   { value: 'custom', label: 'Custom' },
 ];
 
+/** A query's since and until: a preset counted back from now, or a custom range. */
+function setTimes(q: URLSearchParams, f: AuditFilters, now: number) {
+  const preset = WHEN.find((w) => w.value === f.when);
+  if (preset?.hours) q.set('since', new Date(now - preset.hours * 3_600_000).toISOString());
+  if (f.when === 'custom') {
+    // datetime-local is the viewer's own clock; the wire is UTC (RFC 3339).
+    if (f.since) q.set('since', new Date(f.since).toISOString());
+    if (f.until) q.set('until', new Date(f.until).toISOString());
+  }
+}
+
 /** The GET /audit query string for a set of filters, times resolved now. */
 export function auditQuery(f: AuditFilters, before?: string, now = Date.now()): string {
   const q = new URLSearchParams();
@@ -63,13 +74,7 @@ export function auditQuery(f: AuditFilters, before?: string, now = Date.now()): 
   if (f.involving) q.set('involving', f.involving);
   if (f.outcome) q.set('outcome', f.outcome);
   if (f.q.trim()) q.set('q', f.q.trim());
-  const preset = WHEN.find((w) => w.value === f.when);
-  if (preset?.hours) q.set('since', new Date(now - preset.hours * 3_600_000).toISOString());
-  if (f.when === 'custom') {
-    // datetime-local is the viewer's own clock; the wire is UTC (RFC 3339).
-    if (f.since) q.set('since', new Date(f.since).toISOString());
-    if (f.until) q.set('until', new Date(f.until).toISOString());
-  }
+  setTimes(q, f, now);
   if (before) q.set('before', before);
   const s = q.toString();
   return s ? `?${s}` : '';

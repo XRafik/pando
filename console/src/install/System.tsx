@@ -200,11 +200,11 @@ function Policy({ page, canEdit }: Readonly<{ page: PolicyPage; canEdit: boolean
     >
       {drafting && <PolicyAI onClose={() => setDrafting(false)} />}
       {d.policy.isPending ? (
-        <div role="status" aria-label="Loading" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+        <output aria-label="Loading" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
           {[0, 1, 2].map((n) => (
             <LineSkeleton key={n} width="40ch" />
           ))}
-        </div>
+        </output>
       ) : (
         <PolicyPageView page={page} />
       )}

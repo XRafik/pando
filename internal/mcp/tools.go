@@ -90,6 +90,9 @@ const (
 	usersPrefix  = "/users/"
 )
 
+// newNameArg describes the name argument of a tool that renames something.
+const newNameArg = "The new name."
+
 // appIDSchema is the schema of a tool that takes only an app.
 func appIDSchema() map[string]any {
 	return schema(map[string]any{"app_id": str(appIDDescription)}, "app_id")
@@ -1110,7 +1113,7 @@ var toolList = []tool{
 		Description: "Change an app's display name. Its ID and address do not change.",
 		Schema: schema(map[string]any{
 			"app_id": str(appIDDescription),
-			"name":   str("The new name."),
+			"name":   str(newNameArg),
 		}, "app_id", "name"),
 		request: func(args map[string]any) (string, string, any, error) {
 			id, name, err := twoArgs(args, "app_id", "name")
@@ -1349,7 +1352,7 @@ var toolList = []tool{
 			"Needs install.users.manage.",
 		Schema: schema(map[string]any{
 			"group_id": str("The group's ID."),
-			"name":     str("The new name."),
+			"name":     str(newNameArg),
 		}, "group_id", "name"),
 		request: func(args map[string]any) (string, string, any, error) {
 			id, name, err := twoArgs(args, "group_id", "name")
@@ -1416,7 +1419,7 @@ var toolList = []tool{
 		Description: "Rename one of your launcher sections.",
 		Schema: schema(map[string]any{
 			"section_id": str("The section's ID."),
-			"name":       str("The new name."),
+			"name":       str(newNameArg),
 		}, "section_id", "name"),
 		request: func(args map[string]any) (string, string, any, error) {
 			id, name, err := twoArgs(args, "section_id", "name")

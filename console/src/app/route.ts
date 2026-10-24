@@ -171,7 +171,7 @@ export function parse(pathname: string, search = ''): Route {
     const route: Route = { view: 'admin', section: 'system' };
     if (tab) route.tab = tab;
     const sub = inSystem ? parts[3] : undefined;
-    if (tab === 'policy' && POLICY_PAGES.some((p) => p === sub)) route.sub = sub;
+    if (tab === 'policy' && sub && (POLICY_PAGES as string[]).includes(sub)) route.sub = sub;
     // An adapter category: a word such as image_registry.
     if (tab === 'adapters' && sub && /^[a-z_]+$/.test(sub)) route.sub = sub;
     if (tab === 'adapters' && query) route.query = query;
@@ -241,7 +241,9 @@ export function format(route: Route): string {
     if (route.tab === 'roles') return '/admin/identity/roles';
   }
   if (route.section === 'system' && route.tab) {
-    return `/admin/system/${route.tab}${route.sub ? `/${route.sub}` : ''}${route.query ? `?${route.query}` : ''}`;
+    const sub = route.sub ? `/${route.sub}` : '';
+    const query = route.query ? `?${route.query}` : '';
+    return `/admin/system/${route.tab}${sub}${query}`;
   }
   if ((route.section === 'audit' || route.section === 'sign-in') && route.query) {
     return `/admin/${route.section}?${route.query}`;

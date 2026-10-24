@@ -201,7 +201,7 @@ export function tokenLine(t: Pick<Token, 'expires_at' | 'last_used_at'>): string
   return `${expires} · ${used}`;
 }
 
-function TokenList({ heading, path, queryKey }: { heading: string; path: string; queryKey: string[] }) {
+function TokenList({ heading, path, queryKey }: Readonly<{ heading: string; path: string; queryKey: string[] }>) {
   const queries = useQueryClient();
   const narrow = useNarrow();
   const [creating, setCreating] = useState(false);

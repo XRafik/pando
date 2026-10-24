@@ -245,7 +245,7 @@ function longDate(iso: string): string {
 export function lastSignIn(ids: Identity[]): string {
   const times = ids.map((i) => i.last_sign_in_at).filter((t): t is string => Boolean(t));
   if (times.length === 0) return 'Never';
-  return relative(times.reduce((x, y) => (x > y ? x : y)));
+  return relative(times.reduce((x, y) => (x > y ? x : y), ''));
 }
 
 /** "Oct 24 14:32": an event's time, the date in the row rather than a divider above it. */

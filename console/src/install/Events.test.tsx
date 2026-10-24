@@ -81,7 +81,7 @@ const dialogText = () => [...document.querySelectorAll('[role="dialog"]')].at(-1
 /** Ticks the box labeled `label` in the open filter `filter`. */
 const pick = (s: ReturnType<typeof mount>, filter: string, label: string) =>
   s.settle(() => {
-    const group = document.querySelector(`[role="group"][aria-label="${filter}"]`)!;
+    const group = document.querySelector(`fieldset[aria-label="${filter}"]`)!;
     [...group.querySelectorAll('label')].find((l) => l.textContent === label)!.click();
   });
 
