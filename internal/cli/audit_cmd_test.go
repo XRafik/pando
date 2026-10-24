@@ -15,6 +15,7 @@ func TestAuditPassesEveryFilterAndPages(t *testing.T) {
 		"events": []map[string]any{{
 			"occurred_at": "2026-09-21T09:00:00Z", "action": "app.update",
 			"principal_id": "usr_1", "target_kind": "app", "target_id": "app_1",
+			"summary": "Changed crewmate", "outcome": "denied",
 		}},
 		"next_before": "41",
 	})
@@ -23,7 +24,7 @@ func TestAuditPassesEveryFilterAndPages(t *testing.T) {
 		"--action", "app.", "--actor", "usr_1", "--actor-kind", "user", "--app", "app_1",
 		"--target-kind", "app", "--target", "app_1", "--involving", "usr_2",
 		"--since", "2026-09-20T00:00:00Z", "--until", "2026-09-22T00:00:00Z",
-		"--limit", "50", "--before", "99")
+		"--limit", "50", "--before", "99", "--outcome", "denied", "--search", "crew")
 	require.NoError(t, got.err, got.errOut)
 
 	require.Len(t, api.calls, 1)
@@ -34,11 +35,23 @@ func TestAuditPassesEveryFilterAndPages(t *testing.T) {
 		"action": "app.", "principal_id": "usr_1", "principal_kind": "user", "app_id": "app_1",
 		"target_kind": "app", "target_id": "app_1", "involving": "usr_2",
 		"since": "2026-09-20T00:00:00Z", "until": "2026-09-22T00:00:00Z",
-		"limit": "50", "before": "99",
+		"limit": "50", "before": "99", "outcome": "denied", "q": "crew",
 	} {
 		require.Equal(t, want, q.Get(key), key)
 	}
 
 	require.Contains(t, got.out, "app.update")
+	require.Contains(t, got.out, "Changed crewmate (denied)", "the event in words, and how it ended")
 	require.True(t, strings.Contains(got.errOut, "--before 41"), got.errOut)
+}
+
+// An event from a server too old to send a summary reads as its action, and a
+// failure says so.
+func TestAuditEventFallsBackToTheAction(t *testing.T) {
+	api := newAPI(t).reply("GET /audit", map[string]any{
+		"events": []map[string]any{{"occurred_at": "2026-09-21T09:00:00Z", "action": "app.restart", "outcome": "failed"}},
+	})
+	got := run(t, api, "", "audit")
+	require.NoError(t, got.err, got.errOut)
+	require.Contains(t, got.out, "app.restart (failed)")
 }

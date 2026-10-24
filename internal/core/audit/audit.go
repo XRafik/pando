@@ -67,6 +67,16 @@ var failedActions = map[string]bool{
 	"upgrade.rolled_back":      true,
 }
 
+// ValidOutcome reports whether s is an outcome a read may narrow to, or empty
+// for any.
+func ValidOutcome(s string) bool {
+	switch Outcome(s) {
+	case "", OutcomeSuccess, OutcomeDenied, OutcomeFailed:
+		return true
+	}
+	return false
+}
+
 // OutcomeOf is the outcome an action's name says (design 12 §3.1): .denied
 // and .refused are denials, .failed and the few listed above are failures,
 // and everything else succeeded. TestR379_EveryActionHasAnOutcome holds the

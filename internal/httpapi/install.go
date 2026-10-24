@@ -533,6 +533,12 @@ func (s *Server) handleListAudit(w http.ResponseWriter, r *http.Request) {
 		PrincipalKind: r.URL.Query().Get("principal_kind"),
 		TargetID:      r.URL.Query().Get("target_id"),
 		Involving:     r.URL.Query().Get("involving"),
+		Outcome:       r.URL.Query().Get("outcome"),
+		Search:        r.URL.Query().Get("q"),
+	}
+	if !audit.ValidOutcome(q.Outcome) {
+		Error(w, r, errs.New(errs.ValidInvalid, "The outcome must be success, denied or failed."))
+		return
 	}
 	// RFC 3339, like every time on the wire. A bound that will not parse is an
 	// error rather than ignored: an investigation that silently searched all
