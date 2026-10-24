@@ -316,3 +316,37 @@ func TestTruncateLongKeys(t *testing.T) {
 	require.Equal(t, "short", truncate("short"))
 	require.Len(t, []rune(truncate(string(make([]byte, 100)))), 65)
 }
+
+// TestR412_TheAppsListCountsOnlyTheNoticesYouHaveNotIgnored asserts R-412:
+// the count beside each app in the list is that person's — what they
+// ignored is not counted, and everyone else's count is unchanged.
+func TestR412_TheAppsListCountsOnlyTheNoticesYouHaveNotIgnored(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newService()
+	other := state.App{ID: "app_2", PinnedSpecID: "spec_1"}
+
+	got, err := s.Counts(ctx, "usr_a", []state.App{app, other})
+	require.NoError(t, err)
+	require.Equal(t, map[string]int{"app_1": 2, "app_2": 2}, got)
+
+	_, err = s.Ignore(ctx, "usr_a", app, KeyUnsetVars)
+	require.NoError(t, err)
+	got, err = s.Counts(ctx, "usr_a", []state.App{app})
+	require.NoError(t, err)
+	require.Equal(t, map[string]int{"app_1": 1}, got)
+
+	got, err = s.Counts(ctx, "usr_b", []state.App{app})
+	require.NoError(t, err)
+	require.Equal(t, map[string]int{"app_1": 2}, got, "another person's count is their own")
+	got, err = s.Counts(ctx, "", []state.App{app})
+	require.NoError(t, err)
+	require.Equal(t, map[string]int{"app_1": 2}, got, "a caller that is not a person has ignored nothing")
+
+	got, err = s.Counts(ctx, "usr_a", nil)
+	require.NoError(t, err)
+	require.Empty(t, got)
+
+	s.Revisions = &fakeRevisions{err: errors.New("boom")}
+	_, err = s.Counts(ctx, "usr_a", []state.App{app})
+	require.Error(t, err)
+}

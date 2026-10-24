@@ -321,9 +321,29 @@ func (s *Server) handleListApps(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	JSON(w, http.StatusOK, withTotal(map[string]any{
-		"apps":        s.withVerdicts(r.Context(), withAddresses(r, apps)),
+		"apps":        s.withNoticeCounts(r, s.withVerdicts(r.Context(), withAddresses(r, apps))),
 		"next_cursor": next,
 	}, total))
+}
+
+// withNoticeCounts fills in how many of each app's notices the caller has not
+// ignored (R-412). A count that cannot be read is left out rather than
+// failing the list, as a verdict is.
+func (s *Server) withNoticeCounts(r *http.Request, apps []state.App) []state.App {
+	if s.Notices == nil || len(apps) == 0 {
+		return apps
+	}
+	counts, err := s.Notices.Counts(r.Context(), PrincipalFrom(r.Context()).UserID, apps)
+	if err != nil {
+		if s.Logger != nil {
+			s.Logger.Warn("could not count the apps' notices", zap.Error(err))
+		}
+		return apps
+	}
+	for i := range apps {
+		apps[i].NoticeCount = counts[apps[i].ID]
+	}
+	return apps
 }
 
 // withDetections fills in where each app's detection has got to, so a draft

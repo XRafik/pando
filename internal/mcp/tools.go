@@ -255,6 +255,8 @@ var toolList = []tool{
 			"`private` (its owner alone), `shared` (its owner and the people or groups it is shared " +
 			"with), `public` (anyone on the internet, without signing in) or `passcode` (anyone on " +
 			"the internet who has the passcode). " +
+			"`notice_count` is how many of its notices you have not ignored (pando_list_notices " +
+			"lists them), left out when none. " +
 			"`total` is how many match; pass `next_cursor` back as `cursor` for the next page.",
 		Schema: schema(map[string]any{
 			"q":      str("Only apps whose name or slug contains this."),

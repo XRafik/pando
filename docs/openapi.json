@@ -754,7 +754,7 @@
       "get": {
         "operationId": "listApps",
         "summary": "List apps",
-        "description": "The apps you can administer. Each carries `detection` — its status, and its stage while running — once it has been through detection. Newest first, a page at a time: `limit` (default 100, at most 500), `cursor` (the previous page's `next_cursor`, which is empty after the last page), `q` to match the name or slug, and `id`, repeatable, to read only those apps. `total` counts the matches exactly up to 10,000; past that it is 10,000 and `total_is_lower_bound` is true.",
+        "description": "The apps you can administer. Each carries `detection` — its status, and its stage while running — once it has been through detection, and `notice_count` — how many of its notices (GET /apps/{appID}/notices) you have not ignored, left out when none. Newest first, a page at a time: `limit` (default 100, at most 500), `cursor` (the previous page's `next_cursor`, which is empty after the last page), `q` to match the name or slug, and `id`, repeatable, to read only those apps. `total` counts the matches exactly up to 10,000; past that it is 10,000 and `total_is_lower_bound` is true.",
         "tags": [
           "Apps"
         ],
@@ -1030,6 +1030,10 @@
                     },
                     "access": {
                       "type": "string"
+                    },
+                    "notice_count": {
+                      "type": "integer",
+                      "format": "int64"
                     },
                     "detection": {
                       "$ref": "#/components/schemas/DetectionSummary"
@@ -12610,6 +12614,10 @@
           },
           "access": {
             "type": "string"
+          },
+          "notice_count": {
+            "type": "integer",
+            "format": "int64"
           },
           "detection": {
             "$ref": "#/components/schemas/DetectionSummary"

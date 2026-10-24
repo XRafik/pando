@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -272,6 +273,7 @@ func appCmd(client func() (*Client, error)) *cobra.Command {
 				Address   string `json:"address"`
 				Access    string `json:"access"`
 				OwnerName string `json:"owner_name"`
+				Notices   int    `json:"notice_count"`
 				Detection *struct {
 					Status string `json:"status"`
 					Stage  string `json:"stage"`
@@ -293,7 +295,7 @@ func appCmd(client func() (*Client, error)) *cobra.Command {
 				return err
 			}
 
-			t := table(cmd.OutOrStdout(), "NAME", "STATE", "ACCESS", "OWNER", "ADDRESS", "ID")
+			t := table(cmd.OutOrStdout(), "NAME", "STATE", "NOTICES", "ACCESS", "OWNER", "ADDRESS", "ID")
 			public := false
 			for _, a := range out.Apps {
 				state := a.State
@@ -305,7 +307,7 @@ func appCmd(client func() (*Client, error)) *cobra.Command {
 					}
 					state += " (detection " + why + ")"
 				}
-				fmt.Fprintf(t, "%s\t%s\t%s\t%s\t%s\t%s\n", a.Name, state, accessPhrase(a.Access),
+				fmt.Fprintf(t, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", a.Name, state, noticeCount(a.Notices), accessPhrase(a.Access),
 					dash(a.OwnerName), dash(a.Address), a.ID)
 				public = public || a.Access == "public" || a.Access == "passcode"
 			}
@@ -1936,6 +1938,15 @@ func nameFromURL(raw string) string {
 		return "app"
 	}
 	return trimmed
+}
+
+// noticeCount is how many of an app's notices the caller has not ignored
+// (R-412), or a dash for none, as the other empty columns read.
+func noticeCount(n int) string {
+	if n == 0 {
+		return "-"
+	}
+	return strconv.Itoa(n)
 }
 
 // accessPhrase is who can open an app, in the console's Access words

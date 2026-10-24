@@ -144,6 +144,12 @@ type App struct {
 	// /apps/{id}/grants.
 	Access string `json:"access,omitempty"`
 
+	// NoticeCount is how many of the app's notices the caller has not
+	// ignored (R-412): what its Overview asks of them, counted. Only the
+	// admin list (GET /apps) fills it in; the notices themselves are at GET
+	// /apps/{id}/notices.
+	NoticeCount int `json:"notice_count,omitempty"`
+
 	// Detection is where the app's detection has got to — running and at
 	// which stage, or how it finished — so a draft says why it is still a
 	// draft (issue #80). Filled in by the API layer on GET /apps and GET
