@@ -42,11 +42,7 @@ func TestR261_StatusReportsEachPartOfAnAppSeparately(t *testing.T) {
 		},
 		// Running for this app and not in its spec: a provisioned database.
 		{Name: "svc-01HQ8", Present: true, Running: true},
-	}}, []state.ServiceInstance{
-		{SlotKey: "DATABASE_URL", SlotType: "postgres", Handle: "svc-01HQ8"},
-		// A handle that happens to match a declared workload names nothing.
-		{SlotKey: "CACHE_URL", SlotType: "redis", Handle: "app"},
-	})
+	}})
 
 	require.Len(t, got, 3)
 
@@ -63,11 +59,6 @@ func TestR261_StatusReportsEachPartOfAnAppSeparately(t *testing.T) {
 	require.True(t, got[1].Primary, "the part the app's address resolves to")
 	require.False(t, got[0].Primary)
 	require.False(t, got[2].Primary, "and nothing outside the spec claims to be")
-
-	require.Equal(t, &WorkloadService{SlotKey: "DATABASE_URL", Type: "postgres"}, got[2].Service,
-		"a service Pando runs is named by the dependency it fills")
-	require.Nil(t, got[0].Service, "the app's own workloads fill no dependency")
-	require.Nil(t, got[1].Service)
 }
 
 // The wire names, because the console and the CLI read them and the API is
@@ -104,14 +95,41 @@ func (f serviceRows) ForApp(context.Context, string) ([]state.ServiceInstance, e
 	return f.rows, f.err
 }
 
-// TestR261_StatusNamesTheServicesPandoRuns asserts that /status reads which
-// dependency each service it runs fills, and still answers without them.
+// TestR261_StatusNamesTheServicesPandoRuns asserts that /status names each
+// service Pando runs for an app by the dependency it fills, never one of the
+// app's own workloads, and still answers without the names.
 func TestR261_StatusNamesTheServicesPandoRuns(t *testing.T) {
 	ctx := context.Background()
-	rows := []state.ServiceInstance{{SlotKey: "DATABASE_URL", SlotType: "postgres", Handle: "svc-01HQ8"}}
+	s := &spec.AppSpec{Workloads: []spec.Workload{{Name: "app", Primary: true}}}
+	statuses := func() map[string]any {
+		return map[string]any{"workloads": workloadStatuses(s, api.ObservedBundle{Workloads: []api.ObservedWorkload{
+			{Name: "app", Running: true},
+			{Name: "svc-01HQ8", Running: true},
+		}})}
+	}
+	rows := serviceRows{rows: []state.ServiceInstance{
+		{SlotKey: "DATABASE_URL", SlotType: "postgres", Handle: "svc-01HQ8"},
+		// A handle that happens to match a declared workload names nothing.
+		{SlotKey: "CACHE_URL", SlotType: "redis", Handle: "app"},
+	}}
 
-	require.Nil(t, (&Server{}).providedServices(ctx, "app_1"), "nothing wired, nothing named")
-	require.Nil(t, (&Server{ServiceInstances: serviceRows{err: errors.New("down")}}).providedServices(ctx, "app_1"),
-		"a lookup that fails loses only the names")
-	require.Equal(t, rows, (&Server{ServiceInstances: serviceRows{rows: rows}}).providedServices(ctx, "app_1"))
+	body := statuses()
+	(&Server{ServiceInstances: rows}).nameServices(ctx, "app_1", body)
+	got := body["workloads"].([]WorkloadStatus)
+	require.Nil(t, got[0].Service, "the app's own workloads fill no dependency")
+	require.Equal(t, &WorkloadService{SlotKey: "DATABASE_URL", Type: "postgres"}, got[1].Service,
+		"a service Pando runs is named by the dependency it fills")
+
+	for name, server := range map[string]*Server{
+		"nothing wired":       {},
+		"a lookup that fails": {ServiceInstances: serviceRows{err: errors.New("down")}},
+	} {
+		body := statuses()
+		server.nameServices(ctx, "app_1", body)
+		require.Nil(t, body["workloads"].([]WorkloadStatus)[1].Service, name+" leaves the names out and the status whole")
+	}
+
+	empty := map[string]any{}
+	(&Server{ServiceInstances: rows}).nameServices(ctx, "app_1", empty)
+	require.Empty(t, empty, "a status with no workloads is left as it is")
 }

@@ -651,7 +651,7 @@ func (s *Server) handleAppStatus(w http.ResponseWriter, r *http.Request) {
 					// presented as the app being broken.
 					body["observability"] = "unreachable"
 				} else {
-					body["workloads"] = workloadStatuses(rev.Body, observed, s.providedServices(r.Context(), app.ID))
+					body["workloads"] = workloadStatuses(rev.Body, observed)
 				}
 			}
 			body["revision"] = rev.Revision
@@ -665,6 +665,7 @@ func (s *Server) handleAppStatus(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	s.nameServices(r.Context(), app.ID, body)
 	JSON(w, http.StatusOK, body)
 }
 
@@ -699,20 +700,34 @@ type WorkloadStatus struct {
 	// (R-131's provisioned), so a reader sees a PostgreSQL where the runtime
 	// names a handle such as svc-01h….
 	Service *WorkloadService `json:"service,omitempty"`
+
+	// declared is whether the spec names this workload. Only one it does not
+	// can be a service Pando runs for the app.
+	declared bool
 }
 
-// providedServices lists the services Pando runs for an app, to name them in
-// /status. They are only a label: without them, or when they cannot be read,
-// a status still answers.
-func (s *Server) providedServices(ctx context.Context, appID string) []state.ServiceInstance {
-	if s.ServiceInstances == nil {
-		return nil
+// nameServices names each workload in a status body that is a service Pando
+// runs for the app, by the dependency it fills, matched on the handle Pando
+// recorded when it provisioned it. A body with no workloads, no lookup wired
+// or a lookup that fails is left as it is: the names are only a label.
+func (s *Server) nameServices(ctx context.Context, appID string, body map[string]any) {
+	workloads, ok := body["workloads"].([]WorkloadStatus)
+	if !ok || s.ServiceInstances == nil {
+		return
 	}
 	services, err := s.ServiceInstances.ForApp(ctx, appID)
 	if err != nil {
-		return nil
+		return
 	}
-	return services
+	byHandle := make(map[string]state.ServiceInstance, len(services))
+	for _, svc := range services {
+		byHandle[svc.Handle] = svc
+	}
+	for i := range workloads {
+		if svc, found := byHandle[workloads[i].Name]; found && !workloads[i].declared {
+			workloads[i].Service = &WorkloadService{SlotKey: svc.SlotKey, Type: string(svc.SlotType)}
+		}
+	}
 }
 
 // WorkloadService names the slot a provisioned workload fills.
@@ -721,13 +736,8 @@ type WorkloadService struct {
 	Type    string `json:"type"`
 }
 
-// workloadStatuses pairs what the runtime sees with what the spec declares,
-// and names each service Pando runs by the dependency it fills.
-func workloadStatuses(s *spec.AppSpec, observed api.ObservedBundle, services []state.ServiceInstance) []WorkloadStatus {
-	byHandle := make(map[string]state.ServiceInstance, len(services))
-	for _, svc := range services {
-		byHandle[svc.Handle] = svc
-	}
+// workloadStatuses pairs what the runtime sees with what the spec declares.
+func workloadStatuses(s *spec.AppSpec, observed api.ObservedBundle) []WorkloadStatus {
 	primary, _ := s.PrimaryWorkload()
 
 	found := make(map[string]api.ObservedWorkload, len(observed.Workloads))
@@ -747,13 +757,11 @@ func workloadStatuses(s *spec.AppSpec, observed api.ObservedBundle, services []s
 			Healthy:      w.Healthy,
 			ExitCode:     w.ExitCode,
 			Image:        w.ImageDigest,
+			declared:     declared,
 		}
 		if !w.StartedAt.IsZero() {
 			at := w.StartedAt
 			status.StartedAt = &at
-		}
-		if svc, ok := byHandle[name]; ok && !declared {
-			status.Service = &WorkloadService{SlotKey: svc.SlotKey, Type: string(svc.SlotType)}
 		}
 		out = append(out, status)
 	}
