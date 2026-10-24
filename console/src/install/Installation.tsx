@@ -40,7 +40,7 @@ import type { ConfiguredAdapter } from './AdapterDialog';
 import { Quiet, messageOf, refusal } from './Accounts';
 import { SystemPage } from './SystemPage';
 
-export { Audit, AuditTable, LoadOlder, useAuditLog, usePeople } from './AuditLog';
+export { Audit, AuditTable, useAuditLog } from './AuditLog';
 export type { AuditRecord } from './AuditLog';
 
 /** Where the startup configuration declares an adapter, in words: a key in

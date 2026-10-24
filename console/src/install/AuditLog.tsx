@@ -29,7 +29,7 @@ import { useNamedPeople } from '../ui/people';
 import { SearchField } from '../ui/SearchField';
 import { Table } from '../ui/Table';
 import { fullStamp, stamp } from './stamp';
-import '../admin/panel.css';
+import '../ui/panel.css';
 import './system.css';
 
 export interface AuditRecord {
@@ -113,7 +113,7 @@ export function useAuditLog(filters: AuditFilters) {
  *  on screen and the chosen filters name, asked about by ID (issue #72).
  *  install.audit.read does not imply install.view, so when the lookup is
  *  refused, the pickers take an ID and the column shows IDs. */
-export function usePeople(events: AuditRecord[], chosen: string[] = []): Person[] {
+function usePeople(events: AuditRecord[], chosen: string[] = []): Person[] {
   return useNamedPeople([
     ...chosen,
     ...events.flatMap((e) => [e.principal_id, e.on_behalf_of, e.target_kind === 'user' ? e.target_id : undefined]),
@@ -710,7 +710,7 @@ function ArchivedMonths() {
   );
 }
 
-export function LoadOlder({ log }: Readonly<{ log: ReturnType<typeof useAuditLog>['log'] }>) {
+function LoadOlder({ log }: Readonly<{ log: ReturnType<typeof useAuditLog>['log'] }>) {
   if (!log.hasNextPage) return <span />;
   return (
     <Button variant="secondary" disabled={log.isFetchingNextPage} onClick={() => void log.fetchNextPage()}>

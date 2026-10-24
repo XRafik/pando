@@ -182,12 +182,6 @@ export function Accounts({ onOpen }: { onOpen: (account: Account) => void }) {
   );
 }
 
-export function RoleLabel({ roleID, roles }: { roleID: string; roles: Role[] }) {
-  if (!roleID) return <span style={{ color: 'var(--ink-tertiary)' }}>None</span>;
-  const role = roles.find((r) => r.id === roleID);
-  return <Tag>{role ? sentence(role.name) : roleID}</Tag>;
-}
-
 /**
  * A held role's name as the console shows it: from the roles list, else the
  * name the account carries — somebody reading their own account cannot read
