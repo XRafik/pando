@@ -28,10 +28,19 @@ export interface Part {
 /**
  * What a workload is called on screen. A service Pando runs for the app is
  * named for what it is ("PostgreSQL"), not its handle; the handle is still
- * what the API is given.
+ * what the API is given. When another of `all` is the same kind of service,
+ * the slot it fills tells them apart: "PostgreSQL (ANALYTICS_URL)".
  */
-export function partTitle(part: Pick<Part, 'name' | 'service'> | undefined, name: string): string {
-  return part?.service ? slotLabel(part.service.type) : name;
+export function partTitle(
+  part: Pick<Part, 'name' | 'service'> | undefined,
+  name: string,
+  all: readonly Pick<Part, 'name' | 'service'>[] = [],
+): string {
+  const service = part?.service;
+  if (!service) return name;
+  const label = slotLabel(service.type);
+  const shared = all.some((p) => p.name !== name && p.service?.type === service.type);
+  return shared ? `${label} (${service.slot_key})` : label;
 }
 
 export interface AppStatus {

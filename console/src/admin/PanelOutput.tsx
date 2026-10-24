@@ -94,7 +94,7 @@ export function PanelOutput({
           <>
             <WorkloadPicker
               names={parts.map((p) => p.name)}
-              titles={Object.fromEntries(parts.map((p) => [p.name, partTitle(p, p.name)]))}
+              titles={Object.fromEntries(parts.map((p) => [p.name, partTitle(p, p.name, parts)]))}
               chosen={showing || primary}
               onChoose={onWorkload}
             />
@@ -116,7 +116,7 @@ export function PanelOutput({
           box={box}
           follow={follow}
           onFollow={setFollow}
-          label={`Output of ${part ? partTitle(part, part.name) : showing || primary || app.name}`}
+          label={`Output of ${part ? partTitle(part, part.name, parts) : showing || primary || app.name}`}
           onRetry={() => setGeneration((n) => n + 1)}
         />
       </Body>

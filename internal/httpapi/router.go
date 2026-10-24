@@ -103,9 +103,7 @@ type Server struct {
 	// ServiceInstances says which dependency a service Pando runs for an app
 	// fills, so /status names a provisioned workload by what it is rather
 	// than by its handle. Nil leaves that out.
-	ServiceInstances interface {
-		ForApp(ctx context.Context, appID string) ([]state.ServiceInstance, error)
-	}
+	ServiceInstances observe.ServiceInstances
 
 	// Address resolves changes to where an app is reached (R-162, R-163).
 	// Nil means the address cannot be changed after configuration.

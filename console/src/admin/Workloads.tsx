@@ -199,6 +199,7 @@ export function Workloads({ app }: Readonly<{ app: App & { last_backup?: BackupA
               key={name}
               name={name}
               part={parts.find((p) => p.name === name)}
+              parts={parts}
               use={usages.find((u) => u.name === name)}
               samples={history[name] ?? []}
               several={names.length > 1}
@@ -251,6 +252,7 @@ const COMPACT: React.CSSProperties = { padding: '0 var(--space-1)', gap: 'var(--
 function WorkloadCard({
   name,
   part,
+  parts,
   use,
   samples,
   several,
@@ -260,6 +262,8 @@ function WorkloadCard({
 }: Readonly<{
   name: string;
   part?: Part;
+  /** Every workload, so two services of one kind can be told apart. */
+  parts: readonly Part[];
   use?: PartUsage;
   samples: Sample[];
   several: boolean;
@@ -277,7 +281,7 @@ function WorkloadCard({
   const line = workloadLine(part, use, several, provided);
   const volumes = use?.volumes ?? [];
   // A service Pando runs is titled for what it is; its handle is the hover text.
-  const title = partTitle(part, name);
+  const title = partTitle(part, name, parts);
   const service = title !== name;
 
   return (

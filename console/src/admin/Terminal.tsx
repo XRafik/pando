@@ -193,7 +193,7 @@ function useWorkloads(appID: string): { all: string[]; titles: Record<string, st
   const declared = workloads.map((w) => w.name);
   return {
     all: [...declared, ...services.map((p) => p.name).filter((n) => !declared.includes(n))],
-    titles: Object.fromEntries(services.map((p) => [p.name, partTitle(p, p.name)])),
+    titles: Object.fromEntries(services.map((p) => [p.name, partTitle(p, p.name, services)])),
     primary: (workloads.find((w) => w.primary) ?? workloads[0])?.name ?? '',
     // `full` waits on a pinned revision and is pending for good without one.
     loading: specs.isPending || (Boolean(pinned) && full.isPending),

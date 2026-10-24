@@ -17,6 +17,7 @@ import (
 	"github.com/trypando/pando/internal/core/audit"
 	"github.com/trypando/pando/internal/core/authz"
 	"github.com/trypando/pando/internal/core/logstream"
+	"github.com/trypando/pando/internal/core/observe"
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/errs"
@@ -706,26 +707,25 @@ type WorkloadStatus struct {
 	declared bool
 }
 
-// nameServices names each workload in a status body that is a service Pando
-// runs for the app, by the dependency it fills, matched on the handle Pando
-// recorded when it provisioned it. A body with no workloads, no lookup wired
-// or a lookup that fails is left as it is: the names are only a label.
+// nameServices puts on each workload in a status body that is a service Pando
+// runs for the app the dependency it fills. Which ones those are is core's
+// to say (observe.Provided); this only asks about the workloads the spec does
+// not declare and copies the answer onto the wire.
 func (s *Server) nameServices(ctx context.Context, appID string, body map[string]any) {
 	workloads, ok := body["workloads"].([]WorkloadStatus)
-	if !ok || s.ServiceInstances == nil {
+	if !ok {
 		return
 	}
-	services, err := s.ServiceInstances.ForApp(ctx, appID)
-	if err != nil {
-		return
+	var undeclared []string
+	for _, w := range workloads {
+		if !w.declared {
+			undeclared = append(undeclared, w.Name)
+		}
 	}
-	byHandle := make(map[string]state.ServiceInstance, len(services))
-	for _, svc := range services {
-		byHandle[svc.Handle] = svc
-	}
+	provided := observe.Provided(ctx, s.ServiceInstances, appID, undeclared)
 	for i := range workloads {
-		if svc, found := byHandle[workloads[i].Name]; found && !workloads[i].declared {
-			workloads[i].Service = &WorkloadService{SlotKey: svc.SlotKey, Type: string(svc.SlotType)}
+		if dep, found := provided[workloads[i].Name]; found {
+			workloads[i].Service = &WorkloadService{SlotKey: dep.SlotKey, Type: dep.Type}
 		}
 	}
 }
