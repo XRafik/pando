@@ -1,0 +1,258 @@
+/* System: its pages beside a list of them, policy's setting rows and save
+ * bar, the adapters' list and detail, and the audit log's rows.
+ *
+ * The list of pages is the app's Settings list (admin/settings.css,
+ * .pando-settings-nav); these are the rules it needs beyond that — pages
+ * under Policy, indented, and a mark on one with unsaved changes. Everything
+ * else is inline styles from tokens; these are what an inline style cannot
+ * hold: a grid that changes at phone width, a hover, a sticky bar. 48em is
+ * the breakpoint useNarrow() uses.
+ */
+
+.pando-system {
+  display: grid;
+  grid-template-columns: 13rem minmax(0, 1fr);
+  gap: var(--space-6);
+  align-items: start;
+}
+
+.pando-settings-nav a.pando-system-sub {
+  padding-left: var(--space-6);
+  font: var(--type-caption);
+}
+
+.pando-settings-nav a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+/* Unsaved changes on that page. A dot beside the name, never color alone:
+ * the link's label says so too. */
+.pando-system-dot {
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--contour-text);
+}
+
+/* A raised card of setting rows, a rule between each. */
+.pando-setcard {
+  display: flex;
+  flex-direction: column;
+  background: var(--paper-raised);
+  border: var(--border-width) solid var(--rule);
+  border-radius: var(--radius-md);
+  padding: 0 var(--space-5);
+}
+
+.pando-setrow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2) var(--space-5);
+  padding: var(--space-4) 0;
+}
+
+.pando-setrow + .pando-setrow {
+  border-top: var(--border-width) solid var(--rule);
+}
+
+/* A control too wide to sit beside its label — a list, a text area — goes
+ * under it. */
+.pando-setrow--wide {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.pando-setrow-control {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.pando-setrow--wide .pando-setrow-control {
+  justify-content: stretch;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+/* A number beside its label is a short field. */
+.pando-setrow-control input[type='number'] {
+  width: 12ch;
+}
+
+/* Choices as one segmented control: radios underneath, so each is a real
+ * choice to a screen reader and to the keyboard. */
+.pando-seg {
+  display: inline-flex;
+  flex-wrap: wrap;
+  border: var(--border-width) solid var(--field-border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.pando-seg label {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-console);
+  padding: 0 var(--space-3);
+  font: var(--type-body-ui);
+  color: var(--ink-secondary);
+  cursor: pointer;
+}
+
+.pando-seg label + label {
+  border-left: var(--border-width) solid var(--field-border);
+}
+
+.pando-seg label[data-on='true'] {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.pando-seg input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.pando-seg label:focus-within {
+  outline: var(--focus-outline-width) solid var(--ink);
+  outline-offset: calc(-1 * var(--focus-outline-width));
+}
+
+.pando-seg[aria-disabled='true'] label {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* One bar for every unsaved change in policy, held at the foot of the
+ * window while there are any. */
+.pando-savebar {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3) var(--space-5);
+  margin-top: var(--space-5);
+  padding: var(--space-3) var(--space-5);
+  background: var(--paper-raised);
+  border: var(--border-width) solid var(--rule-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-popover);
+}
+
+/* Adapters: every category on the left, the chosen one's adapters on the
+ * right. */
+.pando-adapters {
+  display: grid;
+  grid-template-columns: 15rem minmax(0, 1fr);
+  gap: var(--space-5);
+  align-items: start;
+}
+
+.pando-adapter-cats {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.pando-adapter-cats button,
+.pando-adapter-cats a {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font: var(--type-body-ui);
+  color: var(--ink-secondary);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.pando-adapter-cats button:hover,
+.pando-adapter-cats a:hover {
+  color: var(--ink);
+}
+
+.pando-adapter-cats [aria-current='true'] {
+  background: var(--paper-sunken);
+  color: var(--ink);
+}
+
+/* Settings as label over value, as many to a line as fit. */
+.pando-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
+  gap: var(--space-3) var(--space-5);
+  margin: 0;
+}
+
+.pando-facts div {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.pando-facts dt {
+  font: var(--type-caption);
+  color: var(--ink-secondary);
+}
+
+.pando-facts dd {
+  margin: 0;
+  font: var(--type-body-ui);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+/* Two cards side by side, one above the other at phone width. */
+.pando-two {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-5);
+  align-items: start;
+}
+
+/* An audit event, opened by a click anywhere on its row. */
+.pando-audit-row {
+  cursor: pointer;
+}
+
+.pando-audit-row:hover {
+  background: var(--paper-sunken);
+}
+
+.pando-audit-row:focus-visible {
+  outline: var(--focus-outline-width) solid var(--ink);
+  outline-offset: calc(-1 * var(--focus-outline-width));
+}
+
+@media (max-width: 48em) {
+  .pando-system,
+  .pando-adapters,
+  .pando-two {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pando-setcard {
+    padding: 0 var(--space-4);
+  }
+
+  .pando-savebar {
+    padding: var(--space-3) var(--space-4);
+  }
+}

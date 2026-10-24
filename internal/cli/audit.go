@@ -27,7 +27,7 @@ import (
 // and the API, which it had none of: GET /audit was reachable from the console
 // alone (R-261).
 func auditCmd(client func() (*Client, error)) *cobra.Command {
-	var action, actor, actorKind, app, targetKind, target, involving, since, until, before string
+	var action, actor, actorKind, app, targetKind, target, involving, outcome, search, since, until, before string
 	var limit int
 
 	cmd := &cobra.Command{
@@ -46,6 +46,7 @@ func auditCmd(client func() (*Client, error)) *cobra.Command {
 			for key, v := range map[string]string{
 				"action": action, "principal_id": actor, "principal_kind": actorKind, "app_id": app,
 				"target_kind": targetKind, "target_id": target, "involving": involving, "before": before,
+				"outcome": outcome, "q": search,
 			} {
 				if v != "" {
 					q.Set(key, v)
@@ -69,6 +70,8 @@ func auditCmd(client func() (*Client, error)) *cobra.Command {
 				Events []struct {
 					OccurredAt time.Time `json:"occurred_at"`
 					Action     string    `json:"action"`
+					Summary    string    `json:"summary"`
+					Outcome    string    `json:"outcome"`
 					Principal  string    `json:"principal_id"`
 					OnBehalfOf string    `json:"on_behalf_of"`
 					TargetKind string    `json:"target_kind"`
@@ -84,7 +87,7 @@ func auditCmd(client func() (*Client, error)) *cobra.Command {
 				return err
 			}
 
-			t := table(cmd.OutOrStdout(), "WHEN", "ACTION", "WHO", "TARGET")
+			t := table(cmd.OutOrStdout(), "WHEN", "EVENT", "ACTION", "WHO", "TARGET")
 			for _, e := range out.Events {
 				who := e.Principal
 				if e.OnBehalfOf != "" && e.OnBehalfOf != e.Principal {
@@ -94,7 +97,7 @@ func auditCmd(client func() (*Client, error)) *cobra.Command {
 				if e.TargetKind != "" {
 					target = e.TargetKind + " " + target
 				}
-				fmt.Fprintf(t, "%s\t%s\t%s\t%s\n", e.OccurredAt.Local().Format(time.DateTime), e.Action, who, target)
+				fmt.Fprintf(t, "%s\t%s\t%s\t%s\t%s\n", e.OccurredAt.Local().Format(time.DateTime), eventText(e.Summary, e.Action, e.Outcome), e.Action, who, target)
 			}
 			if err := t.Flush(); err != nil {
 				return err
@@ -116,6 +119,8 @@ func auditCmd(client func() (*Client, error)) *cobra.Command {
 	f.StringVar(&targetKind, "target-kind", "", "what kind of thing it was done to, e.g. user, role, app")
 	f.StringVar(&target, "target", "", "the ID of the thing it was done to")
 	f.StringVar(&involving, "involving", "", "events where this ID is the actor or the target, e.g. a user ID")
+	f.StringVar(&outcome, "outcome", "", "how it ended: success, denied or failed")
+	f.StringVar(&search, "search", "", "text in the action, the actor, the target or the app")
 	f.StringVar(&since, "since", "", "from this time, or this long ago (24h)")
 	f.StringVar(&until, "until", "", "up to this time, or this long ago")
 	f.IntVar(&limit, "limit", 0, "how many events (default 100, at most 500)")
@@ -123,6 +128,22 @@ func auditCmd(client func() (*Client, error)) *cobra.Command {
 
 	cmd.AddCommand(auditArchivesCmd(client), auditTailCmd(client), auditExportCmd(client), auditSinksCmd(client))
 	return cmd
+}
+
+// eventText is an event as the EVENT column reads it: its summary, or its
+// action from a server too old to send one, and how it ended when it did not
+// succeed.
+func eventText(summary, action, outcome string) string {
+	if summary == "" {
+		summary = action
+	}
+	switch outcome {
+	case "denied":
+		return summary + " (denied)"
+	case "failed":
+		return summary + " (failed)"
+	}
+	return summary
 }
 
 // auditArchive is one archived month, as GET /audit/archives lists it.

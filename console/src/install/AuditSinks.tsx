@@ -61,7 +61,56 @@ function useAuditSinks() {
   });
 }
 
-/** Every audit sink, with what it sends where and how far it has got. */
+/** Whether a sink is sending as it should: one line beside the title says
+ *  so. Anything else is shown in full under it. */
+function delivering(s: AuditSink): boolean {
+  return s.enabled && !s.failing_since && !s.unusable;
+}
+
+/**
+ * "Also copied to Splunk, splunk.example.com:8088 · Audit sinks": every
+ * destination sending as it should, by name and where it sends (R-385), with
+ * how far each has got on hover (R-383), and a link to where they are set up.
+ */
+export function AuditSinkLine({ onAdapters, href }: { onAdapters?: () => void; href?: string }) {
+  const sinks = useAuditSinks();
+  const on = (sinks.data?.audit_sinks ?? []).filter(delivering);
+  if (on.length === 0) return null;
+  return (
+    <span style={{ display: 'inline-flex', flexWrap: 'wrap', alignItems: 'center', gap: 'var(--space-1)', font: 'var(--type-caption)', color: 'var(--ink-secondary)' }}>
+      Also copied to{' '}
+      {on.map((s, i) => (
+        <span key={s.id}>
+          <Tooltip content={progress(s)}>{s.endpoint ? `${s.name}, ${s.endpoint}` : s.name}</Tooltip>
+          {i < on.length - 1 ? ';' : ''}
+        </span>
+      ))}
+      {onAdapters && (
+        <>
+          {' · '}
+          <a
+            href={href ?? '#'}
+            onClick={(e) => {
+              e.preventDefault();
+              onAdapters();
+            }}
+          >
+            Audit sinks
+          </a>
+        </>
+      )}
+    </span>
+  );
+}
+
+/** How far a sink has got, in a sentence. */
+function progress(s: AuditSink): string {
+  const last = s.delivered_at ? `Last delivered ${relative(s.delivered_at).toLowerCase()}.` : 'Nothing delivered yet.';
+  return `${s.disclosure} ${last} ${behind(s)}`;
+}
+
+/** Every audit sink that is not sending as it should, in full: failing,
+ *  unusable, or turned off. */
 export function AuditSinks({ onAdapters }: { onAdapters?: () => void }) {
   const sinks = useAuditSinks();
   if (sinks.isError) {
@@ -71,16 +120,16 @@ export function AuditSinks({ onAdapters }: { onAdapters?: () => void }) {
       </p>
     );
   }
-  return <AuditSinkList sinks={sinks.data?.audit_sinks ?? []} onAdapters={onAdapters} />;
+  return <AuditSinkList sinks={(sinks.data?.audit_sinks ?? []).filter((s) => !delivering(s))} onAdapters={onAdapters} />;
 }
 
 function AuditSinkList({ sinks, onAdapters }: { sinks: AuditSink[]; onAdapters?: () => void }) {
-  // No sink is the usual case, and says nothing that needs saying here.
+  // No sink in trouble is the usual case, and says nothing that needs saying.
   if (sinks.length === 0) return null;
   const on = sinks.filter((s) => s.enabled);
   // Off because Pando turned it off: that is news, and its gap is a hole in
-  // somebody's SIEM, so it is shown in full. Off because an administrator
-  // turned it off is one line.
+  // a security team's record, so it is shown in full. Off because an
+  // administrator turned it off is one line.
   const stopped = sinks.filter((s) => !s.enabled && s.disabled_at);
   const off = sinks.filter((s) => !s.enabled && !s.disabled_at);
 

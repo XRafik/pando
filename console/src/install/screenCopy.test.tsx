@@ -21,25 +21,19 @@ import { NO_FILTERS } from './audit';
 const kind = (category: string) => ({ category, kind: 'x', name: 'X', description: '', id_prefix: '', fields: null });
 
 describe('the screens’ copy', () => {
-  it('offers to add each category nothing is set up for, by its label', () => {
-    const html = render(<Installation />, [
-      [['me'], { verbs: ['install.adapters.manage'] }],
-      [['adapters'], { adapters: [] }],
-      [['adapter-kinds'], { kinds: [kind('ai'), kind('image_registry'), kind('routing')] }],
-      [['sources'], { sources: [] }],
-    ]);
-    expect(html).toContain('Add an AI adapter');
-    expect(html).toContain('Add an image registry adapter');
-    expect(html).toContain('Add a routing adapter');
-  });
-
-  it('names where an archived month went, Pando when no adapter took it', () => {
-    const month = { id: 'arc_1', month: '2026-01', row_count: 12, size_bytes: 1, sha256: 'a'.repeat(64) };
-    const html = render(<Audit />, [
-      [['audit-archives'], { archives: [month, { ...month, id: 'arc_2', month: '2026-02', adapter_ref: 's3/archive' }] }],
-    ]);
-    expect(html).toContain('>Pando<');
-    expect(html).toContain('s3/archive');
+  it('offers to add to a category nothing is set up for, by its label', () => {
+    const seed = (category?: string) =>
+      render(<Installation category={category} />, [
+        [['me'], { verbs: ['install.adapters.manage'] }],
+        [['adapters'], { adapters: [] }],
+        [['adapter-kinds'], { kinds: [kind('ai'), kind('image_registry'), kind('routing')] }],
+        [['sources'], { sources: [] }],
+      ]);
+    expect(seed('ai')).toContain('Add AI');
+    expect(seed('image_registry')).toContain('Add image registry');
+    // With nothing chosen, the first category in order.
+    expect(seed()).toContain('Add routing');
+    expect(seed()).toContain('Not set up');
   });
 
   it('says which scope a role applies to', () => {
@@ -135,14 +129,18 @@ describe('an account', () => {
 });
 
 describe('capacity', () => {
-  const capacity = (refresh?: number) =>
-    render(<Capacity names={{}} />, [
-      [['capacity'], { as_of: '2026-10-04T12:00:00Z', refresh_seconds: refresh, runtimes: [{ adapter_ref: 'rt_docker', status: 'ok', running_workloads: 0 }] }],
-    ]);
+  const capacity = (runtimes: object[]) =>
+    render(<Capacity names={{}} />, [[['capacity'], { as_of: new Date().toISOString(), refresh_seconds: 30, runtimes }]]);
 
-  it('says how often it is read, when it is', () => {
-    expect(capacity(30)).toContain(', refreshed every 30 seconds.');
-    expect(capacity()).not.toContain('refreshed every');
+  it('says when it was read, beside Refresh', () => {
+    const html = capacity([{ adapter_ref: 'rt_docker', status: 'ok', running_workloads: 0 }]);
+    expect(html).toContain('Just now');
+    expect(html).toContain('Refresh');
+  });
+
+  it('says when no runtime is set up, or one cannot be reached', () => {
+    expect(capacity([])).toContain('No runtime is set up.');
+    expect(capacity([{ adapter_ref: 'rt_docker', status: 'unreachable' }])).toContain('couldn&rsquo;t reach this runtime'.replace('&rsquo;', '’'));
   });
 });
 

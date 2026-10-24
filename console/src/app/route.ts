@@ -24,12 +24,26 @@ export type Section =
   | 'approvals'
   | 'events';
 
-/** The tabs of System (issue #154): how the installation itself is set up and
- *  kept, as opposed to its apps or its people. Each was a sidebar item of its
- *  own, and its old address still opens it. */
-type SystemTab = 'adapters' | 'policy' | 'backups' | 'updates';
+/** The pages of System (issue #154): how the installation itself is set up
+ *  and kept, as opposed to its apps or its people. Each was a sidebar item of
+ *  its own, and its old address still opens it. */
+export type SystemTab = 'overview' | 'adapters' | 'policy' | 'backups';
 
-const SYSTEM_TABS: SystemTab[] = ['adapters', 'policy', 'backups', 'updates'];
+const SYSTEM_TABS: SystemTab[] = ['overview', 'adapters', 'policy', 'backups'];
+
+/** Where a System page that was folded into another lives now: Updates is
+ *  the Pando card on Overview. */
+const MOVED_SYSTEM_TABS: Record<string, SystemTab> = { updates: 'overview' };
+
+function systemTab(name: string | undefined): SystemTab | undefined {
+  return SYSTEM_TABS.find((t) => t === name) ?? (name ? MOVED_SYSTEM_TABS[name] : undefined);
+}
+
+/** Policy's pages, each at /admin/system/policy/{page}. The bare /policy is
+ *  the first. */
+export type PolicyPage = 'sources' | 'access' | 'egress' | 'deployments' | 'tokens' | 'apps' | 'audit';
+
+export const POLICY_PAGES: PolicyPage[] = ['sources', 'access', 'egress', 'deployments', 'tokens', 'apps', 'audit'];
 
 /** The side panel over an app's screen: what it is printing, its deploys, and
  *  a terminal in it. Each was a tab of its own. */
@@ -93,6 +107,8 @@ export interface Route {
   panel?: PanelView;
   workload?: string;
   deployment?: string;
+  /** Under System: a page of Policy, or the adapter category shown. */
+  sub?: string;
   /** An account's own page, under Accounts. */
   userID?: string;
   /** A group's or a role's own page, under Groups and roles. */
@@ -142,21 +158,22 @@ export function parse(pathname: string, search = ''): Route {
   if (parts[1] === 'audit' && query) return { view: 'admin', section: 'audit', query };
   if (parts[1] === 'sign-in' && query) return { view: 'admin', section: 'sign-in', query };
 
-  // /admin/system/{tab}. The bare /admin/system is its first tab, and which
-  // one that is depends on what the person may see, so it carries no tab.
-  // /admin/system/adapters?… is the outcome of a source connection's browser
-  // authorization (issue #127).
-  // Each tab was a section of its own at /admin/{tab}, and the adapters
+  // /admin/system/{tab}[/{sub}]. The bare /admin/system is its first page,
+  // and which one that is depends on what the person may see, so it carries
+  // no tab. /admin/system/adapters?… is the outcome of a source connection's
+  // browser authorization (issue #127).
+  // Each page was a section of its own at /admin/{tab}, and the adapters
   // screen before that was called Installation; a link may still say either.
-  const tab =
-    parts[1] === 'system'
-      ? SYSTEM_TABS.find((t) => t === parts[2])
-      : parts[1] === 'installation'
-        ? 'adapters'
-        : SYSTEM_TABS.find((t) => t === parts[1]);
-  if (parts[1] === 'system' || tab) {
+  const inSystem = parts[1] === 'system';
+  let tab = inSystem ? systemTab(parts[2]) : systemTab(parts[1]);
+  if (parts[1] === 'installation') tab = 'adapters';
+  if (inSystem || tab) {
     const route: Route = { view: 'admin', section: 'system' };
     if (tab) route.tab = tab;
+    const sub = inSystem ? parts[3] : undefined;
+    if (tab === 'policy' && POLICY_PAGES.some((p) => p === sub)) route.sub = sub;
+    // An adapter category: a word such as image_registry.
+    if (tab === 'adapters' && sub && /^[a-z_]+$/.test(sub)) route.sub = sub;
     if (tab === 'adapters' && query) route.query = query;
     return route;
   }
@@ -224,7 +241,7 @@ export function format(route: Route): string {
     if (route.tab === 'roles') return '/admin/identity/roles';
   }
   if (route.section === 'system' && route.tab) {
-    return `/admin/system/${route.tab}${route.query ? `?${route.query}` : ''}`;
+    return `/admin/system/${route.tab}${route.sub ? `/${route.sub}` : ''}${route.query ? `?${route.query}` : ''}`;
   }
   if ((route.section === 'audit' || route.section === 'sign-in') && route.query) {
     return `/admin/${route.section}?${route.query}`;

@@ -44,12 +44,12 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-/** The buttons in the adapters table row whose ID cell reads `id`. */
+/** The buttons on the adapter card whose ID reads `id`. */
 function rowButtons(id: string): string[] {
-  const cell = [...document.querySelectorAll('[role="row"] span')].find((el) => el.textContent === id);
-  const row = cell?.closest('[role="row"]');
-  expect(row, `a row for ${id}`).toBeTruthy();
-  return [...row!.querySelectorAll('button')].map((b) => String(b.textContent));
+  const cell = [...document.querySelectorAll('dd')].find((el) => el.textContent === id);
+  const card = cell?.closest('dl')?.parentElement;
+  expect(card, `a card for ${id}`).toBeTruthy();
+  return [...card!.querySelectorAll('button')].map((b) => String(b.textContent));
 }
 
 describe('a kind Pando sets up itself', () => {
@@ -62,21 +62,25 @@ describe('a kind Pando sets up itself', () => {
 
   it('is listed with its status and offers no Edit, while other rows do', () => {
     vi.stubGlobal('fetch', answering({}));
-    screen = mount(<Installation />, seed([builderRow, routingRow]));
+    screen = mount(<Installation category="builder" />, seed([builderRow, routingRow]));
     expect(screen.text()).toContain('BuildKit');
     expect(screen.text()).toContain('bld_buildkit');
     expect(rowButtons('bld_buildkit')).not.toContain('Edit');
+    screen.unmount();
+    screen = mount(<Installation category="routing" />, seed([builderRow, routingRow]));
     expect(rowButtons('rte_loopback')).toContain('Edit');
   });
 
   it('is not offered in Add adapter', async () => {
     vi.stubGlobal('fetch', answering({}));
-    screen = mount(<Installation />, seed([routingRow]));
-    // A category whose only kind is managed is not "not set up".
-    expect(screen.text()).not.toContain('Add a builder adapter');
-    await screen.press('Add adapter');
-    const categories = [...document.querySelectorAll('#s-category option')].map((o) => o.textContent);
-    expect(categories).toContain('Routing');
-    expect(categories).not.toContain('Builder');
+    screen = mount(<Installation category="builder" />, seed([routingRow]));
+    // A category whose only kind is managed offers nothing to add.
+    expect(screen.text()).not.toContain('Add builder');
+    screen.unmount();
+    screen = mount(<Installation category="routing" />, seed([routingRow]));
+    await screen.press('Add another');
+    const dialog = String(document.querySelector('[role="dialog"]')?.textContent);
+    expect(dialog).toContain('Add Localhost');
+    expect(dialog).not.toContain('BuildKit');
   });
 });

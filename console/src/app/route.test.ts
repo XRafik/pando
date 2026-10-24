@@ -23,7 +23,9 @@ describe('route', () => {
     { view: 'admin', section: 'audit' },
     { view: 'admin', section: 'approvals' },
     { view: 'admin', section: 'system' },
-    { view: 'admin', section: 'system', tab: 'updates' },
+    { view: 'admin', section: 'system', tab: 'overview' },
+    { view: 'admin', section: 'system', tab: 'policy', sub: 'egress' },
+    { view: 'admin', section: 'system', tab: 'adapters', sub: 'image_registry' },
     { view: 'admin', section: 'system', tab: 'adapters', query: 'connection=src_01&outcome=connected' },
     { view: 'admin', section: 'events' },
     { view: 'admin', section: 'audit', query: 'involving=usr_01&when=7d' },
@@ -40,8 +42,19 @@ describe('route', () => {
     expect(parse('/admin/installation')).toEqual({ view: 'admin', section: 'system', tab: 'adapters' });
   });
 
-  it.each(['adapters', 'policy', 'backups', 'updates'])('opens /admin/%s, now a tab of System', (tab) => {
+  it.each(['adapters', 'policy', 'backups'])('opens /admin/%s, now a page of System', (tab) => {
     expect(parse(`/admin/${tab}`)).toEqual({ view: 'admin', section: 'system', tab });
+  });
+
+  it('opens Updates, at either old address, as Overview', () => {
+    expect(parse('/admin/updates')).toEqual({ view: 'admin', section: 'system', tab: 'overview' });
+    expect(parse('/admin/system/updates')).toEqual({ view: 'admin', section: 'system', tab: 'overview' });
+  });
+
+  it('opens a page of Policy, and ignores one that is not', () => {
+    expect(parse('/admin/system/policy/access')).toEqual({ view: 'admin', section: 'system', tab: 'policy', sub: 'access' });
+    expect(parse('/admin/system/policy/nothing')).toEqual({ view: 'admin', section: 'system', tab: 'policy' });
+    expect(parse('/admin/system/adapters/Not-A-Category')).toEqual({ view: 'admin', section: 'system', tab: 'adapters' });
   });
 
   it('keeps a source authorization outcome on the old adapters address', () => {

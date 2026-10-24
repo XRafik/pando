@@ -5238,7 +5238,7 @@
       "get": {
         "operationId": "listAudit",
         "summary": "List audit events",
-        "description": "The audit log, newest first. Filters combine: `action` (a prefix), `principal_id` (who did it, including through a token), `principal_kind` (user, token, system or anonymous), `app_id`, `target_kind` and `target_id` (what it was done to), `involving` (an ID that is the actor or the target — everything to do with one account), and `since`/`until` (RFC 3339; since inclusive, until exclusive). Pages with `before`. Append-only: no endpoint edits or deletes an event, and the database refuses it too. Each event carries `outcome` (success, denied or failed), `source_ip`, `peer_ip`, `user_agent`, `actor_name`, `actor_email` and `schema_version`. Reading the log is itself audited, as `audit.read`.\n\nNeeds `install.audit.read`.",
+        "description": "The audit log, newest first. Filters combine: `action` (a prefix), `principal_id` (who did it, including through a token), `principal_kind` (user, token, system or anonymous), `app_id`, `target_kind` and `target_id` (what it was done to), `involving` (an ID that is the actor or the target — everything to do with one account), `outcome` (success, denied or failed), `q` (text found in the action, the actor's name, email or ID, the target's ID, or the app's ID or name), and `since`/`until` (RFC 3339; since inclusive, until exclusive). Pages with `before`. Append-only: no endpoint edits or deletes an event, and the database refuses it too. Each event carries `outcome` (success, denied or failed), `source_ip`, `peer_ip`, `user_agent`, `actor_name`, `actor_email` and `schema_version`, and `summary`, the event in plain words such as \"Deployed crewmate\" (the action itself when Pando has no wording for it), with `app_name` and `target_name`, the names the app and the target go by now. Reading the log is itself audited, as `audit.read`.\n\nNeeds `install.audit.read`.",
         "tags": [
           "Installation"
         ],
@@ -5282,6 +5282,13 @@
             }
           },
           {
+            "name": "outcome",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "principal_id",
             "in": "query",
             "schema": {
@@ -5290,6 +5297,13 @@
           },
           {
             "name": "principal_kind",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
             "in": "query",
             "schema": {
               "type": "string"
@@ -16809,6 +16823,15 @@
           "schema_version": {
             "type": "integer",
             "format": "int64"
+          },
+          "app_name": {
+            "type": "string"
+          },
+          "target_name": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
           }
         },
         "required": [
@@ -16816,7 +16839,8 @@
           "occurred_at",
           "principal_kind",
           "action",
-          "schema_version"
+          "schema_version",
+          "summary"
         ]
       },
       "ReferenceDocument": {

@@ -1472,7 +1472,9 @@ var toolList = []tool{
 		Name: "pando_list_audit",
 		Description: "Read the audit log, newest first. Every filter is optional and they combine: " +
 			"what was done (an action prefix such as app. or grant.delete), who did it, which app, " +
-			"what it was done to, and when (RFC 3339 times; since inclusive, until exclusive).",
+			"what it was done to, how it ended, text to search for, and when (RFC 3339 times; since " +
+			"inclusive, until exclusive). Each event has a summary in plain words, such as " +
+			"\"Deployed crewmate\", beside its action.",
 		Schema: schema(map[string]any{
 			"action":         str("Actions starting with this, e.g. app."),
 			"principal_id":   str("Who did it: a user or token ID, or system, reconciler or detection."),
@@ -1481,13 +1483,15 @@ var toolList = []tool{
 			"target_kind":    str("What kind of thing it was done to, e.g. user, role, app."),
 			"target_id":      str("The ID of the thing it was done to."),
 			"involving":      str("Events where this ID is the actor or the target: everything to do with one account."),
+			"outcome":        str("Only events with this outcome: success, denied or failed."),
+			"q":              str("Text found in the action, the actor's name, email or ID, the target's ID, or the app's ID or name."),
 			"since":          str("From this time, RFC 3339."),
 			"until":          str("Up to this time, RFC 3339."),
 			"before":         str("The next_before from a previous page, to read further back."),
 		}),
 		request: func(args map[string]any) (string, string, any, error) {
 			q := url.Values{}
-			for _, key := range []string{"action", "principal_id", "principal_kind", "app_id", "target_kind", "target_id", "involving", "since", "until", "before"} {
+			for _, key := range []string{"action", "principal_id", "principal_kind", "app_id", "target_kind", "target_id", "involving", "outcome", "q", "since", "until", "before"} {
 				v, err := stringArg(args, key, false)
 				if err != nil {
 					return "", "", nil, err

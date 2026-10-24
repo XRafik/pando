@@ -4,7 +4,7 @@ vi.hoisted(() => {
   (globalThis as { window?: unknown }).window ??= { location: { pathname: '/' } };
 });
 
-import { settingArea } from './Installation';
+import { settingArea } from './Overview';
 
 // R-271: the startup configuration is grouped by area, so a setting is found
 // where someone setting Pando up would look for it.

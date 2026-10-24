@@ -1,10 +1,9 @@
-// The tab bar of System, handed to the screen under it.
+// The tab bar System used to hand the screen under it.
 //
-// Adapters, Policy, Backups and Updates are each a whole screen with its own
-// heading and action, and each is also a tab of System (issue #154). Rather
-// than teach all four that they might be a tab, Screen reads this: under
-// System it shows System's heading and this bar, and keeps the screen's own
-// action beside the heading.
+// System's pages are now a list beside one page at a time (System.tsx), each
+// with its own heading, and nothing provides this any more: Screen reads it
+// and, finding none, draws its own heading as it does everywhere else. Kept
+// until Screen stops reading it.
 
 import { createContext } from 'react';
 
