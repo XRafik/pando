@@ -69,13 +69,13 @@ The design system has no menu component; `ui/Menu.tsx` is one built from its pop
 focus return. It should move into the design project.
 
 **[D] Search.** The launcher has a search field in its header ("/" focuses it), and the admin
-console has one beside the heading of Apps, Accounts, Groups and roles, and System's Policy tab. Each filters the
+console has one beside the heading of Apps, Accounts, and Groups and roles. Each filters the
 list the page already has, in the browser: one installation's lists are small (R-015), the API
 already returns them whole, so nothing here is a capability the API lacks (R-261). Matching is
 case-insensitive and needs every word somewhere in the row (`ui/search.ts`). The launcher hides
-groups with no match and opens collapsed ones while searching. Policy searches the rendered text of
-each section — headings, notes, labels, descriptions, options — rather than a keyword list kept
-beside it that would drift the first time a setting was added. Escape clears any of them.
+groups with no match and opens collapsed ones while searching. The audit log's search is the
+server's (`GET /audit?q=`), since the log is paged and its whole is never in the browser. Escape
+clears any of them. Policy has none: split into seven short pages, each page is the search.
 
 **[D] Filters.** Tables filter by column, from a button in the column's header (`ui/Table.tsx`): a
 "contains" field for free text, a checklist of the values present, with counts, for a column of a few
@@ -159,17 +159,47 @@ button, which is a frame from github.com that every screen would load. Pando sen
 itself. An installation holds no GitHub credential, and a relay would be a service that every
 installation calls home to. Being a link, it is no capability the API lacks (R-261).
 
-**[D] System.** Adapters, Policy, Backups and Updates are tabs of one *System* item in the admin
-sidebar rather than four items: they are how the installation itself is set up and kept, not its
-apps or its people (issue #154). The tabs sit under the heading *System*, spaced as an app's tabs
-are, and each tab keeps its own action beside that heading. Each tab is shown on the verb it needed
-as an item of its own — Adapters and Updates on `install.view`, Policy on `install.view` or
-`install.policy.manage`, Backups on `install.backup.manage` — and *System* is shown when any tab is,
-so nobody sees a screen there they could not see before. The count of versions behind (R-351) is on
-*System* as well as on its Updates tab. Each tab is at `/admin/system/{tab}`; `/admin/system` opens
-the first one the person may see, and the old `/admin/adapters`, `/admin/policy`, `/admin/backups`,
-`/admin/updates` and `/admin/installation` still open the right tab. *Sign-in* stays an item of its
-own beside Accounts, though identity providers are adapters: it is about who can sign in.
+**[D] System.** How the installation itself is set up and kept — not its apps or its people — is
+one *System* item in the admin sidebar (issue #154), with a list of its pages on the left, the same
+list as an app's Settings, and one page at a time: **Overview**, **Adapters**, **Policy** with its
+seven pages under it (*Sources and builds, Access, Egress, Deployments, Tokens, Apps, Audit log*),
+and **Backups**. At phone width the list is a select at the top. Each page is shown on the verb it
+needed as an item of its own — Overview and Adapters on `install.view`, Policy on `install.view` or
+`install.policy.manage`, Backups on `install.backup.manage` — and *System* is shown when any is, so
+nobody sees a page there they could not see before. The count of versions behind (R-351) is on
+*System* and beside Overview. Each page is at `/admin/system/{page}`, Policy's at
+`/admin/system/policy/{page}` and an adapter category at `/admin/system/adapters/{category}`;
+`/admin/system` opens the first one the person may see, and the old `/admin/adapters`,
+`/admin/policy`, `/admin/backups`, `/admin/updates`, `/admin/system/updates` and
+`/admin/installation` still open the right page — Updates is now part of Overview. *Sign-in* stays
+an item of its own beside Accounts, though identity providers are adapters: it is about who can sign
+in.
+
+*Overview* holds what is too small to be a page: a *Pando* card (running and latest version,
+status, when checked; Upgrade, with its confirmation; Release notes and Update settings, each opened
+in place; Check now), a *Capacity* card per runtime, and a collapsed *Startup settings* card, the
+`GET /config` table, secrets redacted (R-194). The update settings are host policy and are saved
+with it. *Adapters* is a list and a detail: every category with the worst status of what it holds
+and a count when it holds several, and the chosen category's adapters as cards with their non-secret
+settings, status, and Edit, Authorize, View (declared in the config file, R-271) and Make default.
+*Restart Pando* is red beside the title: it takes every app offline for a moment. *Policy*'s pages
+are raised cards of short rows — a label, at most one line, the control on the right — and switches
+read as what is on (*Terminal access*, not *Disable terminal access*), turned over at the boundary
+so the API keeps its fields. A field fixed at startup shows a lock and where it is set. Policy is one
+draft across its pages and the update settings: one sticky bar, shown only while something is
+unsaved, counts the changes and offers Discard, Check impact and Save policy, and a dot marks each
+page holding one. *Backups* says in one line how many apps were backed up today and lists only the
+failures, and shows the newest three whole-installation backups with older ones a click away.
+
+**[D] The audit log.** Each event reads as a sentence — *Deployed crewmate* — with the action in
+small mono under it, its actor, and its time with its date (*Oct 24 14:32*); no day dividers. The
+sentence is the server's (`summary`, R-379), so the CLI and MCP read it the same way. An outcome is
+shown only when the event was denied or failed. One row of filters — search, time range, Actor,
+Action, App, Target, Outcome — each a button opening a small popover, round-trips through the
+address as before. A row opens the event in a side panel (a screen of its own at phone width) with
+every field, the raw record, *Events by* its actor and *Copy record*. Audit sinks sending as they
+should are one line beside the title (R-385); one failing or turned off is still shown in full
+(R-383). The archived months are one line at the foot, opening their list.
 
 ### 1.2 Stack [P]
 

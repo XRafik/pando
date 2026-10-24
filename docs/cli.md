@@ -855,6 +855,8 @@ Lists what was done on this installation, newest first. The filters combine.
 | `--before` |  | the page before this cursor, as printed after a full page |
 | `--involving` |  | events where this ID is the actor or the target, e.g. a user ID |
 | `--limit` | `0` | how many events (default 100, at most 500) |
+| `--outcome` |  | how it ended: success, denied or failed |
+| `--search` |  | text in the action, the actor, the target or the app |
 | `--since` |  | from this time, or this long ago (24h) |
 | `--target` |  | the ID of the thing it was done to |
 | `--target-kind` |  | what kind of thing it was done to, e.g. user, role, app |

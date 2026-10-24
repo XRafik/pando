@@ -1046,7 +1046,7 @@
     },
     {
       "name": "pando_list_audit",
-      "description": "Read the audit log, newest first. Every filter is optional and they combine: what was done (an action prefix such as app. or grant.delete), who did it, which app, what it was done to, and when (RFC 3339 times; since inclusive, until exclusive).",
+      "description": "Read the audit log, newest first. Every filter is optional and they combine: what was done (an action prefix such as app. or grant.delete), who did it, which app, what it was done to, how it ended, text to search for, and when (RFC 3339 times; since inclusive, until exclusive). Each event has a summary in plain words, such as \"Deployed crewmate\", beside its action.",
       "input_schema": {
         "properties": {
           "action": {
@@ -1065,12 +1065,20 @@
             "description": "Events where this ID is the actor or the target: everything to do with one account.",
             "type": "string"
           },
+          "outcome": {
+            "description": "Only events with this outcome: success, denied or failed.",
+            "type": "string"
+          },
           "principal_id": {
             "description": "Who did it: a user or token ID, or system, reconciler or detection.",
             "type": "string"
           },
           "principal_kind": {
             "description": "What kind of actor: user, token, system or anonymous.",
+            "type": "string"
+          },
+          "q": {
+            "description": "Text found in the action, the actor's name, email or ID, the target's ID, or the app's ID or name.",
             "type": "string"
           },
           "since": {

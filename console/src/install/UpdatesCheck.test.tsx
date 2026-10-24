@@ -5,7 +5,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import type { Status } from '@api/types.gen';
-import { Updates } from './Updates';
+import { PandoCard } from './Updates';
 
 // Rendered into a document so the button can be pressed: the check is a
 // mutation, and what it answers replaces what the screen shows (R-349).
@@ -53,17 +53,17 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-/** Renders the Updates screen and presses Check for updates. */
+/** Renders the Pando card and presses Check now. */
 async function pressCheck() {
   root = createRoot(container);
   act(() =>
     root.render(
       <QueryClientProvider client={queries}>
-        <Updates />
+        <PandoCard />
       </QueryClientProvider>,
     ),
   );
-  const button = [...container.querySelectorAll('button')].find((b) => b.textContent === 'Check for updates');
+  const button = [...container.querySelectorAll('button')].find((b) => b.textContent === 'Check now');
   expect(button).toBeDefined();
   await act(async () => {
     button!.click();
@@ -71,7 +71,7 @@ async function pressCheck() {
   });
 }
 
-describe('Check for updates (R-349)', () => {
+describe('Check now (R-349)', () => {
   it('asks the server now and shows what it found', async () => {
     const fetch = vi.fn(async () => new Response(JSON.stringify(after), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     vi.stubGlobal('fetch', fetch);
@@ -80,7 +80,7 @@ describe('Check for updates (R-349)', () => {
     await pressCheck();
 
     expect(fetch).toHaveBeenCalledWith(expect.stringMatching(/\/api\/v1\/updates\/check$/), expect.objectContaining({ method: 'POST' }));
-    expect(container.textContent).toContain('Update available');
+    expect(container.textContent).toContain('Update, with breaking changes');
     expect(container.textContent).toContain('0.5.0');
   });
 

@@ -2517,6 +2517,22 @@
           "required": false
         },
         {
+          "name": "outcome",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "how it ended: success, denied or failed",
+          "required": false
+        },
+        {
+          "name": "search",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "text in the action, the actor, the target or the app",
+          "required": false
+        },
+        {
           "name": "server",
           "shorthand": "",
           "type": "string",

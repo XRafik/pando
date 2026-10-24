@@ -1,26 +1,31 @@
-// Backups — the screen behind install.backup.manage (Sequence D).
+// Backups — the page behind install.backup.manage (Sequence D).
 //
-// The one thing this screen has to get right is R-214: Pando never stores the
+// The one thing this page has to get right is R-214: Pando never stores the
 // passphrase, and a lost one makes the bundle unusable. The requirement says
 // that must be stated **at creation, not in documentation** — so it is in the
-// dialog, above the field, in body text. Not a tooltip, not a help link, and
-// not a line in a readme nobody opens until the disaster.
+// dialog, above the field, in body text.
 //
 // Restore is deliberately awkward. It replaces every app, account and secret in
-// the installation, and a screen that made it feel routine would be lying about
+// the installation, and a page that made it feel routine would be lying about
 // what it does.
+//
+// Neither list is drawn in full. Daily app backups is a line saying how many
+// apps were backed up today, and only the ones that failed; the whole
+// installation's backups are the newest three, with older ones a click away.
 
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Banner, Button, Dialog, EmptyState, Input, StatusIndicator, Tag } from '@design';
+import { Banner, Button, Dialog, EmptyState, Input, StatusIndicator } from '@design';
 
 import { api } from '@api/client';
 import type { BackupAttempt } from '@api/types.gen';
-import { Quiet, Screen, messageOf } from './Accounts';
+import { Quiet, messageOf } from './Accounts';
 import { Table } from '../ui/Table';
 import { ShowMore, usePaged, type PageOf } from '../ui/paged';
-import { relative } from '../ui/time';
 import { attemptDetail, attemptLabel, attemptSymbol } from '../ui/backupAttempt';
+import { SystemCard } from './Updates';
+import { SystemPage } from './SystemPage';
+import { isToday, stamp } from './stamp';
 
 interface BackupRow {
   id: string;
@@ -32,9 +37,21 @@ interface BackupRow {
   manifest?: { counts?: Record<string, number>; created_at?: string };
 }
 
+/** How many of the newest whole-installation backups are shown at first. */
+const NEWEST = 3;
+
+/** "8 of 9 apps backed up today". */
+export function dailySummary(attempts: BackupAttempt[], now = new Date()): string {
+  const done = attempts.filter((a) => a.outcome === 'taken' && isToday(a.attempted_at, now)).length;
+  const n = attempts.length;
+  return `${done} of ${n} ${n === 1 ? 'app' : 'apps'} backed up today`;
+}
+
 export function Backups() {
   const [taking, setTaking] = useState(false);
   const [acting, setActing] = useState<{ row: BackupRow; mode: 'verify' | 'restore' } | null>(null);
+  const [older, setOlder] = useState(false);
+  const [allApps, setAllApps] = useState(false);
 
   // Newest first, a page at a time (issue #72). The first page carries the
   // most recent apps' last scheduled attempts.
@@ -44,145 +61,136 @@ export function Backups() {
     rows: (p) => p.backups,
   });
   const backups = paged.query;
-
-  const rows = paged.rows;
+  // The whole installation's: an app's own rolling backups are its own.
+  const bundles = paged.rows.filter((r) => r.kind === 'dr_bundle');
+  const shown = older ? bundles : bundles.slice(0, NEWEST);
   const attempts = backups.data?.pages[0]?.attempts ?? [];
+  const failed = attempts.filter((a) => a.outcome === 'failed');
+  const take = (
+    <Button variant="primary" onClick={() => setTaking(true)}>
+      Take a backup
+    </Button>
+  );
 
   return (
-    <Screen
-      heading="Backups"
-      action={
-        <Button variant="primary" onClick={() => setTaking(true)}>
-          Take a backup
-        </Button>
-      }
-    >
+    <SystemPage title="Backups" action={take}>
       {backups.isError && <Quiet>{messageOf(backups.error)}</Quiet>}
 
-      <Table
-        loading={backups.isPending}
-        // An installation that has never been backed up is the state this
-        // screen most needs to be clear about, and it was the one it showed as
-        // a row of column headers over blank paper.
-        empty={
-          <EmptyState
-            heading="No backups yet"
-            action={
-              <Button variant="primary" onClick={() => setTaking(true)}>
-                Take a backup
-              </Button>
-            }
-          >
-            A backup holds every app, account and secret in this installation.
-          </EmptyState>
-        }
-        columns={[
-          {
-            key: 'created_at',
-            header: 'Taken',
-            width: '22ch',
-            render: (row: BackupRow) => new Date(row.created_at).toLocaleString(),
-          },
-          {
-            key: 'kind',
-            header: 'Contents',
-            width: '18ch',
-            render: (row: BackupRow) => (
-              <Tag>{row.kind === 'dr_bundle' ? 'Whole installation' : row.kind}</Tag>
-            ),
-          },
-          { key: 'adapter_ref', header: 'Destination', width: 'minmax(0,18ch)', mono: true },
-          {
-            key: 'size_bytes',
-            header: 'Size',
-            width: '12ch',
-            align: 'right',
-            muted: true,
-            render: (row: BackupRow) => humanSize(row.size_bytes),
-          },
-          {
-            key: 'retain_until',
-            header: 'Kept until',
-            width: '18ch',
-            muted: true,
-            render: (row: BackupRow) =>
-              row.retain_until ? new Date(row.retain_until).toLocaleDateString() : 'Until discarded',
-          },
-          {
-            key: 'actions',
-            header: '',
-            width: '22ch',
-            align: 'right',
-            render: (row: BackupRow) => (
-              <div style={{ display: 'flex', gap: 'var(--space-2)', justifyContent: 'flex-end' }}>
-                {/* Check a backup before it is needed, rather than at the
-                    moment of disaster (R-216). */}
-                <Button variant="secondary" onClick={() => setActing({ row, mode: 'verify' })}>
-                  Check
-                </Button>
-                <Button variant="secondary" onClick={() => setActing({ row, mode: 'restore' })}>
-                  Restore
-                </Button>
-              </div>
-            ),
-          },
-        ]}
-        rows={rows}
-      />
-      <ShowMore query={backups} label="Show more backups" />
-
-      {/* Each app's last daily backup, including the ones that did not happen
-          (R-211, issue #87). The table above lists what exists; a backup that
-          was skipped or failed leaves nothing there, and used to leave nothing
-          anywhere but the server log. */}
+      {/* Each app's last daily backup, including the ones that did not
+          happen (R-211, issue #87): a backup that was skipped or failed
+          leaves nothing in the list below. */}
       {attempts.length > 0 && (
-        <section
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 'var(--space-3)',
-            marginTop: 'var(--space-6)',
-          }}
+        <SystemCard
+          heading="Daily app backups"
+          action={<StatusIndicator status={failed.length > 0 ? 'failed' : 'running'} label={dailySummary(attempts)} />}
         >
-          <h4 style={{ font: 'var(--type-h4)', margin: 0 }}>Daily app backups</h4>
-          <Quiet>
-            The last attempt for each app that keeps data.
-          </Quiet>
-          <Table
-            columns={[
-              {
-                key: 'app_name',
-                header: 'App',
-                width: 'minmax(0,22ch)',
-                render: (row: BackupAttempt) => row.app_name || row.app_id,
-              },
-              {
-                key: 'outcome',
-                header: 'Last attempt',
-                width: '24ch',
-                render: (row: BackupAttempt) => (
-                  <StatusIndicator
-                    status={attemptSymbol(row)}
-                    label={`${attemptLabel(row)} ${relative(row.attempted_at).toLowerCase()}`}
-                  />
-                ),
-              },
-              {
-                key: 'message',
-                header: 'Details',
-                width: 'minmax(0,1fr)',
-                muted: true,
-                render: (row: BackupAttempt) => attemptDetail(row) || '—',
-              },
-            ]}
-            rows={attempts.map((a) => ({ ...a, id: a.app_id }))}
-          />
-        </section>
+          {(allApps || failed.length > 0) && (
+            <Table
+              columns={[
+                {
+                  key: 'app_name',
+                  header: 'App',
+                  width: 'minmax(0,22ch)',
+                  render: (row: BackupAttempt) => row.app_name || row.app_id,
+                },
+                {
+                  key: 'outcome',
+                  header: 'Last attempt',
+                  width: '24ch',
+                  render: (row: BackupAttempt) => (
+                    <StatusIndicator status={attemptSymbol(row)} label={`${attemptLabel(row)} ${stamp(row.attempted_at)}`} />
+                  ),
+                },
+                {
+                  key: 'message',
+                  header: 'Details',
+                  width: 'minmax(0,1fr)',
+                  muted: true,
+                  render: (row: BackupAttempt) => attemptDetail(row) || '—',
+                },
+              ]}
+              rows={(allApps ? attempts : failed).map((a) => ({ ...a, id: a.app_id }))}
+            />
+          )}
+          <div>
+            <Button variant="ghost" aria-expanded={allApps} onClick={() => setAllApps(!allApps)}>
+              {allApps ? 'Show only failures' : `Show all ${attempts.length} apps`}
+            </Button>
+          </div>
+        </SystemCard>
       )}
+
+      <SystemCard
+        heading={
+          <span style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 'var(--space-1) var(--space-3)' }}>
+            Whole installation
+            <span style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)' }}>Every app, account and secret</span>
+          </span>
+        }
+      >
+        <Table
+          loading={backups.isPending}
+          // An installation that has never been backed up is the state this
+          // page most needs to be clear about.
+          empty={<EmptyState heading="No backups yet" action={take} />}
+          columns={[
+            {
+              key: 'created_at',
+              header: 'Taken',
+              width: '16ch',
+              render: (row: BackupRow) => stamp(row.created_at),
+            },
+            {
+              key: 'size_bytes',
+              header: 'Size',
+              width: '10ch',
+              muted: true,
+              render: (row: BackupRow) => humanSize(row.size_bytes),
+            },
+            { key: 'adapter_ref', header: 'Destination', width: 'minmax(0,18ch)', mono: true },
+            {
+              key: 'retain_until',
+              header: 'Kept until',
+              width: '16ch',
+              muted: true,
+              render: (row: BackupRow) => (row.retain_until ? new Date(row.retain_until).toLocaleDateString() : 'Until discarded'),
+            },
+            {
+              key: 'actions',
+              header: '',
+              width: '22ch',
+              align: 'right',
+              render: (row: BackupRow) => (
+                <div style={{ display: 'flex', gap: 'var(--space-2)', justifyContent: 'flex-end' }}>
+                  {/* Check a backup before it is needed (R-216). */}
+                  <Button variant="secondary" onClick={() => setActing({ row, mode: 'verify' })}>
+                    Check
+                  </Button>
+                  <Button variant="secondary" onClick={() => setActing({ row, mode: 'restore' })}>
+                    Restore
+                  </Button>
+                </div>
+              ),
+            },
+          ]}
+          rows={shown}
+        />
+        {bundles.length > NEWEST && !older && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 'var(--space-3)' }}>
+            <span style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)' }}>
+              {NEWEST} newest of {backups.hasNextPage ? `${bundles.length}+` : bundles.length}
+            </span>
+            <Button variant="ghost" onClick={() => setOlder(true)}>
+              Show older backups
+            </Button>
+          </div>
+        )}
+        {older && <ShowMore query={backups} label="Show older backups" />}
+      </SystemCard>
 
       {taking && <TakeBackup onClose={() => setTaking(false)} />}
       {acting && <UseBackup {...acting} onClose={() => setActing(null)} />}
-    </Screen>
+    </SystemPage>
   );
 }
 
