@@ -54,9 +54,33 @@ describe('Output', () => {
       workloads: [
         { name: 'web', primary: true, present: true, running: true, restarting: false, restart_count: 0, healthy: true },
         { name: 'worker', primary: false, present: true, running: true, restarting: false, restart_count: 0, healthy: null },
+        {
+          name: 'svc-01m5nfrprw5ewy81pwynjn0h86',
+          primary: false,
+          present: true,
+          running: true,
+          restarting: false,
+          restart_count: 0,
+          healthy: null,
+          service: { slot_key: 'DATABASE_URL', type: 'postgres' },
+        },
       ],
     },
   ];
+
+  it('names a service Pando runs for what it is in the picker, and asks for it by its handle', async () => {
+    const onWorkload = vi.fn();
+    const screen = mount(<PanelOutput app={app} onWorkload={onWorkload} />, [status]);
+    const options = [...document.querySelectorAll<HTMLOptionElement>('#s-workload option')].map((o) => [o.value, o.textContent]);
+    expect(options).toEqual([
+      ['web', 'web'],
+      ['worker', 'worker'],
+      ['svc-01m5nfrprw5ewy81pwynjn0h86', 'PostgreSQL'],
+    ]);
+    await screen.fill('Workload', 'svc-01m5nfrprw5ewy81pwynjn0h86');
+    expect(onWorkload).toHaveBeenCalledWith('svc-01m5nfrprw5ewy81pwynjn0h86');
+    screen.unmount();
+  });
 
   it('follows the chosen workload’s output, and copies it', async () => {
     vi.stubGlobal('fetch', unanswered);
@@ -276,6 +300,27 @@ describe('Terminal', () => {
     const html = serverRender(<Terminal appID="app_1" workload="worker" onWorkload={() => {}} />, specs);
     expect(html).toContain('start a shell in');
     expect(html).toMatch(/<code[^>]*>worker<\/code>/);
+  });
+
+  it('offers a service Pando runs, named for what it is', () => {
+    const handle = 'svc-01m5nfrprw5ewy81pwynjn0h86';
+    const withStatus: Array<[unknown[], unknown]> = [
+      ...specs,
+      [
+        ['apps', 'app_1', 'status'],
+        {
+          state: 'running',
+          desired_state: 'running',
+          workloads: [
+            { name: 'web', primary: true, present: true, running: true, restarting: false, restart_count: 0, healthy: null },
+            { name: handle, primary: false, present: true, running: true, restarting: false, restart_count: 0, healthy: null, service: { slot_key: 'db', type: 'postgres' } },
+          ],
+        },
+      ],
+    ];
+    const html = serverRender(<Terminal appID="app_1" workload={handle} onWorkload={() => {}} />, withStatus);
+    expect(html).toContain(`<option value="${handle}" selected="">PostgreSQL</option>`);
+    expect(html).toMatch(/<code[^>]*>PostgreSQL<\/code>/);
   });
 
   it('changes workload through the address', async () => {

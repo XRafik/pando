@@ -651,7 +651,12 @@ func (s *Server) handleAppStatus(w http.ResponseWriter, r *http.Request) {
 					// presented as the app being broken.
 					body["observability"] = "unreachable"
 				} else {
-					body["workloads"] = workloadStatuses(rev.Body, observed)
+					var services []state.ServiceInstance
+					if s.ServiceInstances != nil {
+						// Only a label: a status still answers without it.
+						services, _ = s.ServiceInstances.ForApp(r.Context(), app.ID)
+					}
+					body["workloads"] = workloadStatuses(rev.Body, observed, services)
 				}
 			}
 			body["revision"] = rev.Revision
@@ -694,10 +699,26 @@ type WorkloadStatus struct {
 	Image    string `json:"image,omitempty"`
 
 	StartedAt *time.Time `json:"started_at,omitempty"`
+
+	// Service is the dependency a workload Pando runs for the app fills
+	// (R-131's provisioned), so a reader sees a PostgreSQL where the runtime
+	// names a handle such as svc-01h….
+	Service *WorkloadService `json:"service,omitempty"`
 }
 
-// workloadStatuses pairs what the runtime sees with what the spec declares.
-func workloadStatuses(s *spec.AppSpec, observed api.ObservedBundle) []WorkloadStatus {
+// WorkloadService names the slot a provisioned workload fills.
+type WorkloadService struct {
+	SlotKey string `json:"slot_key"`
+	Type    string `json:"type"`
+}
+
+// workloadStatuses pairs what the runtime sees with what the spec declares,
+// and names each service Pando runs by the dependency it fills.
+func workloadStatuses(s *spec.AppSpec, observed api.ObservedBundle, services []state.ServiceInstance) []WorkloadStatus {
+	byHandle := make(map[string]state.ServiceInstance, len(services))
+	for _, svc := range services {
+		byHandle[svc.Handle] = svc
+	}
 	primary, _ := s.PrimaryWorkload()
 
 	found := make(map[string]api.ObservedWorkload, len(observed.Workloads))
@@ -721,6 +742,9 @@ func workloadStatuses(s *spec.AppSpec, observed api.ObservedBundle) []WorkloadSt
 		if !w.StartedAt.IsZero() {
 			at := w.StartedAt
 			status.StartedAt = &at
+		}
+		if svc, ok := byHandle[name]; ok && !declared {
+			status.Service = &WorkloadService{SlotKey: svc.SlotKey, Type: string(svc.SlotType)}
 		}
 		out = append(out, status)
 	}

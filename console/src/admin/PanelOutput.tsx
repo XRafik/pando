@@ -10,7 +10,7 @@ import { Button, Skeleton, StatusIndicator, Switch } from '@design';
 import { api, base } from '@api/client';
 import type { App } from '@api/types.gen';
 import { messageOf } from '../install/Accounts';
-import { labelFor, symbolFor, useAppStatus } from './appStatus';
+import { labelFor, partTitle, symbolFor, useAppStatus } from './appStatus';
 import { appendCapped, followLog } from './logStream';
 import { Body, CopyButton, LogBox, Note, Toolbar, WorkloadPicker } from './panelParts';
 
@@ -92,7 +92,12 @@ export function PanelOutput({
       <Toolbar
         start={
           <>
-            <WorkloadPicker names={parts.map((p) => p.name)} chosen={showing || primary} onChoose={onWorkload} />
+            <WorkloadPicker
+              names={parts.map((p) => p.name)}
+              titles={Object.fromEntries(parts.map((p) => [p.name, partTitle(p, p.name)]))}
+              chosen={showing || primary}
+              onChoose={onWorkload}
+            />
             {part && <StatusIndicator status={symbolFor(part)} label={labelFor(part)} />}
           </>
         }
@@ -111,7 +116,7 @@ export function PanelOutput({
           box={box}
           follow={follow}
           onFollow={setFollow}
-          label={`Output of ${showing || primary || app.name}`}
+          label={`Output of ${part ? partTitle(part, part.name) : showing || primary || app.name}`}
           onRetry={() => setGeneration((n) => n + 1)}
         />
       </Body>

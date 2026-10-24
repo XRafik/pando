@@ -9,6 +9,7 @@ import (
 
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/core/spec"
+	"github.com/trypando/pando/internal/core/state"
 )
 
 // TestR261_StatusReportsEachPartOfAnAppSeparately asserts R-261.
@@ -39,7 +40,11 @@ func TestR261_StatusReportsEachPartOfAnAppSeparately(t *testing.T) {
 		},
 		// Running for this app and not in its spec: a provisioned database.
 		{Name: "svc-01HQ8", Present: true, Running: true},
-	}})
+	}}, []state.ServiceInstance{
+		{SlotKey: "DATABASE_URL", SlotType: "postgres", Handle: "svc-01HQ8"},
+		// A handle that happens to match a declared workload names nothing.
+		{SlotKey: "CACHE_URL", SlotType: "redis", Handle: "app"},
+	})
 
 	require.Len(t, got, 3)
 
@@ -56,6 +61,11 @@ func TestR261_StatusReportsEachPartOfAnAppSeparately(t *testing.T) {
 	require.True(t, got[1].Primary, "the part the app's address resolves to")
 	require.False(t, got[0].Primary)
 	require.False(t, got[2].Primary, "and nothing outside the spec claims to be")
+
+	require.Equal(t, &WorkloadService{SlotKey: "DATABASE_URL", Type: "postgres"}, got[2].Service,
+		"a service Pando runs is named by the dependency it fills")
+	require.Nil(t, got[0].Service, "the app's own workloads fill no dependency")
+	require.Nil(t, got[1].Service)
 }
 
 // The wire names, because the console and the CLI read them and the API is

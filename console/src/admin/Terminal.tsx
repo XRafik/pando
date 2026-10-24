@@ -17,6 +17,7 @@ import { Button, Icon, StatusIndicator } from '@design';
 import { api, base } from '@api/client';
 import type { AppSpec } from '@api/types.gen';
 import { FieldSkeleton, Loading } from '../ui/Loading';
+import { partTitle, useAppStatus } from './appStatus';
 import { Body, Toolbar, WorkloadPicker } from './panelParts';
 
 /** R-086's warning, said before a terminal is opened. */
@@ -73,7 +74,7 @@ export function Terminal({
             </Loading>
           ) : (
             <>
-              <WorkloadPicker names={names.all} chosen={chosen} onChoose={onWorkload} />
+              <WorkloadPicker names={names.all} titles={names.titles} chosen={chosen} onChoose={onWorkload} />
               <StatusIndicator status={shown.status} label={shown.label} />
             </>
           )
@@ -111,7 +112,7 @@ export function Terminal({
           <Surface>
             <span style={{ font: 'var(--type-body-ui)', color: 'var(--terminal-text)', opacity: 0.7 }}>
               Open a terminal to start a shell in{' '}
-              <code style={{ font: 'var(--type-code)', opacity: 1 }}>{chosen || 'this app'}</code>.
+              <code style={{ font: 'var(--type-code)', opacity: 1 }}>{names.titles[chosen] ?? (chosen || 'this app')}</code>.
             </span>
           </Surface>
         )}
@@ -166,8 +167,11 @@ function Surface({ children }: Readonly<{ children?: React.ReactNode }>) {
   );
 }
 
-/** The app's workload names, and which one is primary. */
-function useWorkloads(appID: string): { all: string[]; primary: string; loading: boolean } {
+/**
+ * The app's workload names, and which one is primary: the spec's own, then
+ * each service Pando runs for it, from the status, named for what it is.
+ */
+function useWorkloads(appID: string): { all: string[]; titles: Record<string, string>; primary: string; loading: boolean } {
   const specs = useQuery({
     queryKey: ['apps', appID, 'specs'],
     queryFn: () =>
@@ -182,9 +186,14 @@ function useWorkloads(appID: string): { all: string[]; primary: string; loading:
     enabled: Boolean(pinned),
   });
 
+  const status = useAppStatus({ id: appID, pinned_spec_id: specs.data?.pinned_spec_id });
+  const services = (status.data?.workloads ?? []).filter((p) => p.service);
+
   const workloads = full.data?.body?.workloads ?? [];
+  const declared = workloads.map((w) => w.name);
   return {
-    all: workloads.map((w) => w.name),
+    all: [...declared, ...services.map((p) => p.name).filter((n) => !declared.includes(n))],
+    titles: Object.fromEntries(services.map((p) => [p.name, partTitle(p, p.name)])),
     primary: (workloads.find((w) => w.primary) ?? workloads[0])?.name ?? '',
     // `full` waits on a pinned revision and is pending for good without one.
     loading: specs.isPending || (Boolean(pinned) && full.isPending),

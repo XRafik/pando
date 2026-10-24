@@ -42,6 +42,9 @@ Top to bottom:
    page" above the cards. Each card ends with three labeled icon buttons, always bottom-left:
    **Logs**, **Terminal** and **Resources**. Terminal is offered only to holders of `app.exec` and not
    on a workload that is not running; Resources only to holders of `app.resources.override`.
+   A service Pando runs for the app is titled by what it is ("PostgreSQL", from the dependency it
+   fills, which `/status` reports), never by its handle. Disk has no limit, so its line is drawn
+   against its own range, low in the chart, rather than filling it.
 5. **Security** — score, when it was scanned, the host's minimum, the top findings, and a link to all.
 
 ### Changing a workload's resources
@@ -88,10 +91,13 @@ destination, the events it sends, on or turned off (with the reason and **Turn o
 
 ## Sharing
 
-**Public access** is a card with two switches — **Make public** (*Accessible to anyone on the
-internet*) and, under it while on, **Require passcode** (*Visitors need the passcode to open it*). Making
-an app public adds to the people it is shared with; it never replaces them (R-075, R-264), which is why
-it is a switch and not a choice among three. The passcode is shown, with a reveal toggle and **Copy**,
+**Public access** is a card with two switches, both always shown — **Make public** (*Accessible to
+anyone on the internet*) and **Require passcode** (*Anyone with the passcode can open it, no account
+needed*). The passcode is never hidden behind "public": somebody who wants a passcode and does not think
+of their app as public still finds it, and turning it on by itself makes the app open to anyone with
+the passcode in one step. Turning Make public off turns both off. Making an app public adds to the
+people it is shared with; it never replaces them (R-075, R-264), which is why these are switches and
+not a choice among three. The passcode is shown, with a reveal toggle and **Copy**,
 only while it is being set or changed: Pando keeps its digest and nothing else (R-075a). A host that
 forbids either shows the switch disabled with a few words of why (R-076).
 

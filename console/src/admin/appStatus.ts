@@ -10,6 +10,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@api/client';
 import type { App } from '@api/types.gen';
 import { recordIsBehind, statusInterval } from '../ui/polling';
+import { slotLabel } from './discovery';
 
 export interface Part {
   name: string;
@@ -20,6 +21,17 @@ export interface Part {
   restart_count: number;
   healthy: boolean | null;
   exit_code?: number;
+  /** Set on a service Pando runs for the app: the slot it fills and its type. */
+  service?: { slot_key: string; type: string };
+}
+
+/**
+ * What a workload is called on screen. A service Pando runs for the app is
+ * named for what it is ("PostgreSQL"), not its handle; the handle is still
+ * what the API is given.
+ */
+export function partTitle(part: Pick<Part, 'name' | 'service'> | undefined, name: string): string {
+  return part?.service ? slotLabel(part.service.type) : name;
 }
 
 export interface AppStatus {

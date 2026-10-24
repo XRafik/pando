@@ -89,7 +89,7 @@ describe('who has access', () => {
   it('says what making it public means, on the switch itself (R-077)', () => {
     const html = sharing([{ id: 'gr_1', plane: 'data', principal_kind: 'anonymous', passcode: true }]);
     expect(html).toContain('Accessible to anyone on the internet');
-    expect(html).toContain('Visitors need the passcode to open it');
+    expect(html).toContain('Anyone with the passcode can open it, no account needed');
   });
 
   it('lists a person’s role and their use of the app in separate columns', () => {

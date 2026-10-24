@@ -5,7 +5,7 @@ import type { App } from '@api/types.gen';
 import { PanelOpener } from './AppPanel';
 import { AppVerb } from './verbs';
 import { addReading, nearLimit, usageKey, workloadLine, Workloads, type PartUsage, type Reading } from './Workloads';
-import { points } from './Sparkline';
+import { points, unlimitedShares } from './Sparkline';
 import { mount, reply, serverRender, unanswered, type Mounted, type Seed } from '../ui/testing';
 
 const app = { id: 'app_x', name: 'crewmate', state: 'running', pinned_spec_id: 'spec_x' } as unknown as App;
@@ -95,6 +95,18 @@ describe('a workload card', () => {
     expect(html).toContain('212.0 MB of 512.0 MB');
     expect(html).toContain('0.12 of 1');
   });
+
+  it('titles a service Pando runs for what it is, not its handle', () => {
+    const handle = 'svc-01m5nfrprw5ewy81pwynjn0h86';
+    const html = serverRender(
+      <Workloads app={app} />,
+      seed([use('web'), use(handle)], [part('web'), part(handle, { service: { slot_key: 'DATABASE_URL', type: 'postgres' } })]),
+    );
+    expect(html).toMatch(/<h5[^>]*title="svc-01m5nfrprw5ewy81pwynjn0h86"[^>]*>PostgreSQL<\/h5>/);
+    expect(html).toContain('aria-label="PostgreSQL"');
+    expect(html).not.toContain(`>${handle}<`);
+    expect(html).toContain('Provided by Pando · No restarts');
+  });
 });
 
 describe('changing a workload’s resources', () => {
@@ -183,6 +195,25 @@ describe('the readings this page has taken (R-245)', () => {
       [200, 18.8],
     ]);
     expect(points([0, 10, 20], 10).map(([, y]) => y)).toEqual([36, 1.5, 1.5]);
+  });
+
+  it('draw a reading with no limit low in the chart, by its own range', () => {
+    expect(unlimitedShares([])).toEqual([]);
+    // Flat, whatever its size: a quiet line near the foot, not a full block.
+    expect(unlimitedShares([84 << 20, 84 << 20, 84 << 20])).toEqual([0.15, 0.15, 0.15]);
+    expect(unlimitedShares([0, 0])).toEqual([0.15, 0.15]);
+    // A real change spans the lower part of the chart, and no higher.
+    const moved = unlimitedShares([100, 150, 200]);
+    expect(moved[0]).toBeCloseTo(0.15);
+    expect(moved[1]).toBeCloseTo(0.375);
+    expect(moved[2]).toBeCloseTo(0.6);
+    // A change of a few bytes on a large reading is drawn as a small one.
+    const nudged = unlimitedShares([1000, 1001]);
+    expect(nudged[1]! - nudged[0]!).toBeLessThan(0.01);
+    // Disk is drawn with that scale on a card: no point near the top.
+    const html = serverRender(<Workloads app={app} />, seed([use('web')], [part('web')]));
+    const disk = [...html.matchAll(/<polyline points="([^"]+)"/g)][2]![1]!;
+    for (const pt of disk.split(' ')) expect(Number(pt.split(',')[1])).toBeGreaterThan(30);
   });
 });
 

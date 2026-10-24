@@ -37,7 +37,14 @@ export function WorkloadPicker({
   names,
   chosen,
   onChoose,
-}: Readonly<{ names: string[]; chosen: string; onChoose: (name: string) => void }>) {
+  titles = {},
+}: Readonly<{
+  names: string[];
+  chosen: string;
+  onChoose: (name: string) => void;
+  /** What to call a workload instead of its name: a service by what it is. */
+  titles?: Readonly<Record<string, string>>;
+}>) {
   if (names.length === 0) return null;
   return (
     <>
@@ -48,7 +55,7 @@ export function WorkloadPicker({
         id="s-workload"
         mono
         value={chosen}
-        options={names.map((n) => ({ value: n, label: n }))}
+        options={names.map((n) => ({ value: n, label: titles[n] ?? n }))}
         onChange={(e) => onChoose(e.target.value)}
       />
     </>
