@@ -54,13 +54,39 @@ function recording(): Call[] {
 
 // R-075, R-264: public is a switch that adds to the people named.
 describe('public access', () => {
-  it('offers Make public on a private app, and no passcode yet', () => {
+  it('offers Make public and Require passcode on a private app, each saying who can open it', () => {
     vi.stubGlobal('fetch', unanswered);
     const screen = mount(<Sharing appID="app_1" appName="crewmate" />, seed(named), MANAGE);
     expect(screen.text()).toContain('Accessible to anyone on the internet');
+    expect(screen.text()).toContain('Anyone with the passcode can open it, no account needed');
     expect(sw('Make public')?.checked).toBe(false);
     expect(sw('Make public')?.disabled).toBe(false);
-    expect(sw('Require passcode')).toBeNull();
+    expect(sw('Require passcode')?.checked).toBe(false);
+    expect(sw('Require passcode')?.disabled).toBe(false);
+    screen.unmount();
+  });
+
+  it('makes a private app open with a passcode in one step, asking first', async () => {
+    const calls = recording();
+    const screen = mount(<Sharing appID="app_1" appName="crewmate" />, seed(named), MANAGE);
+    await act(async () => sw('Require passcode')!.click());
+    expect(screen.text()).toContain('Make this app public with a passcode?');
+    expect(calls.filter((c) => c.method !== 'GET')).toHaveLength(0);
+    await screen.fill('Passcode', 'harbor-light');
+    await screen.press('Require passcode');
+    const posts = calls.filter((c) => c.method === 'POST');
+    expect(posts).toHaveLength(1);
+    expect(JSON.parse(posts[0]!.body!)).toEqual({ plane: 'data', principal_kind: 'anonymous', passcode: 'harbor-light' });
+    expect(calls.some((c) => c.method === 'PATCH' || c.method === 'DELETE')).toBe(false);
+    screen.unmount();
+  });
+
+  it('turns both off when Make public is turned off', async () => {
+    const calls = recording();
+    const screen = mount(<Sharing appID="app_1" appName="crewmate" />, seed([anonymous(true), ...named]), MANAGE);
+    await act(async () => sw('Make public')!.click());
+    expect(calls.filter((c) => c.method === 'DELETE').map((c) => c.url)).toEqual([expect.stringMatching(/\/apps\/app_1\/grants\/gr_anon$/)]);
+    expect(calls.some((c) => c.method === 'PATCH')).toBe(false);
     screen.unmount();
   });
 
@@ -83,7 +109,7 @@ describe('public access', () => {
     const plain = mount(<Sharing appID="app_1" appName="crewmate" />, seed([anonymous(), ...named]), MANAGE);
     expect(sw('Make public')?.checked).toBe(true);
     expect(sw('Require passcode')?.checked).toBe(false);
-    expect(plain.text()).toContain('Visitors need the passcode to open it');
+    expect(plain.text()).toContain('Anyone with the passcode can open it, no account needed');
     expect(plain.text()).not.toContain('••••••••');
     plain.unmount();
 
@@ -106,6 +132,7 @@ describe('public access', () => {
     vi.stubGlobal('fetch', unanswered);
     const none = mount(<Sharing appID="app_1" appName="crewmate" />, seed(named, 'none'), MANAGE);
     expect(sw('Make public')?.disabled).toBe(true);
+    expect(sw('Require passcode')?.disabled).toBe(true);
     expect(none.text()).toContain('Not allowed on this host');
     none.unmount();
 

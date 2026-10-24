@@ -17,6 +17,7 @@ import (
 	"github.com/trypando/pando/internal/core/audit"
 	"github.com/trypando/pando/internal/core/authz"
 	"github.com/trypando/pando/internal/core/logstream"
+	"github.com/trypando/pando/internal/core/observe"
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/errs"
@@ -665,6 +666,7 @@ func (s *Server) handleAppStatus(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	s.nameServices(r.Context(), app.ID, body)
 	JSON(w, http.StatusOK, body)
 }
 
@@ -694,6 +696,44 @@ type WorkloadStatus struct {
 	Image    string `json:"image,omitempty"`
 
 	StartedAt *time.Time `json:"started_at,omitempty"`
+
+	// Service is the dependency a workload Pando runs for the app fills
+	// (R-131's provisioned), so a reader sees a PostgreSQL where the runtime
+	// names a handle such as svc-01h….
+	Service *WorkloadService `json:"service,omitempty"`
+
+	// declared is whether the spec names this workload. Only one it does not
+	// can be a service Pando runs for the app.
+	declared bool
+}
+
+// nameServices puts on each workload in a status body that is a service Pando
+// runs for the app the dependency it fills. Which ones those are is core's
+// to say (observe.Provided); this only asks about the workloads the spec does
+// not declare and copies the answer onto the wire.
+func (s *Server) nameServices(ctx context.Context, appID string, body map[string]any) {
+	workloads, ok := body["workloads"].([]WorkloadStatus)
+	if !ok {
+		return
+	}
+	var undeclared []string
+	for _, w := range workloads {
+		if !w.declared {
+			undeclared = append(undeclared, w.Name)
+		}
+	}
+	provided := observe.Provided(ctx, s.ServiceInstances, appID, undeclared)
+	for i := range workloads {
+		if dep, found := provided[workloads[i].Name]; found {
+			workloads[i].Service = &WorkloadService{SlotKey: dep.SlotKey, Type: dep.Type}
+		}
+	}
+}
+
+// WorkloadService names the slot a provisioned workload fills.
+type WorkloadService struct {
+	SlotKey string `json:"slot_key"`
+	Type    string `json:"type"`
 }
 
 // workloadStatuses pairs what the runtime sees with what the spec declares.
@@ -717,6 +757,7 @@ func workloadStatuses(s *spec.AppSpec, observed api.ObservedBundle) []WorkloadSt
 			Healthy:      w.Healthy,
 			ExitCode:     w.ExitCode,
 			Image:        w.ImageDigest,
+			declared:     declared,
 		}
 		if !w.StartedAt.IsZero() {
 			at := w.StartedAt

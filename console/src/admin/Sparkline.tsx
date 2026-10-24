@@ -22,6 +22,28 @@ export function points(values: readonly number[], scale: number): Array<[number,
   });
 }
 
+// A reading with no limit (disk) has nothing to be a share of. It is drawn
+// in the lower part of the chart: a flat series as a quiet line at LOW, and
+// one that moves spread up to HIGH by its own range.
+const LOW = 0.15;
+const HIGH = 0.6;
+// A movement smaller than this share of the reading is drawn smaller than the
+// full spread, so a few bytes either way does not look like a jump.
+const NOTICEABLE = 0.1;
+
+/**
+ * Where each reading with no limit sits, as a share of the chart's height,
+ * against the series' own range rather than its size.
+ */
+export function unlimitedShares(values: readonly number[]): number[] {
+  if (values.length === 0) return [];
+  const low = Math.min(...values);
+  const high = Math.max(...values);
+  const range = Math.max(high - low, Math.abs(high) * NOTICEABLE);
+  if (range <= 0) return values.map(() => LOW);
+  return values.map((v) => LOW + ((v - low) / range) * (HIGH - LOW));
+}
+
 export function Sparkline({
   values,
   limit = 0,
@@ -34,10 +56,9 @@ export function Sparkline({
   tone?: 'normal' | 'warn';
 }>) {
   const color = tone === 'warn' ? 'var(--contour-text)' : 'var(--water)';
-  // Against the limit where there is one; otherwise against the highest
-  // reading, with room above it so a flat line is not drawn along the top.
-  const scale = limit > 0 ? limit : Math.max(...values, 0) * 1.25;
-  const at = points(values, scale);
+  // Against the limit where there is one; otherwise against its own range,
+  // low in the chart, so a steady reading is not drawn as a solid block.
+  const at = limit > 0 ? points(values, limit) : points(unlimitedShares(values), 1);
   const line = at.map(([x, y]) => `${x},${y}`).join(' ');
   const last = at.at(-1);
 

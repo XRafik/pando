@@ -17,7 +17,7 @@ import { Quiet, messageOf } from '../install/Accounts';
 import { relative } from '../ui/time';
 import { USAGE_MS, useOnScreen } from '../ui/polling';
 import { attemptLabel } from '../ui/backupAttempt';
-import { labelFor, symbolFor, useAppStatus, type Part } from './appStatus';
+import { labelFor, partTitle, symbolFor, useAppStatus, type Part } from './appStatus';
 import { useOpenPanel } from './AppPanel';
 import { bytes } from './usage-format';
 import { coreNumber, ResourcesDialog } from './ResourcesDialog';
@@ -141,27 +141,40 @@ export function Workloads({ app }: Readonly<{ app: App & { last_backup?: BackupA
 
   return (
     <section ref={section} aria-labelledby="workloads" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 'var(--space-4)', flexWrap: 'wrap' }}>
-        <h4 id="workloads" style={{ font: 'var(--type-h4)', margin: 0 }}>
-          Workloads
-        </h4>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+      {/* The heading and its caption wrap as one group, the caption under the
+          heading when there is no room beside it; Refresh stays at the end. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
+        <div
+          style={{
+            flex: '1 1 auto',
+            minWidth: 0,
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'baseline',
+            columnGap: 'var(--space-4)',
+            rowGap: 'var(--space-1)',
+          }}
+        >
+          <h4 id="workloads" style={{ font: 'var(--type-h4)', margin: 0 }}>
+            Workloads
+          </h4>
           {reading?.supported && (
-            <span style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)' }}>
+            <span style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)', minWidth: 0 }}>
               Since you opened this page. Disk excludes storage.
             </span>
           )}
-          <Button
-            variant="secondary"
-            disabled={usage.isFetching}
-            onClick={() => {
-              void usage.refetch();
-              void status.refetch();
-            }}
-          >
-            {usage.isFetching ? 'Refreshing' : 'Refresh'}
-          </Button>
-        </span>
+        </div>
+        <Button
+          variant="secondary"
+          disabled={usage.isFetching}
+          onClick={() => {
+            void usage.refetch();
+            void status.refetch();
+          }}
+          style={{ flex: '0 0 auto' }}
+        >
+          {usage.isFetching ? 'Refreshing' : 'Refresh'}
+        </Button>
       </div>
 
       {status.data?.observability === 'unreachable' && <Quiet>Pando couldn’t reach the runtime. State unknown.</Quiet>}
@@ -186,6 +199,7 @@ export function Workloads({ app }: Readonly<{ app: App & { last_backup?: BackupA
               key={name}
               name={name}
               part={parts.find((p) => p.name === name)}
+              parts={parts}
               use={usages.find((u) => u.name === name)}
               samples={history[name] ?? []}
               several={names.length > 1}
@@ -232,9 +246,13 @@ export function workloadLine(part: Part | undefined, use: PartUsage | undefined,
   return said.join(' · ');
 }
 
+/** A ghost button with the least padding that still reads as a target. */
+const COMPACT: React.CSSProperties = { padding: '0 var(--space-1)', gap: 'var(--space-1)' };
+
 function WorkloadCard({
   name,
   part,
+  parts,
   use,
   samples,
   several,
@@ -244,6 +262,8 @@ function WorkloadCard({
 }: Readonly<{
   name: string;
   part?: Part;
+  /** Every workload, so two services of one kind can be told apart. */
+  parts: readonly Part[];
   use?: PartUsage;
   samples: Sample[];
   several: boolean;
@@ -260,11 +280,19 @@ function WorkloadCard({
   const running = part ? part.running && !part.restarting : Boolean(use?.running);
   const line = workloadLine(part, use, several, provided);
   const volumes = use?.volumes ?? [];
+  // A service Pando runs is titled for what it is; its handle is the hover text.
+  const title = partTitle(part, name, parts);
+  const service = title !== name;
 
   return (
-    <Card as="article" aria-label={name} padding="md" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)', minWidth: 0 }}>
+    <Card as="article" aria-label={title} padding="md" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)', minWidth: 0 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 'var(--space-3)' }}>
-          <h5 style={{ font: 'var(--type-code)', color: 'var(--ink)', margin: 0, overflowWrap: 'anywhere' }}>{name}</h5>
+          <h5
+            title={service ? name : undefined}
+            style={{ font: service ? 'var(--type-label)' : 'var(--type-code)', color: 'var(--ink)', margin: 0, overflowWrap: 'anywhere' }}
+          >
+            {title}
+          </h5>
           {part ? (
             <StatusIndicator status={symbolFor(part)} label={labelFor(part)} />
           ) : (
@@ -325,20 +353,37 @@ function WorkloadCard({
           </div>
         )}
 
-        <div style={{ marginTop: 'auto', display: 'flex', flexWrap: 'wrap', gap: 'var(--space-1)', paddingTop: 'var(--space-2)' }}>
+        {/* One row at the card's narrowest (18rem): compact ghost buttons,
+            pulled out by their padding so the first icon lines up with the
+            text above. They wrap only where the card is narrower still. */}
+        <div
+          style={{
+            marginTop: 'auto',
+            marginLeft: 'calc(var(--space-1) * -1)',
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 'var(--space-1)',
+            paddingTop: 'var(--space-2)',
+          }}
+        >
           {openOutput && (
-            <Button variant="ghost" icon={<Icon name="scroll-text" />} onClick={() => openOutput({ view: 'output', workload: name })}>
+            <Button variant="ghost" icon={<Icon name="scroll-text" />} style={COMPACT} onClick={() => openOutput({ view: 'output', workload: name })}>
               Logs
             </Button>
           )}
           {/* A shell needs something running to open in (R-084). */}
           {openTerminal && running && (
-            <Button variant="ghost" icon={<Icon name="square-terminal" />} onClick={() => openTerminal({ view: 'terminal', workload: name })}>
+            <Button
+              variant="ghost"
+              icon={<Icon name="square-terminal" />}
+              style={COMPACT}
+              onClick={() => openTerminal({ view: 'terminal', workload: name })}
+            >
               Terminal
             </Button>
           )}
           {canResize && onResources && (
-            <Button variant="ghost" icon={<Icon name="gauge" />} title="Change resources" onClick={onResources}>
+            <Button variant="ghost" icon={<Icon name="gauge" />} title="Change resources" style={COMPACT} onClick={onResources}>
               Resources
             </Button>
           )}

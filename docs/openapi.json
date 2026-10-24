@@ -4888,7 +4888,7 @@
       "get": {
         "operationId": "appStatus",
         "summary": "Get an app's status",
-        "description": "What the app is doing now: its state, and each part separately — running, restarting and how often, health, exit code — so a single crash-looping part is visible rather than averaged into one word. `auto_deploy_paused` is true when the spec asks for auto-deploy and approval now stops it.\n\nNeeds `app.view`.",
+        "description": "What the app is doing now: its state, and each part separately — running, restarting and how often, health, exit code — so a single crash-looping part is visible rather than averaged into one word. A service Pando runs for the app carries `service`: the `slot_key` and `type` of the dependency it fills. `auto_deploy_paused` is true when the spec asks for auto-deploy and approval now stops it.\n\nNeeds `app.view`.",
         "tags": [
           "Apps"
         ],
@@ -18406,6 +18406,21 @@
           }
         }
       },
+      "WorkloadService": {
+        "type": "object",
+        "properties": {
+          "slot_key": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "slot_key",
+          "type"
+        ]
+      },
       "WorkloadStatus": {
         "type": "object",
         "properties": {
@@ -18444,6 +18459,9 @@
           "started_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "service": {
+            "$ref": "#/components/schemas/WorkloadService"
           }
         },
         "required": [

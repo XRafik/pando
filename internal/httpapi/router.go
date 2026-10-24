@@ -100,6 +100,11 @@ type Server struct {
 	// before it is consulted, every request. Nil asks the runtime every time.
 	Observations *observe.Cache
 
+	// ServiceInstances says which dependency a service Pando runs for an app
+	// fills, so /status names a provisioned workload by what it is rather
+	// than by its handle. Nil leaves that out.
+	ServiceInstances observe.ServiceInstances
+
 	// Address resolves changes to where an app is reached (R-162, R-163).
 	// Nil means the address cannot be changed after configuration.
 	Address *address.Service

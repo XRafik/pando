@@ -1,7 +1,9 @@
 // Sharing (R-070, R-071, R-075 – R-077, R-264).
 //
 // Two sections. **Public access** is the anonymous grant (R-075), as two
-// switches: Make public, and under it while on, Require passcode. It is a
+// switches, both always shown: Make public, and Require passcode. Turning on
+// the passcode on a private app makes it public with one in a single step —
+// someone who wants a passcode should not have to find it behind "public". It is a
 // switch and not a choice among private, shared and public because making an
 // app public adds to the people it is shared with — it never replaces them
 // (R-264). **People and groups** lists everybody else, with opening the app and
@@ -74,7 +76,7 @@ interface GrantsResponse extends PageOf {
 type PublicSharing = 'allowed' | 'passcode_only' | 'none';
 
 /** The dialog open over Public access, if any. */
-type Asking = 'public' | 'add-passcode' | 'change-passcode' | 'remove-passcode' | null;
+type Asking = 'public' | 'public-passcode' | 'add-passcode' | 'change-passcode' | 'remove-passcode' | null;
 
 /** A change to the anonymous grant. */
 type EveryoneChange =
@@ -194,6 +196,7 @@ function PublicAccess({
 
   // A passcode-only host makes the passcode part of making it public.
   const passcodeRequired = policy === 'passcode_only';
+  const forbidden = policy === 'none';
   const busy = change.isPending || makePrivate.isPending;
 
   return (
@@ -211,43 +214,46 @@ function PublicAccess({
             <SwitchRow
               label="Make public"
               line="Accessible to anyone on the internet"
-              note={policy === 'none' && state === 'private' ? 'Not allowed on this host' : undefined}
+              note={forbidden && state === 'private' ? FORBIDDEN : undefined}
               checked={state !== 'private'}
-              disabled={!canManage || busy || (policy === 'none' && state === 'private')}
+              disabled={!canManage || busy || (forbidden && state === 'private')}
               onChange={(on) => {
                 if (on) ask('public');
+                // Off is off for both: the passcode lives on the grant it removes.
                 else if (anonymous) makePrivate.mutate(anonymous.id);
               }}
             />
-            {state !== 'private' && (
-              <SwitchRow
-                divided
-                label="Require passcode"
-                line="Visitors need the passcode to open it"
-                note={passcodeRequired ? 'Required on this host' : undefined}
-                checked={state === 'passcode'}
-                // Taking the passcode away is plain public, which only an
-                // "allowed" policy permits; the server refuses it otherwise.
-                disabled={!canManage || busy || (passcodeRequired && state === 'passcode') || policy === 'none'}
-                onChange={(on) => ask(on ? 'add-passcode' : 'remove-passcode')}
-                extra={
-                  state === 'passcode' && (
-                    <>
-                      {/* Pando keeps a digest, not the passcode (R-075a):
-                          there is nothing to show but that one is set. */}
-                      <span aria-label="Passcode set" style={{ font: 'var(--type-code)', color: 'var(--ink-secondary)' }}>
-                        ••••••••
-                      </span>
-                      {canManage && (
-                        <Button variant="ghost" onClick={() => ask('change-passcode')}>
-                          Change
-                        </Button>
-                      )}
-                    </>
-                  )
-                }
-              />
-            )}
+            <SwitchRow
+              divided
+              label="Require passcode"
+              line="Anyone with the passcode can open it, no account needed"
+              note={passcodeNote(policy)}
+              checked={state === 'passcode'}
+              // Taking the passcode away is plain public, which only an
+              // "allowed" policy permits; the server refuses it otherwise.
+              disabled={!canManage || busy || (passcodeRequired && state === 'passcode') || forbidden}
+              onChange={(on) => {
+                // On a private app, the passcode and the grant it is on are made together.
+                if (on) ask(state === 'private' ? 'public-passcode' : 'add-passcode');
+                else ask('remove-passcode');
+              }}
+              extra={
+                state === 'passcode' && (
+                  <>
+                    {/* Pando keeps a digest, not the passcode (R-075a):
+                        there is nothing to show but that one is set. */}
+                    <span aria-label="Passcode set" style={{ font: 'var(--type-code)', color: 'var(--ink-secondary)' }}>
+                      ••••••••
+                    </span>
+                    {canManage && (
+                      <Button variant="ghost" onClick={() => ask('change-passcode')}>
+                        Change
+                      </Button>
+                    )}
+                  </>
+                )
+              }
+            />
           </>
         )}
       </Card>
@@ -269,6 +275,8 @@ function PublicAccess({
           onConfirm={() => {
             if (asking === 'public') {
               change.mutate({ method: 'post', ...(passcodeRequired ? { passcode } : {}) });
+            } else if (asking === 'public-passcode') {
+              change.mutate({ method: 'post', passcode });
             } else if (anonymous) {
               change.mutate({ method: 'patch', grant: anonymous.id, passcode: asking === 'remove-passcode' ? '' : passcode });
             }
@@ -277,6 +285,14 @@ function PublicAccess({
       )}
     </section>
   );
+}
+
+const FORBIDDEN = 'Not allowed on this host';
+
+/** Why Require passcode is set the way it is, from host policy (R-076). */
+function passcodeNote(policy: PublicSharing): string | undefined {
+  if (policy === 'none') return FORBIDDEN;
+  return policy === 'passcode_only' ? 'Required on this host' : undefined;
 }
 
 /** A setting and its switch, on one line of the Public access card. */
@@ -594,7 +610,7 @@ function EveryoneDialog({
   onClose: () => void;
   onConfirm: () => void;
 }) {
-  const needsPasscode = asking === 'add-passcode' || asking === 'change-passcode' || (asking === 'public' && withPasscode);
+  const needsPasscode = asking !== 'remove-passcode' && (asking !== 'public' || withPasscode);
 
   const text: Record<Exclude<Asking, null>, { title: string; description: string; action: string }> = {
     public: withPasscode
@@ -608,6 +624,11 @@ function EveryoneDialog({
           description: `Anyone on the internet will be able to open ${appName} without signing in.`,
           action: 'Make public',
         },
+    'public-passcode': {
+      title: 'Make this app public with a passcode?',
+      description: `Anyone on the internet with the passcode will be able to open ${appName} without signing in.`,
+      action: 'Require passcode',
+    },
     'add-passcode': {
       title: 'Require a passcode',
       description: `Visitors will be asked for it before ${appName} opens.`,
