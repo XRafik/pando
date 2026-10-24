@@ -85,7 +85,6 @@ export function AppEvents({ app }: { app: App }) {
             New subscription
           </Button>
         </div>
-        <p style={caption}>Send this app&rsquo;s events to a webhook, Slack, Teams, Discord, email or ntfy.</p>
         <Subscriptions
           apps={[app]}
           app={app}

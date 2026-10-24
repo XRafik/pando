@@ -143,6 +143,38 @@ export function AccountApps({ principal }: { principal: Principal }) {
   );
 }
 
+/** A group's apps, in a dialog over the list of groups. Adding an app takes
+ *  the dialog over rather than opening a second one on top of it, and
+ *  returns to the list when done. */
+export function AppsDialog({ principal, onClose }: { principal: Principal; onClose: () => void }) {
+  const everyApp = useEveryApp();
+  const [adding, setAdding] = useState(false);
+
+  if (adding) return <AddApp principal={principal} onClose={() => setAdding(false)} />;
+  return (
+    <Dialog
+      open
+      title={`Apps for ${principal.name}`}
+      width={640}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Close
+          </Button>
+          {everyApp && (
+            <Button variant="primary" onClick={() => setAdding(true)}>
+              Add app
+            </Button>
+          )}
+        </>
+      }
+    >
+      <AppsTable principal={principal} />
+    </Dialog>
+  );
+}
+
 function AppsTable({ principal }: { principal: Principal }) {
   const noun = principal.kind === 'user' ? 'account' : 'group';
   const paged = useAccess(principal);
