@@ -376,7 +376,8 @@ With more than one replica, mount the same directory into each.
 
 The `kubernetes` runtime adapter runs apps on the cluster Pando itself runs in.
 Each release attaches the manifests as one file pinned to that release's image,
-[`pando-kubernetes.yaml`](https://github.com/trypando/pando/releases/latest/download/pando-kubernetes.yaml).
+[`pando-kubernetes.yaml`](https://github.com/trypando/pando/releases/latest/download/pando-kubernetes.yaml);
+a prerelease's is on that prerelease's page.
 Set the cluster's pod and Service ranges in it, create the `pando-database` and `pando-keys` Secrets
 its `pando` section describes, install Traefik v3.7's CRDs (the URL is in
 `deploy/kubernetes/kustomization.yaml`), then `kubectl apply -f pando-kubernetes.yaml`. The sources
