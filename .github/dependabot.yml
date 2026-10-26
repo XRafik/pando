@@ -127,6 +127,8 @@ updates:
       # BuildKit's manifest pins its image by digest. The BuildKit Pando runs
       # on Docker is a Go constant (managedImage), which this does not read.
       - /deploy/kubernetes
+      # Pando's own image there is not moved by Dependabot: each release
+      # attaches a manifest pinned to the image it published (ignored below).
       # The base images the builder supplies to the Dockerfiles it writes for
       # apps: the nginx that serves every static site, and the Debian that runs
       # compiled programs. Read by the builder through go:embed.
@@ -136,6 +138,8 @@ updates:
     schedule:
       interval: weekly
     ignore:
+      # Each release pins its own manifest (scripts/release-kubernetes.sh).
+      - dependency-name: trypando/pando
       # nginx's odd minors are mainline, replaced every few weeks and then no
       # longer rebuilt. The static server stays on the stable line (an even
       # minor); TestBaseImagesStayOnMaintainedLines fails a pull request that

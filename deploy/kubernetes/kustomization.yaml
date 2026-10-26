@@ -1,5 +1,6 @@
 # Pando on Kubernetes: `kubectl apply -k deploy/kubernetes` after creating the
-# two Secrets pando.yaml names. Design and prerequisites:
+# two Secrets pando.yaml names, or the release's pando-kubernetes.yaml, which is
+# these files pinned to that release's image (scripts/release-kubernetes.sh). Design and prerequisites:
 # docs/design/notes-kubernetes-runtime-issue-72.md, "Running Pando on
 # Kubernetes".
 #

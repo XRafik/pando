@@ -215,13 +215,21 @@ jobs:
           scripts/release-compose.sh "$TAG" "$IMAGE" > "$RUNNER_TEMP/release/docker-compose.yml"
           python3 scripts/smoke-image.py "$RUNNER_TEMP/release/docker-compose.yml" --pull --version "$VERSION"
 
-      # The compose file is attached only once the image it names has passed,
-      # so the release's install instructions never lead to a failing image.
-      - name: Attach the compose file to the release
+      # The compose file and the Kubernetes manifest are attached only once the
+      # image they name has passed, so the release's install instructions never
+      # lead to a failing image. The manifest is pinned to the digest just
+      # pushed, which exists only now; attaching it here is what keeps it in
+      # step with releases without a pull request after each one.
+      - name: Attach the compose file and Kubernetes manifest to the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.v.outputs.tag }}
-        run: gh release upload "$TAG" "$RUNNER_TEMP/release/docker-compose.yml" --clobber --repo "$GITHUB_REPOSITORY"
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          scripts/release-kubernetes.sh "$TAG" "$DIGEST" "$IMAGE" > "$RUNNER_TEMP/release/pando-kubernetes.yaml"
+          gh release upload "$TAG" "$RUNNER_TEMP/release/docker-compose.yml" "$RUNNER_TEMP/release/pando-kubernetes.yaml" \
+            --clobber --repo "$GITHUB_REPOSITORY"
 
       # Now the moving tags: every tag metadata-action named except the exact
       # version, which is already there. They are pointed at the same digest,

@@ -3,6 +3,7 @@ package kubernetes
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -315,6 +316,48 @@ func TestR401_EveryShippedImageIsPinnedByDigest(t *testing.T) {
 	}
 	require.Greater(t, seen, 4)
 	require.Len(t, pando, 1, "the server and the egress gateway run one Pando image: %v", pando)
+}
+
+// TestR401_TheReleasedManifestPinsPandoToTheReleasedImage asserts the
+// manifest a release attaches (scripts/release-kubernetes.sh, run by
+// image.yml): every object deploy/kubernetes holds, and both of Pando's image
+// references, the Deployment's and the egress gateway's (R-187), on the version
+// and digest the release pushed. That is what keeps it in step with releases
+// without a pull request after each one.
+func TestR401_TheReleasedManifestPinsPandoToTheReleasedImage(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	out, err := exec.CommandContext(t.Context(), "sh", "../../../../scripts/release-kubernetes.sh", "v9.9.9", digest).Output()
+	require.NoError(t, err)
+
+	want := "trypando/pando:9.9.9@" + digest
+	refs := 0
+	for _, m := range imageRef.FindAllStringSubmatch(string(out), -1) {
+		if strings.HasPrefix(m[1], "trypando/pando:") {
+			require.Equal(t, want, m[1])
+			refs++
+		}
+	}
+	require.Equal(t, 2, refs, "the server and the egress gateway")
+
+	var kinds []string
+	for _, doc := range strings.Split(string(out), "\n---") {
+		if strings.TrimSpace(stripComments(doc)) == "" {
+			continue
+		}
+		obj, _, err := scheme.Codecs.UniversalDeserializer().Decode([]byte(doc), nil, nil)
+		require.NoError(t, err)
+		kinds = append(kinds, obj.GetObjectKind().GroupVersionKind().Kind)
+	}
+	var source []string
+	for _, obj := range manifests(t) {
+		source = append(source, obj.GetObjectKind().GroupVersionKind().Kind)
+	}
+	slices.Sort(kinds)
+	slices.Sort(source)
+	require.Equal(t, source, kinds, "the released file holds every object deploy/kubernetes does")
+
+	bad := exec.CommandContext(t.Context(), "sh", "../../../../scripts/release-kubernetes.sh", "9.9.9", "sha256:short")
+	require.Error(t, bad.Run(), "a digest that is not 64 hex digits is refused")
 }
 
 // grant is what a ClusterRole allows on one resource.
