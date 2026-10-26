@@ -375,10 +375,13 @@ With more than one replica, mount the same directory into each.
 ### Running on Kubernetes
 
 The `kubernetes` runtime adapter runs apps on the cluster Pando itself runs in.
-`deploy/kubernetes` holds the manifests: `kubectl apply -k deploy/kubernetes` after creating the
-`pando-database` and `pando-keys` Secrets its `pando.yaml` describes, installing Traefik v3.7's CRDs
-(the URL is in `kustomization.yaml`), and
-setting the cluster's pod and Service ranges. The cluster needs a network plugin that enforces
+Each release attaches the manifests as one file pinned to that release's image,
+[`pando-kubernetes.yaml`](https://github.com/trypando/pando/releases/latest/download/pando-kubernetes.yaml);
+a prerelease's is on that prerelease's page.
+Set the cluster's pod and Service ranges in it, create the `pando-database` and `pando-keys` Secrets
+its `pando` section describes, install Traefik v3.7's CRDs (the URL is in
+`deploy/kubernetes/kustomization.yaml`), then `kubectl apply -f pando-kubernetes.yaml`. The sources
+are in `deploy/kubernetes`. The cluster needs a network plugin that enforces
 NetworkPolicy, such as Calico or Cilium: Pando checks with a short-lived pair of pods in the namespace
 `pando-canary` and will not run apps on a cluster that does not. It also needs a storage class that
 offers ReadWriteMany for `/var/lib/pando`, which every replica shares. A cluster dedicated to Pando is
