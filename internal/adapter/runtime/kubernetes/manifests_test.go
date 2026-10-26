@@ -356,7 +356,12 @@ func TestR401_TheReleasedManifestPinsPandoToTheReleasedImage(t *testing.T) {
 	slices.Sort(source)
 	require.Equal(t, source, kinds, "the released file holds every object deploy/kubernetes does")
 
-	for _, bad := range []string{"sha256:short", "sha256:" + strings.Repeat("z", 64)} {
+	for _, bad := range []string{
+		"sha256:short",
+		"sha256:" + strings.Repeat("z", 64),
+		digest + "\nimage: elsewhere",
+		strings.Repeat("a", 64),
+	} {
 		run := exec.CommandContext(t.Context(), "sh", "../../../../scripts/release-kubernetes.sh", "9.9.9", bad)
 		require.Error(t, run.Run(), "%s is not 64 hex digits and is refused", bad)
 	}

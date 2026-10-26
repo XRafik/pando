@@ -17,7 +17,10 @@ image=${3:-trypando/pando}
 version=${version#v}
 dir=$(dirname "$0")/../deploy/kubernetes
 
-if ! printf '%s\n' "$digest" | grep -qx 'sha256:[0-9a-f]\{64\}'; then
+# On the whole string, not line by line: a newline is not a hex digit.
+hex=${digest#sha256:}
+case $hex in *[!0-9a-f]*) hex= ;; esac
+if [ "sha256:$hex" != "$digest" ] || [ ${#hex} != 64 ]; then
   echo "release-kubernetes.sh: digest must be sha256: and 64 hex digits, got '$digest'" >&2
   exit 1
 fi
