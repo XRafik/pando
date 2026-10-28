@@ -10,6 +10,7 @@ package reconciler
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
@@ -149,6 +150,26 @@ type Reconciler struct {
 	eventsOnce sync.Once
 	ev         *eventState
 
+	// Holds keeps the reconciler off an app whose host is lost or fenced, or
+	// whose standby is being promoted (holds.go). Nil holds nothing, as on
+	// an install with one host.
+	Holds Holds
+
+	// Hosts counts the cluster's hosts (hosts.Service.Count). While it is
+	// one, nothing can hold an app — no other host to be lost, fenced or
+	// promoted to — and Holds is not consulted (holds.go). Nil consults Holds
+	// whenever it is set.
+	Hosts func(ctx context.Context) (int, error)
+
+	// singleHost is that the latest pass found the install one host
+	// (noteHosts).
+	singleHost atomic.Bool
+
+	// LocalFenced reports whether this replica's own host is fenced (R-421).
+	// While it is, Tick does nothing: a host cut off from most of the
+	// cluster starts nothing. Nil is never.
+	LocalFenced func() bool
+
 	// ProxyUpstream is where routes point. Every route points at Pando's proxy
 	// and never at a workload (R-023) — the reconciler re-ensuring a route must
 	// not be the one place that forgets.
@@ -208,6 +229,11 @@ func (r *Reconciler) Run(ctx context.Context) {
 // one app. Nothing is held on a database connection while an app is
 // reconciled, however long its Apply takes.
 func (r *Reconciler) Tick(ctx context.Context) {
+	if r.localFenced() {
+		r.Logger.Debug("this host is cut off from most of the cluster; reconciling nothing")
+		return
+	}
+	r.noteHosts(ctx)
 	cutoff, err := r.Reconciles.Cutoff(ctx, r.MinRevisit)
 	if err != nil {
 		r.Logger.Warn("could not list apps to reconcile", zap.Error(err))
@@ -498,10 +524,21 @@ func (r *Reconciler) reconcileOne(ctx context.Context, app state.Reconcilable) v
 		return seen
 	}
 
+	// R-148 does not restart a copy on a lost or fenced host, nor one a
+	// promotion is starting (holds.go).
+	if why, err := r.held(ctx, app.ID); r.heldCheck(ctx, app, why, err, &seen) {
+		return seen
+	}
+
 	observed, err := runtime.Observe(ctx, api.BundleRef{BundleID: app.ID})
 	if err != nil {
 		r.unobservable(ctx, app, reason(err))
 		seen.failed = true
+		return seen
+	}
+	// R-151, R-421: an app the runtime found on a lost or fenced host is
+	// left alone too, standby or not; its host stopped it.
+	if why, err := r.heldOn(ctx, observed.Host); r.heldCheck(ctx, app, why, err, &seen) {
 		return seen
 	}
 	if app.UnobservableSince != nil {
@@ -745,29 +782,9 @@ func (r *Reconciler) correct(ctx context.Context, app state.Reconcilable, runtim
 		}
 	}
 
-	// The credential is resolved here, for the one apply, rather than on every
-	// tick: for ECR it is minted by a call to AWS.
-	if r.BuiltImageAuth != nil {
-		for i := range want.Workloads {
-			if want.Workloads[i].PullAuth == nil {
-				want.Workloads[i].PullAuth = r.BuiltImageAuth(ctx, s, want.Workloads[i].Image)
-			}
-		}
-	}
-
-	// The shape was compared without environment; what is started needs it,
-	// or a re-created workload comes up with none (R-148).
-	if r.Environments != nil {
-		envs, err := r.Environments.Environments(ctx, s)
-		if err != nil {
-			r.attempt(ctx, app, runtime, "could not prepare the app's configuration: "+reason(err))
-			return
-		}
-		for i := range want.Workloads {
-			if env, ok := envs[want.Workloads[i].Name]; ok {
-				want.Workloads[i].Env = env
-			}
-		}
+	if err := r.Complete(ctx, &want, s); err != nil {
+		r.attempt(ctx, app, runtime, "could not prepare the app's configuration: "+reason(err))
+		return
 	}
 
 	if _, err := runtime.Apply(ctx, want); err != nil {
@@ -800,6 +817,35 @@ func (r *Reconciler) correct(ctx context.Context, app state.Reconcilable, runtim
 	r.attempt(ctx, app, runtime, "corrected: "+drift.Describe())
 }
 
+// Complete adds what a plan needs to be started and not only compared: the
+// pull credential and each workload's environment.
+func (r *Reconciler) Complete(ctx context.Context, want *api.BundlePlan, s *spec.AppSpec) error {
+	// The credential is resolved here, for the one apply, rather than on every
+	// tick: for ECR it is minted by a call to AWS.
+	if r.BuiltImageAuth != nil {
+		for i := range want.Workloads {
+			if want.Workloads[i].PullAuth == nil {
+				want.Workloads[i].PullAuth = r.BuiltImageAuth(ctx, s, want.Workloads[i].Image)
+			}
+		}
+	}
+
+	// The shape was compared without environment; what is started needs it,
+	// or a re-created workload comes up with none (R-148).
+	if r.Environments != nil {
+		envs, err := r.Environments.Environments(ctx, s)
+		if err != nil {
+			return err
+		}
+		for i := range want.Workloads {
+			if env, ok := envs[want.Workloads[i].Name]; ok {
+				want.Workloads[i].Env = env
+			}
+		}
+	}
+	return nil
+}
+
 // ensureRoute re-points routing at Pando's proxy.
 //
 // R-023: routes put traffic in front of Pando's proxy and never at a workload.
@@ -810,14 +856,7 @@ func (r *Reconciler) ensureRoute(ctx context.Context, app state.Reconcilable, s 
 	if !ok {
 		return nil
 	}
-	_, err := routing.Ensure(ctx, api.RouteRequest{
-		AppID:         app.ID,
-		Mode:          s.Routing.Mode,
-		Hostname:      s.Routing.Hostname,
-		PathPrefix:    s.Routing.PathPrefix,
-		Port:          s.Routing.Port,
-		ProxyUpstream: r.ProxyUpstream,
-	})
+	_, err := routing.Ensure(ctx, api.RouteFor(app.ID, s.Routing, r.ProxyUpstream))
 	return err
 }
 

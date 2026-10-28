@@ -33,9 +33,11 @@ import (
 	"github.com/trypando/pando/internal/core/clock"
 	"github.com/trypando/pando/internal/core/deploy"
 	"github.com/trypando/pando/internal/core/edge"
+	"github.com/trypando/pando/internal/core/hosts"
 	"github.com/trypando/pando/internal/core/idle"
 	"github.com/trypando/pando/internal/core/idp"
 	"github.com/trypando/pando/internal/core/imageregistry"
+	"github.com/trypando/pando/internal/core/liveness"
 	"github.com/trypando/pando/internal/core/logstream"
 	"github.com/trypando/pando/internal/core/notice"
 	"github.com/trypando/pando/internal/core/notifyconn"
@@ -84,6 +86,17 @@ type Server struct {
 	// password the only factor, and the two-factor routes say so.
 	TwoFactor *twofactor.Service
 	Tokens    *state.Tokens
+
+	// Hosts is the install's cluster: its hosts and join tokens (R-414,
+	// R-415). Nil leaves the cluster routes answering that it is not set up.
+	Hosts *hosts.Service
+
+	// HostLoss marks a host lost and starts its apps' standbys (R-421). Nil
+	// leaves the route answering that the cluster is not set up.
+	HostLoss *liveness.Service
+	// Joiner joins this Pando to a cluster at setup (POST /setup/join, R-415).
+	// Nil answers that joining is not set up.
+	Joiner *hosts.Joiner
 
 	// CLISignIn signs the CLI in through the browser (R-406). Nil leaves
 	// pando login --username, with a password, the only way.
@@ -604,6 +617,7 @@ func (s *Server) Routes() http.Handler {
 		// exists.
 		r.Get("/setup", s.handleGetSetup)
 		r.Post("/setup", s.handlePostSetup)
+		r.Post("/setup/join", s.handlePostSetupJoin)
 
 		// A strong random password, for creating or resetting an account.
 		r.Post("/passwords/generate", s.handleGeneratePassword)
@@ -835,6 +849,15 @@ func (s *Server) Routes() http.Handler {
 		// log, a month at a time.
 		r.Get("/audit/archives", s.handleListAuditArchives)
 		r.Get("/audit/archives/{archiveID}", s.handleGetAuditArchive)
+
+		// The cluster's hosts and the tokens they join with (R-414, R-415),
+		// under install.cluster.manage.
+		r.Get("/cluster/hosts", s.handleListHosts)
+		r.Delete("/cluster/hosts/{hostID}", s.handleRemoveHost)
+		r.Post("/cluster/hosts/{hostID}/lost", s.handleMarkHostLost)
+		r.Get("/cluster/join-tokens", s.handleListJoinTokens)
+		r.Post("/cluster/join-tokens", s.handleCreateJoinToken)
+		r.Delete("/cluster/join-tokens/{tokenID}", s.handleRevokeJoinToken)
 
 		// Whether a newer Pando is released, and how to upgrade (R-351).
 		r.Get("/updates", s.handleGetUpdates)

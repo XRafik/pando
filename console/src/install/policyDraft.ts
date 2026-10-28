@@ -40,7 +40,10 @@ export interface PolicyDoc {
 
   // R-242, as amended by issue #72. Disk has no counterpart.
   allow_cpu_oversubscription?: boolean;
+  allow_failover_oversubscription?: boolean;
   allow_memory_oversubscription?: boolean;
+  // R-419: on unless set false.
+  standby?: boolean;
   max_concurrent_deploys?: number;
 
   // Apps nobody uses (R-393 – R-398) and how many a person may own (R-244),
@@ -139,6 +142,8 @@ const FIELD_PAGES: Record<keyof PolicyDoc, PolicyPage | 'overview'> = {
   max_concurrent_deploys: 'deployments',
   allow_cpu_oversubscription: 'deployments',
   allow_memory_oversubscription: 'deployments',
+  allow_failover_oversubscription: 'deployments',
+  standby: 'deployments',
 
   max_token_lifetime_days: 'tokens',
   agent_disabled_verbs: 'tokens',
@@ -164,6 +169,7 @@ const FIELD_PAGES: Record<keyof PolicyDoc, PolicyPage | 'overview'> = {
 /** What an unset field means, where that is not off, zero or empty. */
 const UNSET: Partial<Record<keyof PolicyDoc, unknown>> = {
   stop_orphaned_apps: true,
+  standby: true,
   update_channel: 'stable',
   audit_archive: 'keep',
 };

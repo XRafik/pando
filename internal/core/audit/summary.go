@@ -60,6 +60,11 @@ var summaries = map[string]string{
 	"app.security.recovered":         "{app} met the security minimum again",
 	"app.security.stopped":           "Stopped {app} below the security minimum",
 	"app.slot.set":                   "Filled a slot on {app}",
+	"app.standby.create":             "Made a standby of {app}",
+	"app.standby.promote":            "Started the standby of {app}",
+	"app.standby.promote.failed":     "Could not start the standby of {app}",
+	"app.standby.remove":             "Removed the standby of {app}",
+	"app.standby.stale_removed":      "Removed the old copy of {app}",
 	"app.source.upload":              "Uploaded source for {app}",
 	"app.start":                      "Started {app}",
 	"app.stop":                       "Stopped {app}",
@@ -92,6 +97,11 @@ var summaries = map[string]string{
 	"cli_sign_in.denied":  "Refused a CLI sign-in",
 	"oauth.approve":       "Approved an MCP client sign-in",
 	"oauth.denied":        "Refused an MCP client sign-in",
+
+	"cluster.failover":      "Started the standby of {app}",
+	"cluster.host.fence":    "A host stopped its apps, cut off from the cluster",
+	"cluster.host.lost":     "Took a host for lost",
+	"cluster.host.returned": "A lost host came back",
 
 	"deploy.approve":   "Approved a deployment of {app}",
 	"deploy.expire":    "A deployment request for {app} expired",

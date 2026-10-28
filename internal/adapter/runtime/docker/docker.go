@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path"
 	"slices"
@@ -103,6 +104,10 @@ type Adapter struct {
 	// Whether the daemon can size a container's own layer: unknown until the
 	// first workload is created with a size (hardening.go).
 	layerQuota atomic.Int32
+
+	// helperHook replaces running a helper container, in tests of what the
+	// standby's helpers are asked to do (standby.go). Nil runs them.
+	helperHook func(context.Context, helperRun) error
 }
 
 // Config is the adapter's configuration.
@@ -586,7 +591,9 @@ func (a *Adapter) Apply(ctx context.Context, p api.BundlePlan) (api.BundleHandle
 		planned[w.Name] = w
 	}
 	for _, w := range ordered(p.Workloads) {
-		a.waitForDependencies(ctx, p.BundleID, w, planned)
+		if !createOnly(ctx) {
+			a.waitForDependencies(ctx, p.BundleID, w, planned)
+		}
 		if err := a.applyWorkload(ctx, p, w, networkID, workloadEnv(w, proxy)); err != nil {
 			return api.BundleHandle{}, err
 		}
@@ -613,8 +620,11 @@ func (a *Adapter) applyWorkload(ctx context.Context, p api.BundlePlan, w api.Wor
 		if err != nil {
 			return err
 		}
+		// A standby made for another primary or priority says so in its
+		// labels, which the failover reservation reads (R-422): made again.
+		matches = matches && sameStandbyLabels(existing.Labels, p)
 		if matches {
-			if !strings.HasPrefix(existing.State, "running") {
+			if !strings.HasPrefix(existing.State, "running") && !createOnly(ctx) {
 				if _, err := a.cli.ContainerStart(ctx, existing.ID, client.ContainerStartOptions{}); err != nil {
 					return errs.Wrap(errs.AdapterFailed, fmt.Sprintf("Could not start %q.", w.Name), err)
 				}
@@ -676,6 +686,8 @@ func (a *Adapter) applyWorkload(ctx context.Context, p api.BundlePlan, w api.Wor
 		},
 	}
 	limitLabels(cfg.Labels, w.Resources.CPUMillis, w.Resources.MemoryBytes)
+	diskLabel(cfg.Labels, w.Resources.DiskBytes) // R-242: counted against the host's disk
+	maps.Copy(cfg.Labels, standbyLabels(p))      // a standby's, for the reservation (standby_loads.go)
 	if w.Health != nil {
 		cfg.Healthcheck = healthConfig(w.Health)
 	}
@@ -748,6 +760,9 @@ func (a *Adapter) applyWorkload(ctx context.Context, p api.BundlePlan, w api.Wor
 		}
 	}
 
+	if createOnly(ctx) {
+		return nil // a standby: created, never started (R-419, standby.go)
+	}
 	if _, err := a.cli.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
 		return errs.Wrap(errs.AdapterFailed, fmt.Sprintf("Could not start %q.", w.Name), err)
 	}

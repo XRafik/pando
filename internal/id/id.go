@@ -57,10 +57,18 @@ const (
 	// with OAuth (R-413).
 	OAuthClient Kind = "oac"
 
+	// Host is a machine that has joined the install's cluster, and JoinToken
+	// what it joined with (R-414, R-415).
+	Host      Kind = "host"
+	JoinToken Kind = "jt"
+
 	// Replica is one running Pando process (issue #72). Fresh on every start:
 	// a restarted process is a new replica, which is how work the old one had
 	// under way is recognized as nobody's.
 	Replica Kind = "rep"
+
+	// Fence is one time a cut-off host stopped its own apps (R-421).
+	Fence Kind = "fnc"
 
 	// Adapter configs are prefixed by category, so a log line naming one says
 	// which kind of adapter it is (design 02 §2.5).

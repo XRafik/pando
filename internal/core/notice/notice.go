@@ -37,6 +37,8 @@ const (
 	KeyUnsetVars     = "variables.unset"
 	KeyBackup        = "backup.not_taken"
 	KeySecurity      = "security.below_threshold"
+	KeyNoStandby     = "standby.no_room"
+	KeyStandby       = "standby.live_copy"
 	WarningPrefix    = "warning."
 	maxKeyLength     = 200
 	shownVariables   = 4
@@ -77,6 +79,26 @@ type Security interface {
 	Report(ctx context.Context, appID, specID string) (security.Report, error)
 }
 
+// StandbyRooms is where each app's warm standby stands (R-419, R-422).
+type StandbyRooms interface {
+	Standby(ctx context.Context, appID string) (StandbyStanding, error)
+}
+
+// StandbyStanding is an app's standby as its runtime last placed it.
+type StandbyStanding struct {
+	// Unplaced is the runtime's reason when the app should have a standby
+	// and no host had room for one, naming the largest room any host has.
+	// Remedy is what to do. Both empty when the app has its standby or wants
+	// none.
+	Unplaced string
+	Remedy   string
+}
+
+// Standbys is each app's warm standby (R-419).
+type Standbys interface {
+	Get(ctx context.Context, appID string) (state.Standby, bool, error)
+}
+
 // Ignores is each person's ignored notices.
 type Ignores interface {
 	For(ctx context.Context, userID, appID string) (map[string]string, error)
@@ -86,13 +108,18 @@ type Ignores interface {
 
 // Service lists an app's notices and keeps each person's ignores.
 //
-// Backups and Security may be nil, on an installation with neither: their
-// notices are then never raised.
+// Backups, Security and Standbys may be nil, on an installation without
+// them: their notices are then never raised.
 type Service struct {
 	Revisions Revisions
 	Backups   Backups
 	Security  Security
+	Standbys  Standbys
 	Ignores   Ignores
+
+	// Rooms is where each standby was placed, or why none was (R-422). Nil
+	// on an installation that keeps none.
+	Rooms StandbyRooms
 }
 
 // Inputs is what notices are computed from.
@@ -107,6 +134,11 @@ type Inputs struct {
 
 	// Standing is the app's security standing, if the installation has one.
 	Standing *security.Standing
+
+	// Room is where the app's standby stands, on an installation that keeps them.
+	Room *StandbyStanding
+	// Standby is the app's warm standby, if it has one.
+	Standby *state.Standby
 }
 
 // List returns every current notice on an app, each marked with whether the
@@ -256,6 +288,22 @@ func (s *Service) inputs(ctx context.Context, app state.App) (Inputs, error) {
 		}
 		in.Standing = &report.Standing
 	}
+	if s.Standbys != nil {
+		sb, found, err := s.Standbys.Get(ctx, app.ID)
+		if err != nil {
+			return in, err
+		}
+		if found {
+			in.Standby = &sb
+		}
+	}
+	if s.Rooms != nil {
+		room, err := s.Rooms.Standby(ctx, app.ID)
+		if err != nil {
+			return in, err
+		}
+		in.Room = &room
+	}
 	return in, nil
 }
 
@@ -271,6 +319,9 @@ func Compute(in Inputs) []Notice {
 	if n, ok := backupNotTaken(in.LastBackup); ok {
 		out = append(out, n)
 	}
+	if n, ok := noStandby(in.Room); ok {
+		out = append(out, n)
+	}
 	var body *spec.AppSpec
 	if in.Pinned != nil {
 		body = in.Pinned.Body
@@ -278,7 +329,27 @@ func Compute(in Inputs) []Notice {
 	if n, ok := unsetVariables(body); ok {
 		out = append(out, n)
 	}
+	if n, ok := liveCopy(in.Standby); ok {
+		out = append(out, n)
+	}
 	return append(out, warnings(body)...)
+}
+
+// liveCopy: the app's standby holds copies of its volumes taken while it ran,
+// so a copy may be inconsistent (R-420). A notice, never a blocker: nothing
+// that plans or deploys reads it. Fingerprinted on where the standby is and
+// what travels in the copy, not on when it was taken, so it does not come
+// back after every copy.
+func liveCopy(sb *state.Standby) (Notice, bool) {
+	if sb == nil || sb.Host == "" || sb.Volumes == 0 {
+		return Notice{}, false
+	}
+	msg := fmt.Sprintf("This app's standby on %s holds copies of its storage taken while the app runs, so a file written during a copy may be inconsistent there. "+
+		"If the standby is started, it starts from the newest copy, or the one before if the app does not come up healthy.", sb.Host)
+	if len(sb.Unreplicated) > 0 {
+		msg += fmt.Sprintf(" Its %s data is copied the same way, because its services adapter does not replicate it.", strings.Join(sb.Unreplicated, " and "))
+	}
+	return newNotice(KeyStandby, msg, sb.Host, strings.Join(sb.Unreplicated, ",")), true
 }
 
 // unshipped: a revision newer than the one the app runs. Fingerprinted on the
@@ -328,6 +399,18 @@ func backupNotTaken(attempt *state.BackupAttempt) (Notice, bool) {
 	}
 	return newNotice(KeyBackup, msg,
 		attempt.AttemptedAt.UTC().Format(time.RFC3339Nano), attempt.Outcome, attempt.Message, attempt.Remedy), true
+}
+
+// noStandby: the app runs without the standby it should have, because no
+// host had room for one (R-422). A notice and never a blocker: the app
+// deployed. The message is the runtime's, which names the largest room any
+// host has; it changes as the room does, and the notice comes back with it.
+func noStandby(standing *StandbyStanding) (Notice, bool) {
+	if standing == nil || standing.Unplaced == "" {
+		return Notice{}, false
+	}
+	msg := strings.TrimSpace(standing.Unplaced + " " + standing.Remedy)
+	return newNotice(KeyNoStandby, msg, standing.Unplaced, standing.Remedy), true
 }
 
 // unsetVariables: variables the pinned spec declares with no value, no secret

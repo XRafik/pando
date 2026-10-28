@@ -28,6 +28,7 @@
         "pando approvals",
         "pando audit",
         "pando backup",
+        "pando cluster",
         "pando config",
         "pando deploy",
         "pando events",
@@ -37,6 +38,7 @@
         "pando group",
         "pando host-agent",
         "pando identity-provider",
+        "pando join",
         "pando login",
         "pando logs",
         "pando mcp",
@@ -3025,6 +3027,321 @@
       "subcommands": []
     },
     {
+      "path": "pando cluster",
+      "use": "cluster",
+      "short": "The hosts this installation runs on, and joining new ones",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        "pando cluster hosts",
+        "pando cluster tokens"
+      ]
+    },
+    {
+      "path": "pando cluster hosts",
+      "use": "hosts",
+      "short": "The cluster's hosts",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        "pando cluster hosts list",
+        "pando cluster hosts lost",
+        "pando cluster hosts remove"
+      ]
+    },
+    {
+      "path": "pando cluster hosts list",
+      "use": "list",
+      "short": "List the cluster's hosts",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando cluster hosts lost",
+      "use": "lost <host-id>",
+      "short": "Say a host is gone, and start its apps' standbys",
+      "long": "Marks the host lost and starts the standby of each app homed on it. With three or more hosts Pando does this itself when most of them cannot reach the host; with fewer it never does. Refused while the host answers. A failed app is not failed over.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando cluster hosts remove",
+      "use": "remove <host-id>",
+      "short": "Remove a host from the cluster",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando cluster tokens",
+      "use": "tokens",
+      "short": "Tokens new hosts join with",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        "pando cluster tokens create",
+        "pando cluster tokens list",
+        "pando cluster tokens revoke"
+      ]
+    },
+    {
+      "path": "pando cluster tokens create",
+      "use": "create",
+      "short": "Create a join token. It is shown once",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "address",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "The installation's address the joining host reaches (default this server's advertise address)",
+          "required": false
+        },
+        {
+          "name": "expires-hours",
+          "shorthand": "",
+          "type": "int",
+          "default": "0",
+          "usage": "How many hours it lasts (default 24)",
+          "required": false
+        },
+        {
+          "name": "role",
+          "shorthand": "",
+          "type": "stringSlice",
+          "default": "[]",
+          "usage": "control, app, or both (repeat or comma-separate). Default: both while the cluster has fewer than three hosts, then app",
+          "required": false
+        },
+        {
+          "name": "uses",
+          "shorthand": "",
+          "type": "int",
+          "default": "0",
+          "usage": "How many hosts may join with it (default 1)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando cluster tokens list",
+      "use": "list",
+      "short": "List join tokens",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando cluster tokens revoke",
+      "use": "revoke <token-id>",
+      "short": "Revoke a join token",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
       "path": "pando config",
       "use": "config",
       "short": "Show the server's startup configuration and where each setting came from",
@@ -4248,6 +4565,53 @@
           "type": "string",
           "default": "",
           "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando join",
+      "use": "join [token]",
+      "short": "Join a new Pando to a cluster with a join token",
+      "long": "Joins the Pando at --server, which must be new, with no account or app, to the\ncluster that minted the join token (pando cluster tokens create). The Pando checks the\ncluster's certificate authority against the token, joins, and restarts into the\ncluster. It also needs the setup_token that Pando printed to its log at startup.\n\nEach token is read from PANDO_JOIN_TOKEN and PANDO_SETUP_TOKEN, or asked for\nwithout echoing, or read from standard input one per line, join token first.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "name",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "this host's name in the cluster (default: the machine's hostname)",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        },
+        {
+          "name": "setup-token",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "the setup token from the joining Pando's log (setup_token); prefer PANDO_SETUP_TOKEN or the prompt",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
           "required": false
         }
       ],

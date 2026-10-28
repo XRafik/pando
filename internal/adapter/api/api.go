@@ -150,6 +150,13 @@ type RuntimeCapabilities struct {
 	// Data, never a type assertion (R-254).
 	SupportsBundleEvents bool
 
+	// SupportsStandby means the runtime can keep a stopped standby of an app
+	// in a second place and start it there when the first is lost (R-419):
+	// the adapter implements StandbyRuntime. False on a runtime with one
+	// place, where there is nowhere else to keep one. Data, never a type
+	// assertion (R-254).
+	SupportsStandby bool
+
 	// Platform is the operating system and CPU architecture the runtime runs
 	// images for, as a registry names them: linux/amd64, linux/arm64. Empty
 	// when the runtime cannot say, and then an image's platforms are not
@@ -235,6 +242,15 @@ type RoutingCapabilities struct {
 	// outbound-tunnel adapter such as Cloudflare, where nothing on the host
 	// needs to be reachable from outside.
 	RequiresPublicReachability bool
+
+	// CertificatesPerEdge says the edge in front of each control host orders
+	// its own certificates and Pando cannot order them instead — a Traefik
+	// somebody else runs, with its own ACME resolver. Several such edges would
+	// each order every hostname's certificate, and an HTTP-01 challenge one
+	// asked for may reach another, so a second control host's join refuses it
+	// (R-417, O-68). An edge Pando issues for, or one that serves no
+	// certificate of its own, is false.
+	CertificatesPerEdge bool
 }
 
 // BuilderCapabilities describes what a builder adapter can do.
@@ -629,6 +645,25 @@ type BundlePlan struct {
 	// run in the part that is silent (O-46). False is the safe value, and
 	// what the reconciler sends.
 	FirstDeploy bool
+
+	// Failover is what a runtime that keeps a warm standby of the app needs
+	// to place it and, when its host is lost, to start it (R-419, R-422).
+	// A runtime with no standbys ignores it.
+	Failover FailoverPlan
+}
+
+// FailoverPlan is how an app's standby is placed and started (R-422).
+type FailoverPlan struct {
+	// Priority orders the apps a host starts when another is lost and not
+	// all of their standbys fit: higher first, then by app. The spec's
+	// availability.priority; 0 by default.
+	Priority int
+
+	// AllowOversubscription is host policy allow_failover_oversubscription:
+	// a standby may be placed past the CPU and memory kept free for its
+	// host's loss. Never disk (R-242). False is the safe value, and what the
+	// reconciler sends; it is read only when a standby is placed.
+	AllowOversubscription bool
 }
 
 // WorkloadPlan is one workload, fully resolved.
@@ -749,6 +784,12 @@ type ObservedBundle struct {
 	Exists    bool
 	Workloads []ObservedWorkload
 	Volumes   []ObservedVolume
+
+	// Host is where the bundle was found, in the names StandbyHandle uses:
+	// the cluster host's name for a runtime with several (R-256). Empty for
+	// a runtime with one place. Core reads it to leave alone an app whose
+	// host is lost or fenced, standby or not (R-151, R-421).
+	Host string
 }
 
 // ObservedWorkload is a workload as found.
@@ -876,6 +917,11 @@ type Capacity struct {
 	TotalMemoryBytes int64
 	TotalDiskBytes   int64
 
+	// HeldDiskBytes is disk the runtime holds outside any app's own
+	// allocation — warm standbys' copies (R-422) — which the planner counts
+	// as allocated, since disk is never oversubscribed (R-242). Zero is none.
+	HeldDiskBytes int64
+
 	// RunningWorkloads is how many workloads are running now, Pando's or
 	// not; -1 when the runtime cannot say.
 	RunningWorkloads int
@@ -974,6 +1020,25 @@ type RouteRequest struct {
 type TLSRequest struct {
 	Enabled  bool
 	Hostname string
+}
+
+// RouteFor is the route an app's spec asks for, pointed at upstream.
+//
+// Every writer of a route builds it here — the deploy, the reconciler's drift
+// correction and each control host's route sync — so none of them can write
+// a route that differs from the others'. One that left TLS out would strip
+// the app's certificate from the edge on its next pass (R-169, R-174).
+// upstream is always Pando's proxy (R-023).
+func RouteFor(appID string, r spec.Routing, upstream string) RouteRequest {
+	return RouteRequest{
+		AppID:         appID,
+		Mode:          r.Mode,
+		Hostname:      r.Hostname,
+		PathPrefix:    r.PathPrefix,
+		Port:          r.Port,
+		ProxyUpstream: upstream,
+		TLS:           TLSRequest{Enabled: r.Mode != spec.RoutingPort, Hostname: r.Hostname},
+	}
 }
 
 // RouteHandle is the adapter's own identifier for a route.
@@ -1252,6 +1317,12 @@ type ServicesCapabilities struct {
 	// Data, not a type assertion, so the backup path can state in its manifest
 	// which services it captured and how.
 	DataInAppVolumes bool
+
+	// ReplicaTypes are the slot types whose standby the adapter keeps
+	// current through the engine's own replication (R-420): it implements
+	// ReplicaServices. A type not listed has its data copied with the app's
+	// volumes, and the app's notice says the copy may be inconsistent.
+	ReplicaTypes []spec.SlotType
 }
 
 // ProvisionRequest asks for a service instance.

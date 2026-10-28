@@ -48,6 +48,9 @@ var descriptions = map[string]string{
 		"this off. 0 means never.",
 	"stop_orphaned_apps": "Stop an app once none of its owners has an active account and no group owns it. " +
 		"On by default. It stays stopped until somebody starts it. Administrators are told either way.",
+	"standby": "Keep a stopped copy of each app on another host, with its storage copied every 5 minutes, and " +
+		"start it if the app's host is lost. On by default. An app can turn it on or off for itself. Only " +
+		"a runtime with more than one host keeps one.",
 	"max_apps_per_user": "How many apps each person may own, unless their account or one of their groups says " +
 		"otherwise. 0 means unlimited.",
 	"allow_cpu_oversubscription": "Let apps together ask for more CPU than the runtime has. Off by default: a " +
@@ -55,6 +58,9 @@ var descriptions = map[string]string{
 	"allow_memory_oversubscription": "Let apps together ask for more memory than the runtime has. Off by " +
 		"default: a deploy that would need more memory than is left is refused. On, the host may run out and " +
 		"stop an app to free memory. Disk is never oversubscribed.",
+	"allow_failover_oversubscription": "In a cluster, let apps' standbys be placed past the CPU and memory kept " +
+		"free for losing a host. Off by default: an app whose standby could not start anywhere runs without one. " +
+		"On, a host that takes over starts what fits, highest availability.priority first. Disk is never oversubscribed.",
 	"audit_retention_months": "How many months the audit log keeps before an older month is archived and removed " +
 		"from the live log. 0 means 3, which is also the least it may be.",
 	"audit_archive": "Where a month of the audit log goes once it is past retention: keep (archived under Pando's " +

@@ -522,6 +522,26 @@ func TestR242_DiskIsNeverOversubscribed(t *testing.T) {
 	require.Equal(t, "disk space", errs.As(err).Details["resource"])
 }
 
+// TestR422_StandbyCopiesAreCountedAgainstTheDisk asserts R-422's disk half at
+// plan time: the disk a runtime holds for standbys' copies is taken, so a
+// deploy that fits beside the apps and not beside the copies is refused.
+func TestR422_StandbyCopiesAreCountedAgainstTheDisk(t *testing.T) {
+	s := plannableSpec()
+	s.Resources.DiskBytes = 100 << 30
+	rt := capableRuntime()
+	plan := func() error {
+		p := planner.New(registry(t, rt, capableRouting(), capableBuilder()), policy.Static(policy.Default()),
+			fixedAllocations{alloc: planner.Allocation{DiskBytes: 300 << 30}})
+		_, err := p.Check(context.Background(), s)
+		return err
+	}
+	require.NoError(t, plan(), "400 of 500 GB")
+	rt.capacity.HeldDiskBytes = 150 << 30
+	err := plan()
+	require.Equal(t, errs.CapacityWouldOversubscribe, errs.CodeOf(err))
+	require.Equal(t, "disk space", errs.As(err).Details["resource"])
+}
+
 // TestR242_AnUnreadablePolicyRefusesRatherThanOversubscribing asserts that
 // the planner never guesses at host policy: whichever of its reads fails —
 // the oversubscription allowance among them — the plan is refused with that
@@ -930,4 +950,28 @@ func TestR240_AWorkloadRunsWithinTheAppsLimits(t *testing.T) {
 	s.Workloads[0].Resources = &spec.ResourceLimits{MemoryBytes: -1}
 	_, err = p.Check(context.Background(), s)
 	require.Equal(t, errs.ValidInvalid, errs.CodeOf(err))
+}
+
+// TestR422_TheFailoverPlanCarriesPriorityAndPolicy asserts what a runtime
+// keeping standbys is told: the spec's availability.priority, and host
+// policy allow_failover_oversubscription, off unless policy says on.
+func TestR422_TheFailoverPlanCarriesPriorityAndPolicy(t *testing.T) {
+	s := plannableSpec()
+	s.Availability.Priority = 7
+	reg := registry(t, capableRuntime(), capableRouting(), capableBuilder())
+
+	got, err := planner.New(reg, nil, nil).FailoverPlan(context.Background(), s)
+	require.NoError(t, err)
+	require.Equal(t, api.FailoverPlan{Priority: 7}, got)
+
+	doc := policy.Default()
+	doc.AllowFailoverOversubscription = true
+	got, err = planner.New(reg, policy.Static(doc), nil).FailoverPlan(context.Background(), s)
+	require.NoError(t, err)
+	require.Equal(t, api.FailoverPlan{Priority: 7, AllowOversubscription: true}, got)
+
+	plan, err := planner.New(reg, policy.Static(doc), nil).Check(context.Background(), s)
+	require.NoError(t, err)
+	require.Equal(t, 7, plan.Bundle.Failover.Priority)
+	require.False(t, plan.Bundle.Failover.AllowOversubscription, "policy is read when a standby is placed, at deploy")
 }

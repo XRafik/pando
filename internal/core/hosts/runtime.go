@@ -1,0 +1,615 @@
+package hosts
+
+import (
+	"context"
+	"crypto/x509"
+	"encoding/json"
+	"encoding/pem"
+	"fmt"
+	"regexp"
+	"slices"
+	"strings"
+
+	"github.com/trypando/pando/internal/core/audit"
+	"github.com/trypando/pando/internal/core/state"
+	"github.com/trypando/pando/internal/errs"
+	"github.com/trypando/pando/internal/secret"
+)
+
+// The cluster's app hosts reach the runtime adapter as its configuration
+// (R-256): core writes them into the docker-hosts runtime's host list, and the
+// adapter alone places workloads among them. The first app host to join turns
+// a single-host docker runtime into docker-hosts in place (R-418).
+
+// Runtime kinds, by the strings their adapters register: core imports no
+// adapter.
+const (
+	runtimeDocker      = "docker"
+	runtimeDockerHosts = "docker-hosts"
+)
+
+// agentScheme starts the endpoint of a host that joined the cluster: its
+// runtime is reached only through its agent (R-416). An entry with it is the
+// cluster's to write; any other was written by the operator and is kept.
+const agentScheme = "agent://"
+
+// ConvertAction is the audit action of turning the runtime into docker-hosts.
+const ConvertAction = "cluster.runtime.convert"
+
+// runtimeHostName is what the docker-hosts runtime accepts as a host's name.
+var runtimeHostName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$`)
+
+// RuntimeHost is one entry of the docker-hosts runtime's host list, in its
+// configuration's own field names.
+type RuntimeHost struct {
+	Name             string `json:"name"`
+	Endpoint         string `json:"endpoint,omitempty"`
+	CertSHA256       string `json:"cert_sha256,omitempty"`
+	AgentAddress     string `json:"agent_address,omitempty"`
+	Control          bool   `json:"control,omitempty"`
+	TotalCPUMillis   int    `json:"total_cpu_millis,omitempty"`
+	TotalMemoryBytes int64  `json:"total_memory_bytes,omitempty"`
+	TotalDiskBytes   int64  `json:"total_disk_bytes,omitempty"`
+}
+
+// RuntimeHosts is the cluster's app hosts as docker-hosts entries, in the
+// order they joined: each reached through its agent at the address it joined
+// with, which must present the certificate it joined with: the agent's
+// address and pin, never where a control host answers pings (R-416, R-421),
+// so a host with both roles runs apps through its agent. The install's own
+// machine (InstallHost) is the control entry already in the list and is left
+// out. A joined host is never left out for its name: one named as the
+// control entry is refused by mergeHosts, not dropped.
+func RuntimeHosts(hosts []state.Host) ([]RuntimeHost, error) {
+	var out []RuntimeHost
+	for _, h := range hosts {
+		if InstallHost(h) || !slices.Contains(h.Roles, state.HostRoleApp) {
+			continue
+		}
+		if !runtimeHostName.MatchString(h.Name) {
+			return nil, errs.Newf(errs.ValidInvalid,
+				"The host %q cannot run apps under this name: the Docker hosts runtime takes lower-case letters, digits and dashes, up to 40 characters.", h.Name).
+				WithRemedy("Remove the host and join it again under a name such as app-host-2.")
+		}
+		out = append(out, RuntimeHost{
+			Name: h.Name, Endpoint: agentScheme + h.Address, CertSHA256: h.Pins(),
+		})
+	}
+	return out, nil
+}
+
+// CheckAppRoleJoin refuses an app-role join where the runtime cannot take
+// one (R-418): Kubernetes and Incus already span machines, so a host joins
+// them for the control role only.
+func CheckAppRoleJoin(runtimeKind string, roles []string) error {
+	if !slices.Contains(roles, state.HostRoleApp) {
+		return nil
+	}
+	switch runtimeKind {
+	case runtimeDocker, runtimeDockerHosts:
+		return nil
+	case "kubernetes", "incus":
+		return errs.Newf(errs.ValidInvalid,
+			"This install runs apps on %s, which places them across its own machines, so a host cannot join it to run apps. A host can join it for the control role only.",
+			runtimeName(runtimeKind)).
+			WithRemedy("Create a join token for the control role, or add the machine to the " + runtimeName(runtimeKind) + " cluster instead.")
+	}
+	return errs.Newf(errs.ValidInvalid,
+		"This install's runtime, %s, cannot run apps on a joined host. Only Docker can. A host can join it for the control role only.", runtimeKind).
+		WithRemedy("Create a join token for the control role.")
+}
+
+func runtimeName(kind string) string {
+	if kind == "incus" {
+		return "Incus"
+	}
+	return "Kubernetes"
+}
+
+// AdapterStore is the slice of state.Adapters the runtime sync uses.
+type AdapterStore interface {
+	List(ctx context.Context) ([]state.AdapterConfig, error)
+	Save(ctx context.Context, c state.AdapterConfig) (state.Replaced, error)
+}
+
+// CredentialStore is the slice of state.AdapterCredentials it uses.
+type CredentialStore interface {
+	Put(ctx context.Context, adapterID, field string, v secret.Value) error
+}
+
+// RestartSignal asks every replica to restart, the way saved adapter
+// configuration starts running (R-253): state.Replicas.
+type RestartSignal interface {
+	RequestRestart(ctx context.Context) error
+}
+
+// AuditWriter appends to the audit log.
+type AuditWriter interface {
+	Write(ctx context.Context, e audit.Event) error
+}
+
+// HostLister lists the cluster's hosts.
+type HostLister interface {
+	Hosts(ctx context.Context) ([]state.Host, error)
+}
+
+// Runtime keeps the runtime adapter's host list in line with the cluster's
+// app hosts. The server calls Sync when the host list changes, and CheckJoin
+// before an app-role join.
+type Runtime struct {
+	Hosts       HostLister
+	Adapters    AdapterStore
+	Credentials CredentialStore
+	Restart     RestartSignal
+	Audit       AuditWriter
+
+	// Authority is the cluster's: the agents' mutual TLS is the cluster's,
+	// handed to the runtime as its agent_authority credential (R-416).
+	Authority *Authority
+
+	// LocalName is the name the install's own machine takes in the host list
+	// when it becomes the control host and first app host (R-418), when it
+	// has no row in cluster_hosts to take it from (localName). Empty is
+	// "control". It names the machine's volumes from then on, so it does not
+	// change.
+	LocalName string
+
+	// LocalAgentAddress is where the control host's agent is reached, as
+	// host:port: this machine's address and the agent port.
+	LocalAgentAddress string
+
+	// Joined is set on a control host that joined the cluster: it is not the
+	// install's own machine, so a conversion it makes takes that machine's
+	// agent address from the machine's cluster_hosts row, not from
+	// LocalAgentAddress (R-416).
+	Joined bool
+
+	// Declared reports whether the configuration file declares the adapter
+	// with this ID (R-271), which a stored row then does not override.
+	Declared func(id string) bool
+}
+
+// SyncResult is what a Sync did.
+type SyncResult struct {
+	AdapterID string `json:"adapter_id,omitempty"`
+	Converted bool   `json:"converted"`
+	Changed   bool   `json:"changed"`
+}
+
+// localName is the install's own machine's name in the runtime's host list:
+// the name its cluster_hosts row has (InstallHost), so the runtime and the
+// cluster call the machine by one name. The runtime reports where an app runs
+// by it (api.StandbyHandle.Home), and the liveness pass finds a lost host's
+// apps by its row's name (standby.Failover); two names left the install's
+// own machine's apps never failed over (R-421). Without a usable row it is
+// LocalName, else "control".
+func (r *Runtime) localName(all []state.Host) string {
+	for _, h := range all {
+		if InstallHost(h) && runtimeHostName.MatchString(h.Name) {
+			return h.Name
+		}
+	}
+	if r.LocalName == "" {
+		return installHostName
+	}
+	return r.LocalName
+}
+
+// defaultRuntime is the stored, enabled default runtime adapter.
+func (r *Runtime) defaultRuntime(ctx context.Context) (state.AdapterConfig, error) {
+	all, err := r.Adapters.List(ctx)
+	if err != nil {
+		return state.AdapterConfig{}, err
+	}
+	for _, c := range all {
+		if c.Category == "runtime" && c.IsDefault && c.Enabled {
+			return c, nil
+		}
+	}
+	return state.AdapterConfig{}, errs.New(errs.StateInvalid,
+		"This install has no default runtime adapter stored, so Pando cannot tell where a joined host would run apps.").
+		WithRemedy("Make a runtime adapter the default under System → Adapters, then join the host again.")
+}
+
+// NetworkPool is the default runtime's app network range (network_pool), the
+// range a joining app host's agent forwards into (R-416), or "" for the
+// runtime's own default, or when it cannot be read: the join that asks has
+// checked the runtime already (CheckJoin).
+func (r *Runtime) NetworkPool(ctx context.Context) string {
+	rt, err := r.defaultRuntime(ctx)
+	if err != nil {
+		return ""
+	}
+	var cfg struct {
+		NetworkPool string `json:"network_pool"`
+	}
+	if json.Unmarshal(rt.Config, &cfg) != nil {
+		return ""
+	}
+	return strings.TrimSpace(cfg.NetworkPool)
+}
+
+// CheckJoin refuses an app-role join the runtime cannot take, before the
+// host is let in: a runtime spanning machines, a Docker runtime that cannot
+// be turned into a multi-host one, or a name the runtime's host list already
+// gives a host Pando did not add (R-415, R-418), which would stop every later
+// Sync.
+func (r *Runtime) CheckJoin(ctx context.Context, name string, roles []string) error {
+	if !slices.Contains(roles, state.HostRoleApp) {
+		return r.checkControlJoin(ctx, roles)
+	}
+	rt, err := r.defaultRuntime(ctx)
+	if err != nil {
+		return err
+	}
+	if err := CheckAppRoleJoin(rt.Kind, roles); err != nil {
+		return err
+	}
+	if err := r.checkWritable(rt); err != nil {
+		return err
+	}
+	taken, err := r.writtenNames(ctx, rt)
+	if err != nil {
+		return err
+	}
+	if slices.Contains(taken, name) {
+		return errs.Newf(errs.ValidInvalid,
+			"The Docker hosts runtime already lists a host named %s, which Pando did not add, so a joining host cannot take that name. Valid answer: another name, such as app-host-2.", name)
+	}
+	return nil
+}
+
+// checkControlJoin refuses a control-role join the Docker runtime cannot
+// take: a second control host reaches the install's own machine through its
+// agent, so a single-host Docker runtime is turned into the Docker hosts one
+// when it joins (Sync, R-414, R-416), and refusals that conversion would make
+// are made before the host is let in. Any other runtime, or none, is not
+// this check's.
+func (r *Runtime) checkControlJoin(ctx context.Context, roles []string) error {
+	if !slices.Contains(roles, state.HostRoleControl) {
+		return nil
+	}
+	rt, err := r.defaultRuntime(ctx)
+	if err != nil || (rt.Kind != runtimeDocker && rt.Kind != runtimeDockerHosts) {
+		return nil //nolint:nilerr // No Docker runtime: nothing to convert, as before.
+	}
+	if err := r.checkWritable(rt); err != nil {
+		return err
+	}
+	if rt.Kind != runtimeDocker {
+		return nil
+	}
+	all, err := r.allHosts(ctx)
+	if err == nil {
+		_, err = r.convertDocker(rt.Config, all)
+	}
+	return err
+}
+
+// allHosts is the cluster's hosts, or none without a list to read.
+func (r *Runtime) allHosts(ctx context.Context) ([]state.Host, error) {
+	if r.Hosts == nil {
+		return nil, nil
+	}
+	return r.Hosts.Hosts(ctx)
+}
+
+// installAgentAddress is where the install's own machine's agent is
+// reached: this machine's (LocalAgentAddress) on that machine, and on a host
+// that joined the cluster, the address the machine's row records, since
+// LocalAgentAddress there is the joined host's own.
+func (r *Runtime) installAgentAddress(all []state.Host) string {
+	if !r.Joined {
+		return r.LocalAgentAddress
+	}
+	for _, h := range all {
+		if InstallHost(h) {
+			return h.Address
+		}
+	}
+	return ""
+}
+
+// otherControlHost reports whether a host other than the install's own
+// machine holds the control role: it reaches that machine's runtime through
+// the machine's agent, which only the Docker hosts runtime does (R-416).
+func otherControlHost(all []state.Host) bool {
+	return slices.ContainsFunc(all, func(h state.Host) bool {
+		return !InstallHost(h) && slices.Contains(h.Roles, state.HostRoleControl)
+	})
+}
+
+// writtenNames is the names in the runtime's host list that a join does not
+// write (mergeHosts keeps them): the operator's entries and the install's
+// own machine's, or, for a single-host docker runtime, the name the machine
+// takes when it is converted.
+func (r *Runtime) writtenNames(ctx context.Context, rt state.AdapterConfig) ([]string, error) {
+	if rt.Kind == runtimeDocker {
+		all, err := r.allHosts(ctx)
+		if err != nil {
+			return nil, err
+		}
+		_, err = r.convertDocker(rt.Config, all)
+		return []string{r.localName(all)}, err
+	}
+	_, entries, err := hostList(rt.Config)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, e := range keptEntries(entries) {
+		name, _ := e["name"].(string)
+		out = append(out, name)
+	}
+	return out, nil
+}
+
+func (r *Runtime) checkWritable(rt state.AdapterConfig) error {
+	if r.Declared != nil && r.Declared(rt.ID) {
+		return errs.Newf(errs.StateInvalid,
+			"The runtime adapter %s is set in Pando's configuration file, so Pando cannot add the cluster's hosts to it.", rt.ID).
+			WithRemedy("Remove it from the configuration file so the stored adapter applies, or list the hosts in the file yourself with kind docker-hosts.")
+	}
+	return nil
+}
+
+// Sync writes the cluster's app hosts into the runtime adapter's host list,
+// converting a single-host docker runtime first (R-418), and asks every
+// replica to restart when anything changed. Running it again with the same
+// hosts changes nothing.
+func (r *Runtime) Sync(ctx context.Context) (SyncResult, error) {
+	rt, err := r.defaultRuntime(ctx)
+	if err != nil {
+		return SyncResult{}, err
+	}
+	res := SyncResult{AdapterID: rt.ID}
+	all, err := r.Hosts.Hosts(ctx)
+	if err != nil {
+		return res, err
+	}
+	app, err := RuntimeHosts(all)
+	if err != nil {
+		return res, err
+	}
+
+	var cfg json.RawMessage
+	switch rt.Kind {
+	case runtimeDocker:
+		if len(app) == 0 && !otherControlHost(all) {
+			// A cluster of one behaves as before (R-414). A second control
+			// host, even without the app role, needs the host list: it
+			// reaches the install's own machine through that machine's
+			// agent, never as its own Docker (R-416).
+			return res, nil
+		}
+		cfg, err = r.convertDocker(rt.Config, all)
+		if err == nil {
+			cfg, _, err = mergeHosts(cfg, app)
+		}
+		res.Converted = true
+	case runtimeDockerHosts:
+		cfg, res.Changed, err = mergeHosts(rt.Config, app)
+		if err == nil && !res.Changed {
+			return res, nil
+		}
+	default:
+		if len(app) == 0 {
+			return res, nil
+		}
+		err = CheckAppRoleJoin(rt.Kind, []string{state.HostRoleApp})
+	}
+	if err == nil {
+		err = r.checkWritable(rt)
+	}
+	if err != nil {
+		return res, err
+	}
+	res.Changed = true
+	return res, r.write(ctx, rt, cfg, app, res.Converted, r.localName(all))
+}
+
+// write saves the runtime's new configuration with the cluster authority as
+// its agent authority, and signals the restart that makes it run.
+func (r *Runtime) write(ctx context.Context, rt state.AdapterConfig, cfg json.RawMessage, app []RuntimeHost, converted bool, local string) error {
+	if converted {
+		names := make([]string, 0, len(app)+1)
+		names = append(names, local)
+		for _, h := range app {
+			names = append(names, h.Name)
+		}
+		// Written before the change (R-228).
+		if err := r.Audit.Write(ctx, audit.Event{
+			PrincipalKind: audit.KindSystem, PrincipalID: "cluster", Action: ConvertAction,
+			TargetKind: "adapter", TargetID: rt.ID,
+			Detail: map[string]any{"from": runtimeDocker, "to": runtimeDockerHosts, "hosts": names, "control_host": local},
+		}); err != nil {
+			return err
+		}
+	}
+	authority, err := r.Authority.PEM()
+	if err != nil {
+		return errs.Wrap(errs.Internal, "Pando could not read the cluster authority to hand it to the runtime.", err)
+	}
+	// The credential first: a configuration naming agent:// hosts with the
+	// old authority would reach none of them.
+	if err := r.Credentials.Put(ctx, rt.ID, "agent_authority", secret.New(string(authority))); err != nil {
+		return err
+	}
+	// The same adapter, by its ID: apps pinned to it stay pinned, so this is
+	// not a runtime swap (R-257).
+	rt.Kind = runtimeDockerHosts
+	rt.Config = cfg
+	if _, err := r.Adapters.Save(ctx, rt); err != nil {
+		return err
+	}
+	return r.Restart.RequestRestart(ctx)
+}
+
+// dockerSettings is what a single-host docker runtime's configuration holds
+// that a docker-hosts one carries on.
+type dockerSettings struct {
+	Host               string `json:"host,omitempty"`
+	TotalCPUMillis     int    `json:"total_cpu_millis,omitempty"`
+	TotalMemoryBytes   int64  `json:"total_memory_bytes,omitempty"`
+	TotalDiskBytes     int64  `json:"total_disk_bytes,omitempty"`
+	PidsLimit          int64  `json:"pids_limit,omitempty"`
+	NetworkPool        string `json:"network_pool,omitempty"`
+	NetworkBlockBits   int    `json:"network_block_bits,omitempty"`
+	OCIRuntime         string `json:"oci_runtime,omitempty"`
+	EgressGatewayImage string `json:"egress_gateway_image,omitempty"`
+}
+
+// dockerHostsSettings is the docker-hosts configuration a conversion writes.
+type dockerHostsSettings struct {
+	Hosts            []RuntimeHost `json:"hosts"`
+	NetworkPool      string        `json:"network_pool,omitempty"`
+	NetworkBlockBits int           `json:"network_block_bits,omitempty"`
+	OCIRuntime       string        `json:"oci_runtime,omitempty"`
+	PidsLimit        int64         `json:"pids_limit,omitempty"`
+	AgentImage       string        `json:"agent_image,omitempty"`
+}
+
+// convertDocker is a single-host docker configuration as a docker-hosts one
+// whose one host is this machine, the control host (R-418). Its apps are
+// found there by their labeled networks and volumes, as on one host, so
+// nothing is re-created.
+//
+// all is the cluster's hosts: the install's own machine is named as its row
+// is (localName), and on a host that joined, reached at its row's address
+// (installAgentAddress), so a conversion made on any control host writes
+// the same list.
+func (r *Runtime) convertDocker(raw json.RawMessage, all []state.Host) (json.RawMessage, error) {
+	local, agentAddress := r.localName(all), r.installAgentAddress(all)
+	var d dockerSettings
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &d); err != nil {
+			return nil, errs.Wrap(errs.StateInvalid, "The Docker runtime's stored configuration could not be read, so Pando cannot add hosts to it.", err)
+		}
+	}
+	if pool := strings.TrimSpace(d.NetworkPool); pool == "off" || pool == "docker" {
+		return nil, errs.New(errs.ValidInvalid,
+			`The Docker runtime's network_pool is "off", and apps on several hosts need it set: each host's agent forwards only into the app network range.`).
+			WithRemedy("Set network_pool on the Docker runtime to a private range such as 10.213.0.0/16, restart Pando, then join the host again.")
+	}
+	if agentAddress == "" {
+		return nil, errs.New(errs.StateInvalid,
+			"Pando does not know the address other hosts reach the install's first host at, so it cannot run the install on several hosts.").
+			WithRemedy("Set server.advertise_url on the install's first host to an address other hosts can reach it at, restart Pando there, then join the host again.")
+	}
+	out := dockerHostsSettings{
+		Hosts: []RuntimeHost{{
+			Name: local, Control: true, Endpoint: d.Host, AgentAddress: agentAddress,
+			TotalCPUMillis: d.TotalCPUMillis, TotalMemoryBytes: d.TotalMemoryBytes, TotalDiskBytes: d.TotalDiskBytes,
+		}},
+		NetworkPool:      d.NetworkPool,
+		NetworkBlockBits: d.NetworkBlockBits,
+		OCIRuntime:       d.OCIRuntime,
+		PidsLimit:        d.PidsLimit,
+		AgentImage:       d.EgressGatewayImage,
+	}
+	return json.Marshal(out)
+}
+
+// mergeHosts replaces the agent:// entries of a docker-hosts configuration
+// with app, keeping every entry the operator wrote and every other setting as
+// it was, and reports whether the host list changed.
+func mergeHosts(raw json.RawMessage, app []RuntimeHost) (json.RawMessage, bool, error) {
+	cfg, current, err := hostList(raw)
+	if err != nil {
+		return nil, false, err
+	}
+
+	next := make([]any, 0, len(current))
+	names := map[string]bool{}
+	for _, e := range keptEntries(current) {
+		name, _ := e["name"].(string)
+		names[name] = true
+		next = append(next, e)
+	}
+	for _, h := range app {
+		if names[h.Name] {
+			return nil, false, errs.Newf(errs.StateInvalid,
+				"The host %s joined the cluster, and the Docker hosts runtime already lists a host of that name.", h.Name).
+				WithRemedy("Rename or remove that entry in the runtime's host list, then save it.")
+		}
+		next = append(next, h)
+	}
+
+	before, err := json.Marshal(current)
+	if err != nil {
+		return nil, false, errs.Wrap(errs.Internal, "Could not encode the runtime's host list.", err)
+	}
+	encoded, err := json.Marshal(next)
+	if err != nil {
+		return nil, false, errs.Wrap(errs.Internal, "Could not encode the runtime's host list.", err)
+	}
+	// Compared after a round trip, so key order is not a change.
+	var after []map[string]any
+	_ = json.Unmarshal(encoded, &after)
+	normalized, _ := json.Marshal(after)
+	if string(before) == string(normalized) {
+		return raw, false, nil
+	}
+	cfg["hosts"] = encoded
+	out, err := json.Marshal(cfg)
+	if err != nil {
+		return nil, false, errs.Wrap(errs.Internal, "Could not encode the runtime's configuration.", err)
+	}
+	return out, true, nil
+}
+
+// hostList reads a docker-hosts configuration and its host list.
+func hostList(raw json.RawMessage) (map[string]json.RawMessage, []map[string]any, error) {
+	cfg := map[string]json.RawMessage{}
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &cfg); err != nil {
+			return nil, nil, errs.Wrap(errs.StateInvalid, "The Docker hosts runtime's stored configuration could not be read, so Pando cannot add hosts to it.", err)
+		}
+	}
+	entries, err := hostEntries(cfg["hosts"])
+	return cfg, entries, err
+}
+
+// keptEntries is the entries of a host list the cluster does not write: every
+// one not reached through agentScheme.
+func keptEntries(entries []map[string]any) []map[string]any {
+	var out []map[string]any
+	for _, e := range entries {
+		if endpoint, _ := e["endpoint"].(string); !strings.HasPrefix(endpoint, agentScheme) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// hostEntries reads a host list: a JSON list, or a string holding one, which
+// is how a form's text area saves it.
+func hostEntries(raw json.RawMessage) ([]map[string]any, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		raw = json.RawMessage(text)
+	}
+	var out []map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, errs.Wrap(errs.StateInvalid, "The Docker hosts runtime's stored host list is not a JSON list, so Pando cannot add hosts to it.", err).
+			WithRemedy("Correct the host list under System → Adapters, then save it.")
+	}
+	return out, nil
+}
+
+// PEM is the authority as the runtime's agent_authority credential holds
+// one: its certificate, then its key.
+func (a *Authority) PEM() ([]byte, error) {
+	if a == nil || a.Cert == nil || a.Key == nil {
+		return nil, fmt.Errorf("no cluster authority is loaded")
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(a.Key)
+	if err != nil {
+		return nil, err
+	}
+	out := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: a.Cert.Raw})
+	return append(out, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})...), nil
+}

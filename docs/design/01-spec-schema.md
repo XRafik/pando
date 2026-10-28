@@ -45,6 +45,7 @@ type AppSpec struct {
     Resources  Resources   `json:"resources"`
     Egress     Egress      `json:"egress"`
     Retention  Retention   `json:"retention"`
+    Availability Availability `json:"availability,omitzero"` // R-419, R-422
     PerUser    PerUser     `json:"per_user"`      // R-290, LATER
     Warnings   []Warning   `json:"warnings"`      // carried, not resolved
 }
@@ -447,6 +448,10 @@ type Retention struct {
     BackupDaily      int   `json:"backup_daily_count"` // R-211
     SpecRevisions    int   `json:"spec_revisions"`     // R-152
 }
+
+type Availability struct {
+    Priority int `json:"priority,omitempty"` // failover start order, higher first (R-422)
+}
 ```
 
 **[D]** An app's egress **starts from the install's rules and is layered on them** (R-182). It never
@@ -476,6 +481,20 @@ or `allow_all` mode is `inherit`; the old `block_private` mode is `inherit` with
 old `Allowlist` becomes `List` under `allowlist` mode, which now narrows where it used to replace.
 
 Build egress (`Build.EgressMode`, R-118) is a separate setting and does not follow this model (R-189).
+
+### 2.7a Availability (R-419)
+
+```go
+type Availability struct {
+    Standby StandbyMode `json:"standby,omitempty"` // "default" (or empty) | "on" | "off"
+}
+```
+
+**[D]** Whether an app keeps a warm standby — a stopped copy on another host, started when its host is
+lost — is host policy's `standby` (on by default **[P]**), and `availability.standby` overrides it for
+one app. The override is in the spec because how an app runs is the spec's (R-020). Only a runtime that
+reports `SupportsStandby` keeps one; elsewhere the setting changes nothing and is not an error. A
+change to it is `benign`: the standby pass makes or removes the standby, the app is not restarted.
 
 ### 2.8 Warnings
 
@@ -516,6 +535,7 @@ Run on every spec before it is pinned, and again at plan time.
 | Every `Required` slot has a `Resolution` | `PLAN_SLOT_UNFILLED` |
 | Every egress entry parses; no egress `List` under `inherit` (R-185) | `VALID_INVALID` |
 | Not both `Deploy.RequireApproval` and `AutoDeploy.Enabled` (R-158) | `VALID_INVALID` |
+| `Availability.Standby` is empty, `default`, `on` or `off` (R-419) | `VALID_INVALID` |
 | No egress loosening host policy forbids (R-183) | `PLAN_EGRESS_LOOSENING_FORBIDDEN` |
 | Egress restricted only on a runtime that enforces it (R-186) | `PLAN_CAPABILITY_UNSUPPORTED` |
 
@@ -529,7 +549,7 @@ Diff operates on the spec tree and classifies each change:
 
 | Class | Meaning | UI treatment |
 |---|---|---|
-| `benign` | Retention, warnings, display-only | Collapsed |
+| `benign` | Retention, warnings, failover priority, display-only | Collapsed |
 | `restart` | Env, resources, health | Shown; requires restart |
 | `rebuild` | Source, build config | Shown; triggers a build |
 | `destructive` | Volume removed, slot resolution changed from provisioned to bound, routing mode changed, **runtime adapter changed** | **Shown prominently, requires explicit confirmation** |

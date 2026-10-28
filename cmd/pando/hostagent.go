@@ -1,18 +1,21 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/netip"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
 	"github.com/trypando/pando/internal/adapter/runtime/multidocker"
+	"github.com/trypando/pando/internal/config"
+	"github.com/trypando/pando/internal/core/hosts"
+	"github.com/trypando/pando/internal/core/liveness"
 	"github.com/trypando/pando/internal/hostagent"
 	"github.com/trypando/pando/internal/log"
 )
@@ -36,7 +39,8 @@ func hostAgentCmd() *cobra.Command {
 
 // hostAgentServeCmd runs the agent. Hidden: the runtime adapter starts it,
 // from Pando's own image, with everything it needs in its environment. It
-// needs no database and no container runtime socket.
+// needs no database and no container runtime socket. It reads the cluster's
+// timing (cluster.*) from its environment and the file --config names.
 func hostAgentServeCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:    "serve",
@@ -59,9 +63,12 @@ func hostAgentServeCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("the host agent did not start: %s is not an address range: %w", multidocker.EnvAgentPool, err)
 			}
-			listen := os.Getenv(multidocker.EnvAgentListen)
-			if listen == "" {
-				listen = ":" + strconv.Itoa(hostagent.DefaultPort)
+			listen := agentListen()
+			// --config is the root's; a command built without it reads none.
+			configPath, _ := cmd.Flags().GetString("config")
+			timing, err := config.LoadCluster(configPath)
+			if err != nil {
+				return fmt.Errorf("the host agent did not start: %w", err)
 			}
 
 			logger, err := log.New("info", false)
@@ -73,15 +80,46 @@ func hostAgentServeCmd() *cobra.Command {
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 
-			ln, err := net.Listen("tcp", listen)
-			if err != nil {
-				return fmt.Errorf("the host agent could not listen on %s: %w", listen, err)
+			// On a joined host the agent is also the only way to its runtime
+			// (R-416): the socket is never published.
+			agent := &hostagent.Agent{
+				TLS: tlsConfig, Pool: pool.Masked(), Logger: logger,
+				RuntimeSocket: os.Getenv(multidocker.EnvAgentRuntimeSocket),
 			}
-			logger.Info("host agent listening", zap.String("addr", listen), zap.String("pool", pool.String()))
-			agent := &hostagent.Agent{TLS: tlsConfig, Pool: pool.Masked(), Logger: logger}
-			return agent.Serve(ctx, ln)
+			// R-421: a joined host checks the others and fences itself.
+			members := &hosts.Members{}
+			monitor, err := agentLiveness([]byte(authorities), members, livenessTiming(timing), logger)
+			if err != nil {
+				return fmt.Errorf("the host agent did not start: %w", err)
+			}
+			if monitor != nil {
+				agent.Member = members.Admits
+			}
+			return serveAgent(ctx, agent, monitor, listen)
 		},
 	}
+}
+
+// serveAgent listens on listen and serves agent until ctx is done, running
+// monitor beside it when the host takes part in liveness checks (R-421).
+func serveAgent(ctx context.Context, agent *hostagent.Agent, monitor *liveness.Monitor, listen string) error {
+	ln, err := net.Listen("tcp", listen)
+	if err != nil {
+		return fmt.Errorf("the host agent could not listen on %s: %w", listen, err)
+	}
+	agent.Logger.Info("host agent listening", zap.String("addr", listen), zap.String("pool", agent.Pool.String()),
+		zap.Bool("carries_runtime_calls", agent.RuntimeSocket != ""), zap.Bool("checks_hosts", monitor != nil))
+	if monitor != nil {
+		if agent.Liveness == nil {
+			agent.Liveness = monitor
+		}
+		// R-421: a fenced host's agent starts nothing the control plane asks.
+		if agent.Fence == nil {
+			agent.Fence = monitor
+		}
+		go monitor.Run(ctx)
+	}
+	return agent.Serve(ctx, ln)
 }
 
 // hostAgentAuthorityCmd prints a new certificate authority for the agents.

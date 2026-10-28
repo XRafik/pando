@@ -42,6 +42,11 @@ type Config struct {
 	NetworkBlockBits int    `json:"network_block_bits,omitempty"`
 	OCIRuntime       string `json:"oci_runtime,omitempty"`
 
+	// PidsLimit is the single-host Docker adapter's setting of the same name,
+	// applied on every host. Carried over when a single-host install becomes
+	// a multi-host one (R-418).
+	PidsLimit int64 `json:"pids_limit,omitempty"`
+
 	// AgentImage is the image each host's forwarding agent and each
 	// restricted app's egress gateway run: an image of Pando that every host
 	// can pull. Empty is the image Pando's own container on the control host
@@ -72,6 +77,24 @@ type Credentials struct {
 	SSHKey string `json:"ssh_key,omitempty"`
 }
 
+// Machine is which machine the process running the adapter is on. Every
+// control host of a cluster reads the same host list (R-414), so the list
+// cannot say which entry is "here": the process is told, by the server that
+// starts it, and reaches its own entry's Docker directly and every other
+// machine's through that machine's agent (R-416).
+type Machine struct {
+	// Name is this machine's name in the host list. Empty is the install's
+	// own machine: the entry marked control. A name the list does not hold
+	// is a control host with no app role: no entry is this machine.
+	Name string
+
+	// Endpoint is this machine's own Docker API, used for its entry when the
+	// list reaches it through its agent, and for the edge, trial runs and
+	// self-upgrade when the list has no entry for it. Empty is the
+	// environment.
+	Endpoint string
+}
+
 // HostConfig is one Docker host.
 type HostConfig struct {
 	// Name is how the host is known in placement, the console, errors and
@@ -80,8 +103,15 @@ type HostConfig struct {
 
 	// Endpoint is the Docker API: unix:///var/run/docker.sock (the control
 	// host, usually), tcp://host:2376 with docker_tls, or ssh://user@host
-	// with ssh_key. Empty is the environment, as the single-host adapter.
+	// with ssh_key, or agent://host:port for a host that joined the cluster,
+	// whose runtime is reached only through its agent (R-416). Empty is the
+	// environment, as the single-host adapter.
 	Endpoint string `json:"endpoint,omitempty"`
+
+	// CertSHA256 is the SHA-256 of the certificate the host joined the
+	// cluster with, hex: its agent must present that one. Pando sets it from
+	// the host's record.
+	CertSHA256 string `json:"cert_sha256,omitempty"`
 
 	// SSHHostKey is the host's SSH public key, as in known_hosts or
 	// authorized_keys, for an ssh:// endpoint. Required: an unverified SSH
@@ -93,7 +123,10 @@ type HostConfig struct {
 	// host:port. Empty is the endpoint's host and the agent port.
 	AgentAddress string `json:"agent_address,omitempty"`
 
-	// Control marks the control host.
+	// Control marks the install's own machine: the host the install started
+	// on, whose agent the runtime keeps. In a cluster of several control
+	// hosts, each one runs the edge, trial runs and self-upgrade on its own
+	// machine (Machine), not on this one.
 	Control bool `json:"control,omitempty"`
 
 	// NoPlacement keeps new apps off the host; apps already on it stay
@@ -150,6 +183,10 @@ func validate(cfg Config, hosts []HostConfig) error {
 			return fmt.Errorf("host %s: %w", h.Name, err)
 		}
 		switch u.Scheme {
+		case schemeAgent:
+			if u.Hostname() == "" {
+				return fmt.Errorf("host %s: %q names no agent address; use agent://host:port", h.Name, h.Endpoint)
+			}
 		case "tcp":
 			if cfg.Credentials.DockerTLS == "" {
 				return fmt.Errorf("host %s is reached over tcp://, and the docker_tls credential is empty. Pando does not use the Docker API without TLS: it is root on that host", h.Name)
@@ -167,7 +204,7 @@ func validate(cfg Config, hosts []HostConfig) error {
 		}
 	}
 	if controls != 1 {
-		return fmt.Errorf("exactly one host must be the control host, the one Pando runs on; %d are", controls)
+		return fmt.Errorf("exactly one host must be the control host: the install's own machine, where Pando first ran; %d are", controls)
 	}
 	if err := docker.CheckNetworkPool(cfg.NetworkPool); err != nil {
 		return err
@@ -187,10 +224,10 @@ func endpointURL(endpoint string) (*url.URL, error) {
 		return nil, fmt.Errorf("%q is not a Docker endpoint", endpoint)
 	}
 	switch u.Scheme {
-	case "unix", "tcp", "ssh", "npipe":
+	case "unix", "tcp", "ssh", "npipe", schemeAgent:
 		return u, nil
 	}
-	return nil, fmt.Errorf("%q is not a Docker endpoint: use unix://, tcp:// or ssh://", endpoint)
+	return nil, fmt.Errorf("%q is not a Docker endpoint: use unix://, tcp://, ssh:// or agent://", endpoint)
 }
 
 func agentPort(cfg Config) int {
@@ -212,7 +249,10 @@ func agentAddress(h HostConfig, port int) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if (u.Scheme == "tcp" || u.Scheme == "ssh") && u.Hostname() != "" {
+	if u.Scheme == schemeAgent && u.Port() != "" {
+		return u.Host, nil
+	}
+	if (u.Scheme == "tcp" || u.Scheme == "ssh" || u.Scheme == schemeAgent) && u.Hostname() != "" {
 		return net.JoinHostPort(u.Hostname(), strconv.Itoa(port)), nil
 	}
 	return "", fmt.Errorf("host %s has no agent_address. Set it to the address Pando's container reaches this host at, and the agent port, such as 10.0.0.5:%d", h.Name, port)
@@ -236,8 +276,50 @@ func networkPool(cfg Config) (netip.Prefix, bool) {
 	return pool.Masked(), true
 }
 
-// newClient makes the Docker client for one host.
-func newClient(h HostConfig, creds Credentials) (*client.Client, error) {
+// schemeAgent is a joined host's endpoint: its runtime API through its
+// agent, over the agent's mutual TLS (R-416).
+const schemeAgent = "agent"
+
+// isAgentEndpoint reports whether h is reached through its agent.
+func isAgentEndpoint(h HostConfig) bool {
+	u, err := endpointURL(h.Endpoint)
+	return err == nil && u.Scheme == schemeAgent
+}
+
+// isLocalEndpoint reports whether h's endpoint names a Docker on the machine
+// reading it — the environment, a unix socket or a named pipe — rather than
+// an address: it means another Docker on every other machine.
+func isLocalEndpoint(h HostConfig) bool {
+	u, err := endpointURL(h.Endpoint)
+	if err != nil {
+		return false
+	}
+	switch u.Scheme {
+	case "env", "unix", "npipe":
+		return true
+	}
+	return false
+}
+
+// seenFrom is h as the process on machine reaches it (R-416): its own entry
+// directly, at Machine.Endpoint when the list reaches it through its agent;
+// another machine's local endpoint — the install's own machine, written as
+// its own socket — through that machine's agent at addr. Every other entry
+// is as written.
+func seenFrom(h HostConfig, self bool, machine Machine, addr string) HostConfig {
+	switch {
+	case self && isAgentEndpoint(h):
+		h.Endpoint = machine.Endpoint
+	case !self && isLocalEndpoint(h):
+		h.Endpoint = schemeAgent + "://" + addr
+	}
+	return h
+}
+
+// newClient makes the Docker client for one host. agentAddr and agentTLS are
+// how its agent is reached, which an agent:// host's runtime is reached
+// through.
+func newClient(h HostConfig, creds Credentials, agentAddr string, agentTLS *tls.Config) (*client.Client, error) {
 	u, err := endpointURL(h.Endpoint)
 	if err != nil {
 		return nil, err
@@ -260,6 +342,13 @@ func newClient(h HostConfig, creds Credentials) (*client.Client, error) {
 			return nil, err
 		}
 		return client.New(client.WithHost("unix:///var/run/docker.sock"), client.WithDialContext(d.dial))
+	case schemeAgent:
+		// One stream through the agent per connection the client keeps; the
+		// socket path is a placeholder the dialer never reads.
+		dial := func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return hostagent.DialRuntime(ctx, agentAddr, agentTLS)
+		}
+		return client.New(client.WithHost("unix:///var/run/docker.sock"), client.WithDialContext(dial))
 	}
 	return nil, fmt.Errorf("%q is not a Docker endpoint", h.Endpoint)
 }

@@ -24,14 +24,35 @@ import (
 // command. Without this, the agent workflow R-262 describes starts by asking a
 // person to make a repository.
 //
-// An upload is stored as a gzipped tar under a directory Pando owns, keyed by
-// the app. It is the source of record for that app's next deploy, so it is kept
-// rather than streamed: R-020 says nothing is read from the repository at
-// deploy time, and the same logic applies here — the deploy reads what was
-// uploaded, not whatever is on somebody's laptop now.
+// An upload is a gzipped tar, kept in Pando's database (Uploads, R-417) so
+// every control host reads what was uploaded to any of them. It is the source
+// of record for that app's next deploy, so it is kept rather than streamed:
+// R-020 says nothing is read from the repository at deploy time, and the same
+// logic applies here — the deploy reads what was uploaded, not whatever is on
+// somebody's laptop now.
+//
+// Before R-417 an upload was a file under UploadDir. With Uploads set, such a
+// file is still read, and moved into the database the first time it is
+// (migrateUpload) or at start (MigrateUploads). Without Uploads, files are the
+// store, which is what a test or an embedding with no database uses.
 
-// DefaultUploadDir is where a server keeps uploaded sources.
+// DefaultUploadDir is where uploaded sources were kept before they moved into
+// the database, and where a file not yet moved is still found.
 const DefaultUploadDir = "/var/lib/pando/uploads"
+
+// UploadStore keeps uploaded archives (state.Uploads).
+type UploadStore interface {
+	PutUpload(ctx context.Context, appID string, r io.Reader) error
+	// AddUpload stores r only if the app has none, and reports whether it
+	// did. An app that no longer exists is errs.NotFound.
+	AddUpload(ctx context.Context, appID string, r io.Reader) (bool, error)
+	// OpenUpload answers ok false when the app has no upload stored.
+	OpenUpload(ctx context.Context, appID string) (io.ReadCloser, bool, error)
+	DeleteUpload(ctx context.Context, appID string) error
+}
+
+// uploadSuffix ends an uploaded source's file name under UploadDir.
+const uploadSuffix = ".tar.gz"
 
 // isAppID reports whether an app ID can name a file in the upload
 // directory: not empty, not hidden, and no path separator.
@@ -39,7 +60,11 @@ func isAppID(appID string) bool {
 	return appID != "" && !strings.ContainsAny(appID, `/\`) && !strings.HasPrefix(appID, ".")
 }
 
-// uploadPath is where an app's uploaded archive is kept.
+func notAnApp(appID string) error {
+	return errs.Newf(errs.ValidInvalid, "%q does not name an app.", appID)
+}
+
+// uploadPath is where an app's uploaded archive is kept as a file.
 //
 // An empty UploadDir is refused rather than joined, which would put every
 // upload in whatever the working directory happens to be.
@@ -48,19 +73,96 @@ func (s Sources) uploadPath(appID string) (string, error) {
 		return "", errs.New(errs.Internal, "Pando has no directory configured for uploaded source.")
 	}
 	if !isAppID(appID) {
-		return "", errs.Newf(errs.ValidInvalid, "%q does not name an app.", appID)
+		return "", notAnApp(appID)
 	}
-	return filepath.Join(s.UploadDir, appID+".tar.gz"), nil
+	return filepath.Join(s.UploadDir, appID+uploadSuffix), nil
 }
 
-// StoreUpload writes an uploaded archive for an app and returns its path.
-func (s Sources) StoreUpload(appID string, r io.Reader) (string, error) {
+// StoreUpload keeps an uploaded archive for an app.
+func (s Sources) StoreUpload(ctx context.Context, appID string, r io.Reader) error {
+	if s.Uploads == nil {
+		return s.storeUploadFile(appID, r)
+	}
+	if !isAppID(appID) {
+		return notAnApp(appID)
+	}
+	spooled, err := s.spool(r)
+	if err != nil {
+		return err
+	}
+	defer spooled.discard()
+	if err := s.Uploads.PutUpload(ctx, appID, spooled.f); err != nil {
+		return err
+	}
+	// A file from before the move is now older than what the database holds.
+	return s.removeUploadFiles(appID)
+}
+
+// bodyReader keeps the error reading r failed with, so a failure of the body
+// is told from a failure of the disk.
+type bodyReader struct {
+	r   io.Reader
+	err error
+}
+
+func (b *bodyReader) Read(p []byte) (int, error) {
+	n, err := b.r.Read(p)
+	if err != nil && !errors.Is(err, io.EOF) {
+		b.err = err
+	}
+	return n, err
+}
+
+// spoolFile is a request body copied to disk, removed by discard.
+type spoolFile struct{ f *os.File }
+
+func (s spoolFile) discard() {
+	_ = s.f.Close()
+	_ = os.Remove(s.f.Name())
+}
+
+// spool copies an upload to a file under WorkDir and returns it rewound.
+//
+// The store writes an upload in one transaction, which holds a database
+// connection until its reader ends. Read from the request body, that was as
+// long as the client took to send it, and a few dozen slow uploads held every
+// connection Pando has (R-417). Read from this file it is as long as the disk
+// takes. The caller bounds r (maxUploadBytes in httpapi), and a read error is
+// returned as it came, so the caller can tell a body over its limit.
+func (s Sources) spool(r io.Reader) (spoolFile, error) {
+	if s.WorkDir != "" {
+		if err := os.MkdirAll(s.WorkDir, 0o700); err != nil {
+			return spoolFile{}, errs.Wrap(errs.Internal, couldNotStore, err)
+		}
+	}
+	f, err := os.CreateTemp(s.WorkDir, ".upload-*")
+	if err != nil {
+		return spoolFile{}, errs.Wrap(errs.Internal, couldNotStore, err)
+	}
+	spooled := spoolFile{f: f}
+	body := &bodyReader{r: r}
+	if _, err := io.Copy(f, body); err != nil {
+		spooled.discard()
+		if body.err != nil {
+			return spoolFile{}, body.err
+		}
+		return spoolFile{}, errs.Wrap(errs.Internal, couldNotStore, err)
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		spooled.discard()
+		return spoolFile{}, errs.Wrap(errs.Internal, couldNotStore, err)
+	}
+	return spooled, nil
+}
+
+// storeUploadFile writes an uploaded archive under UploadDir.
+func (s Sources) storeUploadFile(appID string, r io.Reader) error {
 	final, err := s.uploadPath(appID)
 	if err != nil {
-		return "", err
+		return err
 	}
 	if err := os.MkdirAll(s.UploadDir, 0o700); err != nil {
-		return "", errs.Wrap(errs.Internal, "Pando could not store the upload.", err)
+		return errs.Wrap(errs.Internal, couldNotStore, err)
 	}
 
 	// Written to a temporary name and renamed, so a deploy that runs while an
@@ -70,28 +172,29 @@ func (s Sources) StoreUpload(appID string, r io.Reader) (string, error) {
 
 	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
-		return "", errs.Wrap(errs.Internal, "Pando could not store the upload.", err)
+		return errs.Wrap(errs.Internal, couldNotStore, err)
 	}
-	if _, err := io.Copy(f, r); err != nil {
-		_ = f.Close()
+	_, err = io.Copy(f, r)
+	if err == nil {
+		err = f.Sync()
+	}
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		err = os.Rename(tmp, final)
+	}
+	if err != nil {
 		_ = os.Remove(tmp)
-		return "", errs.Wrap(errs.Internal, "Pando could not store the upload.", err)
+		return errs.Wrap(errs.Internal, couldNotStore, err)
 	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmp)
-		return "", errs.Wrap(errs.Internal, "Pando could not store the upload.", err)
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(tmp)
-		return "", errs.Wrap(errs.Internal, "Pando could not store the upload.", err)
-	}
-	if err := os.Rename(tmp, final); err != nil {
-		_ = os.Remove(tmp)
-		return "", errs.Wrap(errs.Internal, "Pando could not store the upload.", err)
-	}
-	return final, nil
+	return nil
 }
+
+const (
+	couldNotStore = "Pando could not store the upload."
+	couldNotRead  = "Pando could not read the uploaded source."
+)
 
 // DiscardUpload removes a deleted app's stored upload.
 //
@@ -99,20 +202,137 @@ func (s Sources) StoreUpload(appID string, r io.Reader) (string, error) {
 // a restore goes to an app created again, with an upload of its own (R-206).
 // It had been kept forever (issue #55). A missing archive is not an error — an
 // app built from git never had one.
-func (s Sources) DiscardUpload(appID string) error {
+func (s Sources) DiscardUpload(ctx context.Context, appID string) error {
 	if !isAppID(appID) {
-		return errs.Newf(errs.ValidInvalid, "%q does not name an app.", appID)
+		return notAnApp(appID)
 	}
-	final, err := s.uploadPath(appID)
-	if err != nil {
+	if s.Uploads == nil {
+		if _, err := s.uploadPath(appID); err != nil {
+			return err
+		}
+	} else if err := s.Uploads.DeleteUpload(ctx, appID); err != nil {
 		return err
 	}
+	return s.removeUploadFiles(appID)
+}
+
+// removeUploadFiles removes an app's archive file and any half-written one.
+// No UploadDir is nothing to remove.
+func (s Sources) removeUploadFiles(appID string) error {
+	if s.UploadDir == "" {
+		return nil
+	}
+	final := filepath.Join(s.UploadDir, appID+uploadSuffix)
 	for _, p := range []string{final, final + ".partial"} {
 		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
 			return errs.Wrap(errs.Internal, "Pando could not remove the app's uploaded source.", err)
 		}
 	}
 	return nil
+}
+
+// migrateUpload moves an app's archive file into the database (R-417), and
+// reports whether it stored one.
+//
+// Only into an app with no upload there (AddUpload): StoreUpload removes the
+// file when it writes the row, so a row beside a file is the newer, whether
+// it was there before or written by an upload while this ran, and the file
+// is removed without being stored. A file whose app was deleted is removed
+// too, and not stored (AddUpload refuses a deleted app): it has no deploy to
+// serve (R-206), stored it would be kept and carried in every backup with
+// nothing to remove it (R-224), and kept as a file it would be tried again at
+// every start.
+func (s Sources) migrateUpload(ctx context.Context, appID string) (bool, error) {
+	if s.UploadDir == "" {
+		return false, nil
+	}
+	f, err := os.Open(filepath.Join(s.UploadDir, appID+uploadSuffix))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, errs.Wrap(errs.Internal, couldNotRead, err)
+	}
+	stored, err := s.Uploads.AddUpload(ctx, appID, f)
+	_ = f.Close()
+	if err != nil && errs.CodeOf(err) != errs.NotFound {
+		return false, err
+	}
+	return stored, s.removeUploadFiles(appID)
+}
+
+// MigrateUploads moves every archive file under UploadDir that the database
+// has no upload for into it (R-417), and returns how many it moved. Every file
+// is tried; the first error is returned after the rest.
+func (s Sources) MigrateUploads(ctx context.Context) (int, error) {
+	if s.Uploads == nil || s.UploadDir == "" {
+		return 0, nil
+	}
+	entries, err := os.ReadDir(s.UploadDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, errs.Wrap(errs.Internal, "Pando could not list the uploaded source to move it into the database.", err)
+	}
+	moved := 0
+	var first error
+	for _, e := range entries {
+		appID, ok := strings.CutSuffix(e.Name(), uploadSuffix)
+		if !ok || !e.Type().IsRegular() || !isAppID(appID) {
+			continue
+		}
+		did, err := s.migrateUpload(ctx, appID)
+		if err != nil && first == nil {
+			first = err
+		}
+		if did {
+			moved++
+		}
+	}
+	return moved, first
+}
+
+// openUpload returns the app's stored archive: from the database, or from its
+// file, moved into the database first, if it has not been yet.
+func (s Sources) openUpload(ctx context.Context, appID string) (io.ReadCloser, error) {
+	if s.Uploads == nil {
+		return s.openUploadFile(appID)
+	}
+	rc, ok, err := s.Uploads.OpenUpload(ctx, appID)
+	if err != nil || ok {
+		return rc, err
+	}
+	// Opened again whether or not the file was the one stored: an upload
+	// stored while this ran is kept over the file, and is the one to read.
+	if _, err := s.migrateUpload(ctx, appID); err != nil {
+		return nil, err
+	}
+	if rc, ok, err = s.Uploads.OpenUpload(ctx, appID); err != nil || ok {
+		return rc, err
+	}
+	return nil, uploadGone()
+}
+
+func (s Sources) openUploadFile(appID string) (io.ReadCloser, error) {
+	archive, err := s.uploadPath(appID)
+	if err != nil {
+		return nil, err
+	}
+	f, err := os.Open(archive)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, uploadGone()
+	}
+	if err != nil {
+		return nil, errs.Wrap(errs.Internal, couldNotRead, err)
+	}
+	return f, nil
+}
+
+func uploadGone() error {
+	return errs.New(errs.ValidInvalid,
+		"This app's uploaded source is no longer on the server.").
+		WithRemedy("Run `pando deploy .` from the app's directory again.")
 }
 
 // fetchUpload expands a stored upload into a checkout.
@@ -130,18 +350,9 @@ func (s Sources) fetchUpload(ctx context.Context, src spec.Source) (*Checkout, e
 	if err := spec.CheckUploadOwner(src, appID); err != nil {
 		return nil, err
 	}
-	archive, err := s.uploadPath(appID)
+	f, err := s.openUpload(ctx, appID)
 	if err != nil {
 		return nil, err
-	}
-	f, err := os.Open(archive)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, errs.New(errs.ValidInvalid,
-			"This app's uploaded source is no longer on the server.").
-			WithRemedy("Run `pando deploy .` from the app's directory again.")
-	}
-	if err != nil {
-		return nil, errs.Wrap(errs.Internal, "Pando could not read the uploaded source.", err)
 	}
 	defer func() { _ = f.Close() }()
 
@@ -151,18 +362,18 @@ func (s Sources) fetchUpload(ctx context.Context, src spec.Source) (*Checkout, e
 	}
 
 	// Hashed while it is read rather than in a second pass: the digest is of
-	// the bytes that were unpacked, which a second read of a file the next
+	// the bytes that were unpacked, which a second read of an archive the next
 	// upload may replace could not promise.
 	sum := sha256.New()
 	if err := extract(io.TeeReader(f, sum), dir); err != nil {
 		_ = os.RemoveAll(dir)
 		return nil, err
 	}
-	// The rest of the file, if the archive ended before it did: a digest of
+	// The rest of the archive, if the tar ended before it did: a digest of
 	// part of an archive names nothing.
 	if _, err := io.Copy(sum, f); err != nil {
 		_ = os.RemoveAll(dir)
-		return nil, errs.Wrap(errs.Internal, "Pando could not read the uploaded source.", err)
+		return nil, readFailure(err)
 	}
 	// No commit: an upload has no revision. The deploy records the archive it
 	// came from instead, which is the honest answer to "what was deployed",
@@ -175,6 +386,15 @@ func (s Sources) fetchUpload(ctx context.Context, src spec.Source) (*Checkout, e
 		Dir: dir, Commit: "", Digest: "sha256:" + hex.EncodeToString(sum.Sum(nil)),
 		cleanup: func() { _ = os.RemoveAll(dir) },
 	}, nil
+}
+
+// readFailure keeps an error the store already said, such as a digest that
+// does not match, and otherwise says the archive could not be read.
+func readFailure(err error) error {
+	if errs.As(err) != nil {
+		return err
+	}
+	return errs.Wrap(errs.Internal, couldNotRead, err)
 }
 
 // extract unpacks a gzipped tar, refusing anything that escapes the directory.

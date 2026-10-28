@@ -138,6 +138,12 @@ type Document struct {
 	// (R-409).
 	StopOrphanedApps *bool `json:"stop_orphaned_apps,omitempty"`
 
+	// Standby keeps a stopped copy of each app on another host, started when
+	// its host is lost (R-419). On unless set false: nil is on [P]. An app's
+	// spec may turn it on or off for itself (availability.standby). Only a
+	// runtime with somewhere else to keep one has any (SupportsStandby).
+	Standby *bool `json:"standby,omitempty"`
+
 	// MaxAppsPerUser is how many apps a person may own unless their account or
 	// a group of theirs says otherwise (R-244). Zero is unlimited.
 	MaxAppsPerUser int `json:"max_apps_per_user,omitempty"`
@@ -157,6 +163,15 @@ type Document struct {
 	// Pando with them.
 	AllowCPUOversubscription    bool `json:"allow_cpu_oversubscription,omitempty"`
 	AllowMemoryOversubscription bool `json:"allow_memory_oversubscription,omitempty"`
+
+	// AllowFailoverOversubscription lets an app's standby be placed past the
+	// CPU and memory the other hosts keep free for its host's loss (R-422).
+	// Off by default: a standby goes only where, if its app's host were lost,
+	// it would start, and an app with nowhere like that runs without one.
+	// On, a host that takes over starts what fits, by each app's
+	// availability.priority. Disk is still never oversubscribed (R-242): a
+	// standby's copies are on its host's disk all the time.
+	AllowFailoverOversubscription bool `json:"allow_failover_oversubscription,omitempty"`
 
 	// Audit retention (R-347, R-348). The live audit log keeps
 	// AuditRetentionMonths whole months; an older month is archived, the
@@ -335,6 +350,12 @@ func (d Document) GraceHours() int {
 	return DefaultInsecureGraceHours
 }
 
+// KeepsStandbys reports whether apps keep a standby unless their spec says
+// otherwise (R-419). On unless turned off.
+func (d Document) KeepsStandbys() bool {
+	return d.Standby == nil || *d.Standby
+}
+
 // StopsOrphanedApps reports whether an app with no active owner is stopped
 // (R-408). On unless turned off.
 func (d Document) StopsOrphanedApps() bool {
@@ -392,10 +413,11 @@ func (d Document) PublicSharingMode() PublicSharing {
 
 // Default is the permissive starting posture (R-270).
 func Default() Document {
-	allowAnonymous, stopOrphaned := true, true
+	allowAnonymous, stopOrphaned, standby := true, true, true
 	return Document{
 		AllowAnonymousGrants: &allowAnonymous,
 		StopOrphanedApps:     &stopOrphaned,
+		Standby:              &standby,
 		MinBuildIsolation:    spec.IsolationContainer,
 		MinRuntimeIsolation:  spec.IsolationContainer,
 

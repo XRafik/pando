@@ -194,6 +194,7 @@ export interface AppSpec {
   resources: Resources;
   egress: Egress;
   retention: Retention;
+  availability?: Availability;
   warnings?: (Warning[] | null);
 }
 
@@ -261,9 +262,11 @@ export interface PolicyDocument {
   idle_stop_days?: number;
   idle_delete_days?: number;
   stop_orphaned_apps?: boolean;
+  standby?: boolean;
   max_apps_per_user?: number;
   allow_cpu_oversubscription?: boolean;
   allow_memory_oversubscription?: boolean;
+  allow_failover_oversubscription?: boolean;
   audit_retention_months?: number;
   audit_archive?: string;
   audit_archive_destination?: string;
@@ -437,6 +440,30 @@ export interface Notice {
   message: string;
   fingerprint: string;
   ignored: boolean;
+}
+
+export interface Host {
+  id: string;
+  name: string;
+  roles: (string[] | null);
+  address: string;
+  cert_sha256: string;
+  platform?: string;
+  version?: string;
+  joined_with?: string;
+  joined_at: string;
+  last_seen_at?: string;
+}
+
+export interface JoinToken {
+  id: string;
+  roles: (string[] | null);
+  max_uses: number;
+  uses: number;
+  created_by: string;
+  created_at: string;
+  expires_at: string;
+  revoked_at?: string;
 }
 
 export interface Source {
@@ -629,6 +656,11 @@ export interface Retention {
   log_bytes: number;
   backup_daily_count: number;
   spec_revisions: number;
+}
+
+export interface Availability {
+  standby?: string;
+  priority?: number;
 }
 
 export interface Warning {

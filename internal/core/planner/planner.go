@@ -205,6 +205,22 @@ func (p *Planner) Egress(ctx context.Context, s *spec.AppSpec) (policy.Effective
 	return doc.EgressFor(s.Egress), nil
 }
 
+// FailoverPlan is how the app's standby is placed and started (R-422): its
+// failover priority, and whether host policy lets standbys be placed past
+// the room kept free for a host's loss. Read when a deploy applies, as the
+// egress rules are.
+func (p *Planner) FailoverPlan(ctx context.Context, s *spec.AppSpec) (api.FailoverPlan, error) {
+	plan := api.FailoverPlan{Priority: s.Availability.Priority}
+	if p.policy != nil {
+		doc, err := p.policy.Document(ctx)
+		if err != nil {
+			return api.FailoverPlan{}, err
+		}
+		plan.AllowOversubscription = doc.AllowFailoverOversubscription
+	}
+	return plan, nil
+}
+
 // TrialEgress is the rules a detection trial of an app is held to (R-097):
 // the rules its spec would run with, resolved against host policy as a
 // deploy's are. A spec that loosens the installation's rules is tried under
@@ -664,7 +680,9 @@ func (p *Planner) checkCapacity(ctx context.Context, s *spec.AppSpec, runtime ap
 	}
 	// Disk is never oversubscribed, whatever policy says: it is not a share
 	// the kernel hands out, and a full disk stops every app and Pando too.
-	if err := over("disk space", requested.DiskBytes, allocated.DiskBytes, capacity.TotalDiskBytes, formatBytes); err != nil {
+	// What the runtime holds beside the apps, standbys' copies, is taken
+	// (R-422).
+	if err := over("disk space", requested.DiskBytes, allocated.DiskBytes+capacity.HeldDiskBytes, capacity.TotalDiskBytes, formatBytes); err != nil {
 		return err
 	}
 	return p.checkLargestFit(ctx, s, runtime, allowCPU, allowMemory)
@@ -741,7 +759,8 @@ func (p *Planner) bundlePlan(s *spec.AppSpec, rules api.EgressRules) api.BundleP
 			Private: true, // R-026, always.
 			Egress:  rules,
 		},
-		Labels: map[string]string{"pando.app": s.AppID},
+		Labels:   map[string]string{"pando.app": s.AppID},
+		Failover: api.FailoverPlan{Priority: s.Availability.Priority},
 	}
 
 	for _, v := range s.Volumes {

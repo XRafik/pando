@@ -1003,6 +1003,87 @@ Check a backup is complete, without restoring it
 pando backup verify <backup-id>
 ```
 
+### `cluster`
+
+The hosts this installation runs on, and joining new ones
+
+```
+pando cluster
+```
+
+#### `cluster hosts`
+
+The cluster's hosts
+
+```
+pando cluster hosts
+```
+
+##### `cluster hosts list`
+
+List the cluster's hosts
+
+```
+pando cluster hosts list
+```
+
+##### `cluster hosts lost`
+
+Say a host is gone, and start its apps' standbys
+
+```
+pando cluster hosts lost <host-id>
+```
+
+Marks the host lost and starts the standby of each app homed on it. With three or more hosts Pando does this itself when most of them cannot reach the host; with fewer it never does. Refused while the host answers. A failed app is not failed over.
+
+##### `cluster hosts remove`
+
+Remove a host from the cluster
+
+```
+pando cluster hosts remove <host-id>
+```
+
+#### `cluster tokens`
+
+Tokens new hosts join with
+
+```
+pando cluster tokens
+```
+
+##### `cluster tokens create`
+
+Create a join token. It is shown once
+
+```
+pando cluster tokens create
+```
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--address` |  | The installation's address the joining host reaches (default this server's advertise address) |
+| `--expires-hours` | `0` | How many hours it lasts (default 24) |
+| `--role` | `[]` | control, app, or both (repeat or comma-separate). Default: both while the cluster has fewer than three hosts, then app |
+| `--uses` | `0` | How many hosts may join with it (default 1) |
+
+##### `cluster tokens list`
+
+List join tokens
+
+```
+pando cluster tokens list
+```
+
+##### `cluster tokens revoke`
+
+Revoke a join token
+
+```
+pando cluster tokens revoke <token-id>
+```
+
 ### `config`
 
 Show the server's startup configuration and where each setting came from
@@ -1345,6 +1426,27 @@ Unlink a provider's identity from an account
 ```
 pando identity-provider unlink <user-id> <provider-id> <external-id>
 ```
+
+### `join`
+
+Join a new Pando to a cluster with a join token
+
+```
+pando join [token]
+```
+
+Joins the Pando at --server, which must be new, with no account or app, to the
+cluster that minted the join token (pando cluster tokens create). The Pando checks the
+cluster's certificate authority against the token, joins, and restarts into the
+cluster. It also needs the setup_token that Pando printed to its log at startup.
+
+Each token is read from PANDO_JOIN_TOKEN and PANDO_SETUP_TOKEN, or asked for
+without echoing, or read from standard input one per line, join token first.
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--name` |  | this host's name in the cluster (default: the machine's hostname) |
+| `--setup-token` |  | the setup token from the joining Pando's log (setup_token); prefer PANDO_SETUP_TOKEN or the prompt |
 
 ### `login`
 

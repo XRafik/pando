@@ -29,6 +29,7 @@ import (
 	sinkhttps "github.com/trypando/pando/internal/adapter/auditsink/https"
 	sinksyslog "github.com/trypando/pando/internal/adapter/auditsink/syslog"
 	backuplocal "github.com/trypando/pando/internal/adapter/backup/local"
+	backups3 "github.com/trypando/pando/internal/adapter/backup/s3"
 	buildkitadapter "github.com/trypando/pando/internal/adapter/builder/buildkit"
 	"github.com/trypando/pando/internal/adapter/identity/local"
 	oidcidentity "github.com/trypando/pando/internal/adapter/identity/oidc"
@@ -77,6 +78,7 @@ import (
 	"github.com/trypando/pando/internal/core/detection"
 	"github.com/trypando/pando/internal/core/edge"
 	"github.com/trypando/pando/internal/core/edgecert"
+	"github.com/trypando/pando/internal/core/hosts"
 	"github.com/trypando/pando/internal/core/idp"
 	"github.com/trypando/pando/internal/core/imageregistry"
 	"github.com/trypando/pando/internal/core/logstream"
@@ -93,6 +95,7 @@ import (
 	"github.com/trypando/pando/internal/core/source"
 	"github.com/trypando/pando/internal/core/sourceconn"
 	"github.com/trypando/pando/internal/core/spec"
+	"github.com/trypando/pando/internal/core/standby"
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/core/subscription"
 	"github.com/trypando/pando/internal/core/tokenkey"
@@ -316,6 +319,38 @@ func serve(ctx context.Context, configPath string) error {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// A host that joined a cluster with the app role alone has no database
+	// and serves no API: it runs its agent (R-414, R-416).
+	joined, hasJoined, err := joinFiles(cfg).Read()
+	if err != nil {
+		return err
+	}
+	if hasJoined && joined.AppOnly() {
+		return runAppHost(ctx, cfg.Server.ClusterDir, joined, livenessTiming(cfg.Cluster), logger)
+	}
+
+	// R-421: this control host answers the cluster's pings, and watches the
+	// other hosts, from what it keeps on disk, before it waits for Postgres:
+	// a control host whose database is slow to answer is not cut off, and
+	// must not look it. The cluster listener serves joins once the API is
+	// built, and pings from now on.
+	clusterAuthority, err := hosts.LoadOrCreateAuthority(cfg.Server.ClusterAuthorityPath)
+	if err != nil {
+		return err
+	}
+	timing := livenessTiming(cfg.Cluster) // R-421, the same on every host
+	controlPings := startControlLiveness(ctx, cfg.Server.ClusterDir, clusterPort(cfg), clusterAuthority, joined, hasJoined, timing, logger)
+	// R-416: a host joined with both roles runs its apps through its agent,
+	// started, like its pings, before the database is reached.
+	if hasJoined {
+		startJoinedAgent(ctx, cfg.Server.ClusterDir, joined, controlPings, timing, logger)
+	}
+	clusterRoutes := &startingHandler{}
+	clusterListener, clusterListenErr := startClusterListener(cfg, clusterAuthority, clusterRoutes, controlPings, logger)
+	if clusterListener != nil {
+		defer func() { _ = clusterListener.Close() }()
+	}
+
 	// Adapters saved after this are not running until a restart (R-253); the
 	// adapters list compares against it. restartCh is how POST /restart asks.
 	startedAt := time.Now().UTC()
@@ -363,6 +398,49 @@ func serve(ctx context.Context, configPath string) error {
 	apps := state.NewApps(db)
 	volumes := state.NewVolumes(db)
 	adapters := state.NewAdapters(db)
+
+	// The cluster (R-414, R-415). A control host joining is handed the
+	// database address and the keys, read from disk at each join.
+	clusterStore := state.NewCluster(db, tokenKey)
+	clusterHosts := &hosts.Service{
+		Store: clusterStore, Authority: clusterAuthority,
+		Address: clusterAddress(cfg), Version: buildVersion,
+		Keys: hosts.KeySource{
+			DatabaseURL:    secret.New(cfg.Database.URL),
+			TokenKeyPath:   cfg.Server.TokenKeyPath,
+			SecretsKeyPath: func(ctx context.Context) string { return secretsKeyPath(ctx, adapters, logger) },
+		},
+		// R-414: the host serving this process is never removed by it.
+		IsSelf: selfHost(joined, hasJoined),
+	}
+	joiner := newJoiner(cfg, clusterStore, func() {
+		select {
+		case restartCh <- struct{}{}:
+		default: // one is already on its way
+		}
+	})
+	// POST /setup/join needs the setup token POST /setup does (R-046).
+	joiner.SetupToken = users.CheckSetupToken
+	if joined, err := joinFromEnvironment(ctx, cfg, joiner, logger); err != nil || joined {
+		restartRequested.Store(joined)
+		return err
+	}
+	// R-414: the machine the install started on is its first host. A host
+	// that joined was recorded by its join.
+	if !hasJoined {
+		recordInstallHost(ctx, cfg, clusterStore, logger)
+	}
+	// R-414: a single host runs without its cluster listener when the port
+	// is taken; a cluster cannot.
+	if err := requireClusterListener(ctx, clusterListenErr, hasJoined, clusterHosts, logger); err != nil {
+		return err
+	}
+	// R-421: this control host is watched like every other host, answering
+	// pings on its cluster listener, and watches them, on every replica; it
+	// reads its peers from the database from now on.
+	controlPings.useStore(clusterStore)
+	// R-421: taking a host for lost, and the leader job that decides it.
+	hostLoss, livenessWatch := clusterLiveness(clusterStore, clusterAuthority, apps, auditor, controlPings.unreachedFor, timing, logger)
 	allocations := state.NewAllocations(db)
 	authzStore := state.NewAuthzStore(db)
 	grants := state.NewGrants(db)
@@ -400,11 +478,14 @@ func serve(ctx context.Context, configPath string) error {
 
 	notifications := state.NewNotifications(db)
 
-	registry, adapterCredentials, err := registerAdapters(ctx, db, adapters, notifications, cfg.Adapters, logger)
+	registry, adapterCredentials, err := registerAdaptersOn(ctx, db, adapters, notifications, cfg.Adapters, runtimeMachine(joined, hasJoined), logger)
 	if err != nil {
 		return err
 	}
 	guardOwnAddresses(cfg, registry, apps)
+	// R-153: whether this control host runs apps of its own to fence, which
+	// decides whether it answers pings while its Docker is away.
+	controlPings.useRuntime(defaultRuntimeKind(registry))
 
 	// Secrets go through the configured secrets adapter. Core never encrypts —
 	// it stores what the adapter hands back (R-190, R-191).
@@ -446,6 +527,24 @@ func serve(ctx context.Context, configPath string) error {
 	// records (R-204).
 	backups := state.NewBackups(db)
 	bundleSource := state.NewBundleSource(db)
+	standbys := state.NewStandbys(db) // R-419, R-420
+	// Warm standbys (R-419, R-420): made, refreshed and kept current on a
+	// runtime with a second host, and removed when turned off. Inert on a
+	// runtime with one place. Its Plans are the reconciler, set below. It
+	// answers the app's no-room notice (R-422), and the liveness pass starts
+	// a lost host's standbys and removes a returned host's copies through
+	// it (R-421, R-419).
+	standbyService := &standby.Service{
+		Store: standbys, Runtimes: registry, Services: registry,
+		Policy: policyStore, Apps: standbys, Auditor: auditor,
+		Clock: clock.System{}, Logger: logger,
+		RuntimeRefs: func() []string { return registry.ByCategory(adapterapi.CategoryRuntime) },
+		LocalFenced: controlPings.fenced, // R-421
+		Every:       cfg.Cluster.StandbyEvery,
+		ShipEvery:   cfg.Cluster.ShipEvery, // R-420
+	}
+	failover := &standby.Failover{Standbys: standbyService, Homes: standbys, Hosts: clusterStore}
+	hostLoss.Homes, hostLoss.Failover, hostLoss.Returns = failover, failover, failover
 	backupService := &backup.Service{
 		Registry:    registry,
 		DatabaseURL: secret.New(cfg.Database.URL),
@@ -460,6 +559,10 @@ func serve(ctx context.Context, configPath string) error {
 		// The API token key, for the same reason: without it a restored
 		// install holds every token's digest and cannot check any of them.
 		TokenKeyPath: cfg.Server.TokenKeyPath,
+
+		// And the cluster authority, which every host's certificate chains to
+		// (R-415).
+		ClusterAuthorityPath: cfg.Server.ClusterAuthorityPath,
 
 		// Uploaded source is the only record of what an uploaded app is built
 		// from, and the registry's images are not in the bundle (O-37).
@@ -520,6 +623,13 @@ func serve(ctx context.Context, configPath string) error {
 			zap.String("registry", current.Host()), zap.Bool("always", current.Always()))
 	}
 
+	// A second host joins only once nothing the install keeps is on this
+	// host alone (R-417): asked before a join spends its token.
+	readiness := hosts.NewReadiness(registry, policyStore, buildRegistry)
+	// A control host joins only when its edge can share certificates (O-68).
+	readiness.Routing = registry
+	clusterHosts.Readiness = readiness
+
 	// Audit sinks (R-382, design 12 §5): where the audit log is pushed as it
 	// is written. Built from their rows on every delivery pass, like the
 	// image registry, and delivered by the leader alone (the audit-stream job
@@ -568,7 +678,19 @@ func serve(ctx context.Context, configPath string) error {
 
 	// Where an app's source comes from, and where an uploaded one is kept
 	// (R-262). One value for the deploy path, detection, the API and the GC.
-	sources := source.Sources{UploadDir: source.DefaultUploadDir, WorkDir: cfg.Server.WorkDir}
+	// Uploads are kept in the database, so control hosts share no directory
+	// (R-417). Files from before that are moved in, in the background: each
+	// is also moved the first time a deploy reads it.
+	sources := source.Sources{Uploads: state.NewUploads(db), UploadDir: source.DefaultUploadDir, WorkDir: cfg.Server.WorkDir}
+	go func() {
+		moved, err := sources.MigrateUploads(ctx)
+		if err != nil {
+			logger.Warn("some uploaded source could not be moved into the database; it is moved when next deployed", zap.Error(err))
+		}
+		if moved > 0 {
+			logger.Info("moved uploaded source into the database", zap.Int("apps", moved))
+		}
+	}()
 
 	// The install's source connections (R-091, issue #127): what a private
 	// repository is cloned with. Sources read through it for a credential,
@@ -740,6 +862,10 @@ func serve(ctx context.Context, configPath string) error {
 		return err
 	}
 	replicas := state.NewReplicas(db)
+	wireClusterRuntime(clusterHosts, &hosts.Runtime{
+		Hosts: clusterHosts.Store, Adapters: adapters, Credentials: adapterCredentials,
+		Restart: replicas, Audit: auditor, Joined: hasJoined,
+	}, cfg, logger)
 	hostname, _ := os.Hostname()
 	member := &cluster.Member{
 		Store:        replicas,
@@ -916,6 +1042,10 @@ func serve(ctx context.Context, configPath string) error {
 		ProxyUpstream: proxyUpstream,
 		Logger:        logger,
 		Clock:         clock.System{},
+		// With a second host each control host runs its own edge, and an
+		// edge that would order its own certificates leaves that to the
+		// leader here (R-417, O-68).
+		Hosts: clusterHosts.Count,
 	}
 	if secretsAdapter != nil {
 		// The CA is a setting (O-49): Let's Encrypt by default, or an
@@ -955,8 +1085,9 @@ func serve(ctx context.Context, configPath string) error {
 		live, err := replicas.Live(ctx)
 		return len(live), err
 	}
+	upgrades.Hosts = clusterHosts.Count
 
-	apiHandler := (&httpapi.Server{
+	apiServer := &httpapi.Server{
 		ClientAddr: trustedProxies,
 		Updates:    updates,
 		Upgrades:   upgrades,
@@ -987,6 +1118,9 @@ func serve(ctx context.Context, configPath string) error {
 		Users:           users,
 		Sessions:        sessions,
 		Tokens:          tokens,
+		Hosts:           clusterHosts,
+		HostLoss:        hostLoss,
+		Joiner:          joiner,
 		Apps:            apps,
 		Volumes:         volumes,
 		Auditor:         auditor,
@@ -1054,7 +1188,8 @@ func serve(ctx context.Context, configPath string) error {
 		// ignores of it (R-412).
 		Notices: &notice.Service{
 			Revisions: apps, Backups: backups, Security: securityService,
-			Ignores: state.NewNoticeIgnores(db),
+			Ignores: state.NewNoticeIgnores(db), Standbys: standbys,
+			Rooms: standbyService, // R-422: no room for a standby is a notice, never a blocker
 		},
 		Notifier: notifyRouter,
 		Logs:     logStore,
@@ -1135,7 +1270,11 @@ func serve(ctx context.Context, configPath string) error {
 		// retries on a timeout, and a deploy that clones regularly outlasts
 		// a client's patience.
 		Idempotency: state.NewIdempotency(db),
-	}).Routes()
+	}
+	apiHandler := apiServer.Routes()
+
+	// Where hosts join the cluster (R-415), over TLS from its authority.
+	clusterRoutes.set(apiServer.ClusterRoutes())
 
 	srv := &http.Server{
 		Addr:    cfg.Server.Addr,
@@ -1174,6 +1313,14 @@ func serve(ctx context.Context, configPath string) error {
 		Logger:        logger,
 		Clock:         clock.System{},
 		ProxyUpstream: proxyUpstream,
+
+		// R-148 never undoes a fence or restarts a failed-over copy: an app
+		// whose host is lost or fenced, or whose standby is being promoted,
+		// is left alone, and nothing is reconciled while this host is
+		// fenced (R-153, R-421). An install of one host asks nothing.
+		Holds:       standbys,
+		Hosts:       clusterHosts.Count,
+		LocalFenced: controlPings.fenced,
 
 		// Replicas share the apps rather than each visiting every one.
 		MinRevisit: reconciler.DefaultMinRevisit,
@@ -1500,6 +1647,20 @@ func serve(ctx context.Context, configPath string) error {
 		}
 	}()
 
+	// On one replica of each control host, not only the leader: each
+	// control host's edge gets every app's route from the database rather
+	// than from a shared directory (R-417). Skipped while one host holds the
+	// control role, and writes only the routes that changed.
+	routeHost := routeSyncHost(joined, hasJoined)
+	go (&reconciler.RouteSync{
+		Apps: apps, Registry: registryAdapters{registry}, ProxyUpstream: proxyUpstream,
+		ControlHosts: clusterHosts.ControlCount,
+		Exclusive: func(ctx context.Context, pass func(context.Context)) (bool, error) {
+			return clusterStore.OnePerHost(ctx, "route-sync", routeHost, pass)
+		},
+		Clock: clock.System{}, Logger: logger,
+	}).Run(loopCtx)
+
 	// R-211's rolling backups, which had a column, a default and an expiry
 	// query and nothing that ever took one — and then took them in series
 	// inside the hourly GC. A job of its own now, asking for what is due and
@@ -1534,6 +1695,16 @@ func serve(ctx context.Context, configPath string) error {
 	// says otherwise, and administrators told either way (R-407 – R-409).
 	job("orphans", orphanPass(db, policyStore, notifyRouter, auditor, logger).Run)
 
+	// R-421: probe every host, and take one for lost when more than half
+	// have not reached it for 3T. The leader's alone: one replica starts a
+	// standby. Nothing happens until the cluster has three hosts.
+	if livenessWatch != nil {
+		job("liveness", livenessWatch.Run)
+	}
+	// The standby pass (R-419, R-420), on the leader. Built above.
+	standbyService.Plans = loop
+	job("standby", standbyService.Run)
+
 	// Metrics about this process, pushed to the operator's collector (R-399).
 	// Stopped by a defer, so after the server has drained, and its last push
 	// carries those requests; and before the pool closes, which the pool
@@ -1548,7 +1719,9 @@ func serve(ctx context.Context, configPath string) error {
 
 	// Whichever replica holds the leader lock runs the jobs above; with one
 	// replica, that is this one, a moment after it starts.
-	go (&cluster.Leader{Store: replicas, Jobs: jobs, Logger: logger}).Run(loopCtx)
+	leader := &cluster.Leader{Store: replicas, Jobs: jobs, Logger: logger}
+	go edgeFollower(edges, edgeCerts, leader.Leading).RunFollower(loopCtx, time.Minute)
+	go leader.Run(loopCtx)
 
 	// Heartbeat. It ends early when this replica should restart: a restart
 	// was asked for on any replica, or the install took this one for dead.
@@ -1593,6 +1766,23 @@ func serve(ctx context.Context, configPath string) error {
 		return nil
 	}
 	return err
+}
+
+// edgeFollower is the edge pass of a control host that does not lead (R-417,
+// O-68): it runs this host's own edge with the certificates the leader's pass
+// issued, read from the database, and orders none. Without a secrets adapter
+// there are none to read, and an edge that needs them is refused as on the
+// leader.
+func edgeFollower(leaderPass *edge.Service, held *state.EdgeCertificates, leading func() bool) *edge.Service {
+	follower := &edge.Service{
+		Registry: leaderPass.Registry, ProxyUpstream: leaderPass.ProxyUpstream,
+		Logger: leaderPass.Logger, Clock: leaderPass.Clock, Hosts: leaderPass.Hosts,
+		Follower: true, Leading: leading,
+	}
+	if leaderPass.Certificates != nil {
+		follower.Certificates = edgecert.Held{Store: held, Clock: leaderPass.Clock}
+	}
+	return follower
 }
 
 // startMetrics exports metrics as cfg says, and returns what stops it,
@@ -1650,14 +1840,18 @@ func (a detectionAuditor) Write(ctx context.Context, e detection.AuditEvent) err
 	})
 }
 
-// registerAdapters configures the compiled-in adapters from adapter_configs,
+// registerAdaptersOn configures the compiled-in adapters from adapter_configs,
 // seeding the defaults on a fresh install.
 //
 // An adapter that fails to configure is logged and skipped rather than
 // preventing startup: one broken adapter should not take the whole install
 // offline, and the planner already refuses to plan against an adapter it cannot
 // reach (R-254).
-func registerAdapters(ctx context.Context, db *state.DB, store *state.Adapters, notifications *state.Notifications, declared []config.AdapterDecl, logger *zap.Logger) (*adapterapi.Registry, *state.AdapterCredentials, error) {
+//
+// machine is which of the Docker hosts runtime's hosts this process is on
+// (runtimeMachine, R-416).
+func registerAdaptersOn(ctx context.Context, db *state.DB, store *state.Adapters, notifications *state.Notifications, declared []config.AdapterDecl,
+	machine multidocker.Machine, logger *zap.Logger) (*adapterapi.Registry, *state.AdapterCredentials, error) {
 	if err := seedDefaultAdapters(ctx, store); err != nil {
 		return nil, nil, err
 	}
@@ -1751,7 +1945,7 @@ func registerAdapters(ctx context.Context, db *state.DB, store *state.Adapters, 
 			credentials = adapterCredentialsFor(db, registry)
 		}
 
-		adapter := newAdapter(c.Category, c.Kind, notifications)
+		adapter := newAdapterOn(c.Category, c.Kind, notifications, machine)
 		if adapter == nil {
 			logger.Warn("skipping adapter of unknown kind",
 				zap.String("id", c.ID), zap.String("category", c.Category), zap.String("kind", c.Kind))
@@ -1851,6 +2045,11 @@ func adapterNames(ctx context.Context, store *state.Adapters, decls []config.Ada
 // newAdapter is an unconfigured adapter of a category and kind this build can
 // run, or nil.
 func newAdapter(category, kind string, notifications *state.Notifications) adapterapi.Adapter {
+	return newAdapterOn(category, kind, notifications, multidocker.Machine{})
+}
+
+// newAdapterOn is newAdapter for a process on machine (runtimeMachine).
+func newAdapterOn(category, kind string, notifications *state.Notifications, machine multidocker.Machine) adapterapi.Adapter {
 	if category == string(adapterapi.CategorySource) {
 		// Only a source connection the configuration file declares is built
 		// at startup (registerAdapters); a nil interface must stay nil here.
@@ -1883,7 +2082,9 @@ func newAdapter(category, kind string, notifications *state.Notifications) adapt
 		// inside the cluster (deploy/kubernetes).
 		return kubernetesruntime.New()
 	case category == string(adapterapi.CategoryRuntime) && kind == multidocker.Kind:
-		return multidocker.New()
+		// Told which machine this is: every control host reads the same
+		// host list (R-414, R-416).
+		return multidocker.NewOn(machine)
 	case category == string(adapterapi.CategoryRuntime) && kind == incusruntime.Kind:
 		// Not seeded: it needs the Incus network and Pando's address on it
 		// (notes-incus-runtime.md).
@@ -1896,6 +2097,10 @@ func newAdapter(category, kind string, notifications *state.Notifications) adapt
 		return buildkitadapter.New()
 	case category == string(adapterapi.CategoryBackup) && kind == backuplocal.Kind:
 		return backuplocal.New()
+	case category == string(adapterapi.CategoryBackup) && kind == backups3.Kind:
+		// Not seeded: it needs a bucket and an access key. The destination a
+		// second host's join asks for (R-417).
+		return backups3.New()
 	case category == string(adapterapi.CategoryServices) && kind == servicesdocker.Kind:
 		return servicesdocker.New()
 	case category == string(adapterapi.CategoryRouting) && kind == traefik.Kind:
@@ -2213,6 +2418,20 @@ func runtimeForTrial(registry *adapterapi.Registry) detect.TrialRunner {
 		return nil
 	}
 	return rt
+}
+
+// defaultRuntimeKind is the kind of the install's default runtime, "" for
+// none.
+func defaultRuntimeKind(registry *adapterapi.Registry) string {
+	ref, ok := registry.Default(adapterapi.CategoryRuntime)
+	if !ok {
+		return ""
+	}
+	a, ok := registry.Get(ref)
+	if !ok {
+		return ""
+	}
+	return a.Kind()
 }
 
 // runtimeMirrors reports the default runtime's Docker Hub mirrors, so Pando's
@@ -2565,6 +2784,7 @@ func adapterKinds() []adapterapi.KindInfo {
 		trivyscanner.Info(),
 		secretslocal.Info(),
 		backuplocal.Info(),
+		backups3.Info(),
 		servicesdocker.Info(),
 		notifyconsole.Info(),
 		notifysmtp.Info(),

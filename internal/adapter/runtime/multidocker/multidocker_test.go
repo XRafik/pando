@@ -31,6 +31,13 @@ type fakeHost struct {
 	// own is what the one bundle on this host holds (RoomFor).
 	own      api.Fit
 	detached []string
+	// totalDisk is the host's disk, and diskUsed what its running apps'
+	// disk limits hold of it (CommittedDisk).
+	totalDisk int64
+	diskUsed  int64
+	// takes has Apply take what the bundle needs from free, as a started
+	// app does.
+	takes bool
 }
 
 var errDown = errors.New("connection refused")
@@ -50,6 +57,15 @@ func (f *fakeHost) Bundles(context.Context) (map[string]bool, error) {
 
 func (f *fakeHost) Committed(context.Context) (api.Fit, error) { return api.Fit{}, nil }
 
+func (f *fakeHost) CommittedDisk(context.Context) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.down {
+		return 0, errDown
+	}
+	return f.diskUsed, nil
+}
+
 func (f *fakeHost) Capacity(context.Context) (api.Capacity, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -57,7 +73,7 @@ func (f *fakeHost) Capacity(context.Context) (api.Capacity, error) {
 		return api.Capacity{}, errDown
 	}
 	free := f.free
-	return api.Capacity{TotalCPUMillis: f.total.CPUMillis, TotalMemoryBytes: f.total.MemoryBytes,
+	return api.Capacity{TotalCPUMillis: f.total.CPUMillis, TotalMemoryBytes: f.total.MemoryBytes, TotalDiskBytes: f.totalDisk,
 		RunningWorkloads: f.running, LargestFit: &free}, nil
 }
 
@@ -79,6 +95,11 @@ func (f *fakeHost) Apply(_ context.Context, p api.BundlePlan) (api.BundleHandle,
 	}
 	f.bundles[p.BundleID] = true
 	f.applied = append(f.applied, p.BundleID)
+	if f.takes {
+		n := need(p)
+		f.free.CPUMillis -= n.CPUMillis
+		f.free.MemoryBytes -= n.MemoryBytes
+	}
 	return api.BundleHandle{BundleID: p.BundleID}, nil
 }
 
@@ -145,7 +166,7 @@ func newTestAdapter(t *testing.T, hosts map[string]*fakeHost, order ...string) *
 	for i, name := range order {
 		h := &host{cfg: HostConfig{Name: name, Control: i == 0}, rt: hosts[name], agentAddr: name + ":7443"}
 		if i == 0 {
-			a.control = h
+			a.control, a.self = h, h
 		}
 		a.hosts = append(a.hosts, h)
 	}
@@ -246,8 +267,9 @@ func TestR148_AnUnreachableHostMarksItsAppsUnobservableNotFailed(t *testing.T) {
 	}
 	a := newTestAdapter(t, hosts, "control", "app-1")
 	ctx := context.Background()
-	_, err := a.Observe(ctx, api.BundleRef{BundleID: "app_known"})
+	seen, err := a.Observe(ctx, api.BundleRef{BundleID: "app_known"})
 	require.NoError(t, err)
+	require.Equal(t, "app-1", seen.Host, "where it is, for core's holds (R-151, R-421)")
 
 	hosts["app-1"].down = true
 
@@ -342,7 +364,10 @@ func TestVolumeHandlesCarryTheirHost(t *testing.T) {
 	require.Contains(t, hosts["app-1"].observed, "destroy pando-app_db-vol_1")
 
 	require.Error(t, a.DestroyVolume(context.Background(), api.VolumeHandle{Handle: "gone/pando-x"}))
-	require.Error(t, a.DestroyVolume(context.Background(), api.VolumeHandle{Handle: "no-host-part"}))
+	// A handle from before the install had several hosts is the control
+	// host's (R-418).
+	require.NoError(t, a.DestroyVolume(context.Background(), api.VolumeHandle{Handle: "no-host-part"}))
+	require.Contains(t, hosts["control"].observed, "destroy no-host-part")
 }
 
 func TestConfigurationIsCheckedBeforeAnythingIsContacted(t *testing.T) {
